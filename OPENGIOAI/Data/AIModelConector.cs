@@ -1,0 +1,660 @@
+﻿// ============================================================
+//  AIModelConector.cs  — VERSIÓN FINAL (Pasos 1, 2, 3, 4)
+//
+//  PASO 1: PromtAgente eliminado como estado global mutable.
+//          Todos los métodos reciben AgentContext como parámetro.
+//          El prompt viaja con el contexto, nunca se "restaura".
+//
+//  PASO 2: HttpClient singleton por proveedor.
+//          Antes: new HttpClient() en cada llamada → socket exhaustion.
+//          Ahora: static readonly HttpClient reutilizado → una sola
+//          conexión TCP por proveedor, headers por HttpRequestMessage.
+//
+//  PASO 4: RetryPolicy integrado en ObtenerRespuestaAPIAsync y
+//          ObtenerRespuestaOllamaAsync. Errores 429/5xx se reintentan
+//          hasta 3 veces con backoff exponencial + jitter.
+//          LlmErrorException reemplaza el return "Error 429: ..." para
+//          que RetryPolicy pueda leer el código HTTP y decidir.
+// ============================================================
+
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using OPENGIOAI.Entidades;
+using OPENGIOAI.ServiciosAI;
+using OPENGIOAI.Utilerias;
+using System.Net.Http.Headers;
+using System.Text;
+
+namespace OPENGIOAI.Data
+{
+    public static class AIModelConector
+    {
+        // =====================================================================
+        //  PASO 2: HttpClient singleton por proveedor
+        //  Un solo cliente por dominio. Nunca se dispone.
+        //  Headers de auth van en HttpRequestMessage (thread-safe).
+        // =====================================================================
+        private static readonly HttpClient _clienteGeneral = new()
+        {
+            Timeout = TimeSpan.FromMinutes(5)
+        };
+        private static readonly HttpClient _clienteStreaming = new()
+        {
+            Timeout = TimeSpan.FromMinutes(10)
+        };
+        private static readonly HttpClient _clienteOllama = new()
+        {
+            Timeout = TimeSpan.FromMinutes(3),
+            BaseAddress = new Uri("http://localhost:11434")
+        };
+
+        // =====================================================================
+        //  PUNTO DE ENTRADA PRINCIPAL — Agente 1 (generador)
+        // =====================================================================
+
+        /// <summary>
+        /// Construye el AgentContext (PASO 1), obtiene el código Python
+        /// del LLM (PASO 4: con retry), lo guarda y lo ejecuta.
+        /// </summary>
+        public static async Task<string> EjecutarInstruccionIAAsync(
+            string instruccion,
+            string modelo = "",
+            string rutaArchivo = "",
+            string apiKey = "",
+            string clavesDisponibles = "",
+            bool soloChat = false,
+            Servicios servicio = Servicios.Gemenni,
+            CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // PASO 1: contexto inmutable por ejecución.
+            // Lee los .md del disco una sola vez y arma el prompt efectivo.
+            AgentContext ctx = await AgentContext.BuildAsync(
+                rutaArchivo, modelo, apiKey, servicio,
+                soloChat, clavesDisponibles, ct);
+
+            ct.ThrowIfCancellationRequested();
+
+            string codigoPython = await ObtenerRespuestaLLMAsync(instruccion, ctx, ct);
+
+            ct.ThrowIfCancellationRequested();
+
+            return await GenerarScriptIA(codigoPython, rutaArchivo, soloChat, ct);
+        }
+
+        // =====================================================================
+        //  PUNTO DE ENTRADA — Agente 2 (validador / bienvenida)
+        // =====================================================================
+
+        /// <summary>
+        /// Versión para el Agente 2.
+        /// ComoAgente2() devuelve una copia inmutable del contexto con el
+        /// prompt de error/respuesta como base — sin mutar nada global.
+        /// </summary>
+        public static async Task<string> EjecutarInstruccionIAAsyncRespuesta(
+            string instruccion,
+            string codigoRespuesta,
+            string respuestaTxt = "",
+            string modelo = "",
+            string rutaArchivo = "",
+            string apiKey = "",
+            bool conInstruccion = false,
+            Servicios servicio = Servicios.Gemenni,
+            CancellationToken ct = default,
+            Action<string>? onTokenReceived = null)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            AgentContext ctxBase = await AgentContext.BuildAsync(
+                rutaArchivo, modelo, apiKey, servicio,
+                soloChat: false, clavesDisponibles: "", ct);
+
+            // PASO 1: copia inmutable — sin restauración de static.
+            AgentContext ctx = conInstruccion
+                ? ctxBase.ComoAgente2()
+                : ctxBase.ComoInicio();
+
+            string promptFinal = conInstruccion
+                ? ConstruirPromptValidacion(instruccion, codigoRespuesta, respuestaTxt)
+                : "Hola, recomiéndame qué podemos hacer hoy";
+
+            if (onTokenReceived == null)
+                return await ObtenerRespuestaLLMAsync(promptFinal, ctx, ct);
+
+            // Modo streaming
+            var sb = new StringBuilder();
+            await ObtenerRespuestaStreamingAsync(
+                promptFinal, ctx,
+                token => { sb.Append(token); onTokenReceived(token); },
+                ct);
+
+            return sb.ToString();
+        }
+
+        // =====================================================================
+        //  PARALELO
+        // =====================================================================
+
+        public static async Task<List<string>> EjecutarIAEnParaleloAsync(
+            List<ConfiguracionIA> configuraciones)
+        {
+            var tareas = configuraciones.Select(c =>
+                EjecutarInstruccionIAAsync(
+                    c.Instruccion, c.Modelo, c.RutaArchivo,
+                    c.ApiKey, c.ClavesKeyConfiguradas, c.Chat, c.Servicio));
+
+            return (await Task.WhenAll(tareas)).ToList();
+        }
+
+        // =====================================================================
+        //  CAPA LLM — enruta al proveedor correcto
+        // =====================================================================
+
+        private static Task<string> ObtenerRespuestaLLMAsync(
+            string instruccion, AgentContext ctx, CancellationToken ct)
+        {
+            return ctx.Servicio switch
+            {
+                Servicios.Ollama => ObtenerRespuestaOllamaAsync(instruccion, ctx, ct),
+                _ => ObtenerRespuestaAPIAsync(instruccion, ctx, ct)
+            };
+        }
+
+        // =====================================================================
+        //  LLAMADA HTTP — APIs externas (OpenAI, DeepSeek, Gemini, Claude, OpenRouter)
+        //
+        //  PASO 2: usa _clienteGeneral (singleton).
+        //  PASO 4: envuelto con RetryPolicy — reintenta en 429 / 5xx.
+        //          LlmErrorException en lugar de return string de error para
+        //          que RetryPolicy pueda leer el HttpStatusCode.
+        // =====================================================================
+
+        private static Task<string> ObtenerRespuestaAPIAsync(
+            string instruccion, AgentContext ctx, CancellationToken ct)
+        {
+            return RetryPolicy.EjecutarAsync(
+                operacion: async () =>
+                {
+                    var (apiUrl, body) = ConstruirRequest(instruccion, ctx);
+
+                    using var req = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+                    AgregarHeaders(req, ctx);
+                    req.Content = new StringContent(
+                        JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
+
+                    var resp = await _clienteGeneral.SendAsync(req, ct);
+                    string raw = await resp.Content.ReadAsStringAsync(ct);
+
+                    // PASO 4: lanzar excepción tipada para que RetryPolicy
+                    // identifique si el error es reintentable (429, 5xx).
+                    // Antes era: return $"Error {resp.StatusCode}: {raw}";
+                    // Con ese return, RetryPolicy nunca veía el error.
+                    if (!resp.IsSuccessStatusCode)
+                        throw new LlmErrorException(
+                            $"Error {(int)resp.StatusCode}: {raw}",
+                            resp.StatusCode);
+
+                    await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw);
+
+                    return ExtraerContenido(ctx.Servicio, raw);
+                },
+                ct: ct,
+                onReintento: (intento, ex, espera) =>
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Retry] Intento {intento} — {ex.Message} " +
+                        $"— próximo en {espera.TotalSeconds:F1}s")
+            );
+        }
+
+        // =====================================================================
+        //  LLAMADA HTTP — Ollama local
+        //
+        //  PASO 2: usa _clienteOllama (singleton con BaseAddress).
+        //  PASO 4: RetryPolicy cubre el caso de Ollama cargando modelo (500).
+        // =====================================================================
+
+        private static Task<string> ObtenerRespuestaOllamaAsync(
+            string instruccion, AgentContext ctx, CancellationToken ct)
+        {
+            return RetryPolicy.EjecutarAsync(
+                operacion: async () =>
+                {
+                    var body = new
+                    {
+                        model = ctx.Modelo,
+                        prompt = ctx.PromptEfectivo + "\nInstruccion: " + instruccion
+                    };
+
+                    using var req = new HttpRequestMessage(
+                        HttpMethod.Post, "/api/generate");
+                    req.Content = new StringContent(
+                        JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
+
+                    var resp = await _clienteOllama.SendAsync(req, ct);
+
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        string err = await resp.Content.ReadAsStringAsync(ct);
+                        throw new LlmErrorException(
+                            $"Ollama {(int)resp.StatusCode}: {err}", resp.StatusCode);
+                    }
+
+                    string raw = await resp.Content.ReadAsStringAsync(ct);
+
+                    var sb = new StringBuilder();
+                    foreach (var line in raw.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        try
+                        {
+                            var root = JsonConvert.DeserializeObject<JObject>(line);
+                            if (root?.TryGetValue("response", out var r) == true) sb.Append(r);
+                            if (root?.TryGetValue("done", out var d) == true &&
+                                d.Value<bool>()) break;
+                        }
+                        catch { /* línea inválida, ignorar */ }
+                    }
+
+                    return Limpiar(sb.ToString());
+                },
+                ct: ct,
+                onReintento: (intento, ex, espera) =>
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Retry/Ollama] Intento {intento} — {ex.Message} " +
+                        $"— próximo en {espera.TotalSeconds:F1}s")
+            );
+        }
+
+        // =====================================================================
+        //  STREAMING
+        // =====================================================================
+
+        public static async Task ObtenerRespuestaStreamingAsync(
+            string instruccion,
+            AgentContext ctx,
+            Action<string> onToken,
+            CancellationToken ct = default)
+        {
+            bool esOllama = ctx.Servicio == Servicios.Ollama;
+
+            var (apiUrl, bodyObj) = esOllama
+                ? ConstruirRequestOllamaStream(instruccion, ctx)
+                : ConstruirRequestStream(instruccion, ctx);
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+            if (!esOllama) AgregarHeaders(req, ctx);
+            req.Content = new StringContent(
+                JsonConvert.SerializeObject(bodyObj), Encoding.UTF8, "application/json");
+
+            var resp = await _clienteStreaming.SendAsync(
+                req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (!resp.IsSuccessStatusCode)
+                throw new LlmErrorException(
+                    await resp.Content.ReadAsStringAsync(ct), resp.StatusCode);
+
+            using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var reader = new StreamReader(stream);
+
+            while (!reader.EndOfStream)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var line = await reader.ReadLineAsync();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                string? token = esOllama
+                    ? ExtraerTokenOllama(line, out _)
+                    : ExtraerTokenSSE(line, ctx.Servicio);
+
+                if (token != null) onToken(token);
+
+                if (esOllama)
+                {
+                    var root = JsonConvert.DeserializeObject<JObject>(line);
+                    if (root?["done"]?.Value<bool>() == true) break;
+                }
+                else if (line.TrimStart().StartsWith("data:") && line.Contains("[DONE]"))
+                    break;
+            }
+        }
+
+        // =====================================================================
+        //  CONSTRUCCIÓN DE REQUESTS
+        // =====================================================================
+
+        private static (string url, object body) ConstruirRequest(
+            string instruccion, AgentContext ctx)
+        {
+            string modelo = ctx.Modelo;
+            string prompt = ctx.PromptEfectivo;
+
+            return ctx.Servicio switch
+            {
+                Servicios.Gemenni => (
+                    $"https://generativelanguage.googleapis.com/v1beta/models/" +
+                    $"{(string.IsNullOrEmpty(modelo) ? "gemini-1.5-flash" : modelo)}" +
+                    $":generateContent?key={ctx.ApiKey}",
+                    (object)new
+                    {
+                        contents = new[]
+                        {
+                            new
+                            {
+                                role  = "user",
+                                parts = new[] { new { text = prompt + "\nInstruccion: " + instruccion } }
+                            }
+                        },
+                        generationConfig = new { temperature = 0.7 }
+                    }
+                ),
+
+                Servicios.Claude => (
+                    "https://api.anthropic.com/v1/messages",
+                    (object)new
+                    {
+                        model = string.IsNullOrEmpty(modelo) ? "claude-3-haiku-20240307" : modelo,
+                        max_tokens = 9000,
+                        temperature = 1,
+                        system = prompt,
+                        messages = new[]
+                        {
+                            new { role = "user", content = new[] { new { type = "text", text = instruccion } } }
+                        }
+                    }
+                ),
+
+                Servicios.Deespeek => (
+                    "https://api.deepseek.com/v1/chat/completions",
+                    (object)new
+                    {
+                        model = string.IsNullOrEmpty(modelo) ? "deepseek-chat" : modelo,
+                        messages = new[]
+                        {
+                            new { role = "system", content = prompt },
+                            new { role = "user",   content = instruccion }
+                        },
+                        temperature = 1,
+                        stream = false
+                    }
+                ),
+
+                Servicios.OpenRouter => (
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    (object)new
+                    {
+                        model = string.IsNullOrEmpty(modelo) ? "openai/gpt-4.1-mini" : modelo,
+                        messages = new[]
+                        {
+                            new { role = "system", content = prompt },
+                            new { role = "user",   content = instruccion }
+                        },
+                        temperature = 1
+                    }
+                ),
+
+                _ => ( // ChatGPT y cualquier otro compatible con OpenAI
+                    "https://api.openai.com/v1/chat/completions",
+                    (object)new
+                    {
+                        model = string.IsNullOrEmpty(modelo) ? "gpt-3.5-turbo" : modelo,
+                        messages = new[]
+                        {
+                            new { role = "system", content = prompt },
+                            new { role = "user",   content = instruccion }
+                        },
+                        temperature = 1
+                    }
+                )
+            };
+        }
+
+        private static (string url, object body) ConstruirRequestStream(
+            string instruccion, AgentContext ctx)
+        {
+            string modelo = ctx.Modelo;
+            string prompt = ctx.PromptEfectivo;
+            var (url, _) = ConstruirRequest(instruccion, ctx);
+
+            object bodyStream = ctx.Servicio switch
+            {
+                Servicios.Claude => new
+                {
+                    model = modelo,
+                    max_tokens = 2048,
+                    stream = true,
+                    system = prompt,
+                    messages = new[] { new { role = "user", content = instruccion } }
+                },
+                _ => (object)new
+                {
+                    model = modelo,
+                    messages = new[]
+                    {
+                        new { role = "system", content = prompt },
+                        new { role = "user",   content = instruccion }
+                    },
+                    temperature = 1,
+                    stream = true
+                }
+            };
+
+            return (url, bodyStream);
+        }
+
+        private static (string url, object body) ConstruirRequestOllamaStream(
+            string instruccion, AgentContext ctx) => (
+            "http://localhost:11434/api/chat",
+            (object)new
+            {
+                model = ctx.Modelo,
+                messages = new[]
+                {
+                    new { role = "system", content = ctx.PromptEfectivo },
+                    new { role = "user",   content = instruccion }
+                },
+                stream = true
+            });
+
+        // =====================================================================
+        //  HEADERS — por request, no por cliente (thread-safe con singleton)
+        // =====================================================================
+
+        private static void AgregarHeaders(HttpRequestMessage req, AgentContext ctx)
+        {
+            switch (ctx.Servicio)
+            {
+                case Servicios.Claude:
+                    req.Headers.Add("x-api-key", ctx.ApiKey);
+                    req.Headers.Add("anthropic-version", "2023-06-01");
+                    break;
+
+                case Servicios.Gemenni:
+                    // API key va en query param de la URL, no en headers
+                    break;
+
+                case Servicios.OpenRouter:
+                    req.Headers.Authorization =
+                        new AuthenticationHeaderValue("Bearer", ctx.ApiKey);
+                    req.Headers.Add("HTTP-Referer", "https://tuapp.local");
+                    req.Headers.Add("X-Title", "OPENGIOAI");
+                    break;
+
+                default:
+                    req.Headers.Authorization =
+                        new AuthenticationHeaderValue("Bearer", ctx.ApiKey);
+                    break;
+            }
+        }
+
+        // =====================================================================
+        //  EXTRACCIÓN DE RESPUESTA
+        // =====================================================================
+
+        private static string ExtraerContenido(Servicios servicio, string raw)
+        {
+            var root = JsonConvert.DeserializeObject<JObject>(raw);
+
+            string output = servicio switch
+            {
+                Servicios.Gemenni =>
+                    root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString() ?? "",
+                Servicios.Claude =>
+                    root?["content"]?[0]?["text"]?.ToString() ?? "",
+                _ =>
+                    root?["choices"]?[0]?["message"]?["content"]?.ToString() ?? ""
+            };
+
+            return Limpiar(output);
+        }
+
+        private static string? ExtraerTokenOllama(string line, out bool done)
+        {
+            done = false;
+            try
+            {
+                var root = JsonConvert.DeserializeObject<JObject>(line);
+                done = root?["done"]?.Value<bool>() ?? false;
+                return root?["message"]?["content"]?.ToString();
+            }
+            catch { return null; }
+        }
+
+        private static string? ExtraerTokenSSE(string line, Servicios servicio)
+        {
+            if (!line.StartsWith("data:")) return null;
+            var json = line[5..].Trim();
+            if (json == "[DONE]") return null;
+            try
+            {
+                var root = JsonConvert.DeserializeObject<JObject>(json);
+                return servicio == Servicios.Claude
+                    ? root?["delta"]?["text"]?.ToString()
+                    : root?["choices"]?[0]?["delta"]?["content"]?.ToString();
+            }
+            catch { return null; }
+        }
+
+        private static string Limpiar(string s) =>
+            s.Replace("```python", "")
+             .Replace("```", "")
+             .Replace("\ufeff", "")
+             .Trim();
+
+        // =====================================================================
+        //  PROMPT AGENTE 2
+        // =====================================================================
+
+        private static string ConstruirPromptValidacion(
+            string instruccion, string codigoRespuesta, string respuestaTxt)
+        {
+            return $@"INSTRUCCIÓN PRINCIPAL:
+{instruccion}
+
+CÓDIGO GENERADO POR AGENTE 1:
+{codigoRespuesta}
+
+CONTENIDO DE respuesta.txt:
+{respuestaTxt}
+
+REGLAS:
+- Presenta el resultado de forma elegante. Puedes usar emojis moderadamente.
+- Si hay errores: explica cómo solucionarlos. Si puedes corregirlos, hazlo.
+- Si no hay respuesta válida, responde tú directamente.
+- Prioriza siempre ayudar al usuario.";
+        }
+
+        // =====================================================================
+        //  EJECUCIÓN DEL SCRIPT PYTHON
+        // =====================================================================
+
+        private static async Task<string> GenerarScriptIA(
+            string script, string rutaArchivo, bool chat, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(script))
+                throw new Exception("La IA no devolvió ningún script válido.");
+
+            string pythonFile = Path.Combine(rutaArchivo, "script_ia.py");
+            GuardarScript(rutaArchivo, script);
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "python",
+                Arguments = $"\"{pythonFile}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            if (ScriptEstaEjecutandose(pythonFile))
+                CerrarScriptSiEstaEjecutandose(pythonFile);
+
+            if (chat)
+            {
+                using var process = new System.Diagnostics.Process { StartInfo = psi };
+                process.Start();
+
+                string output = await process.StandardOutput.ReadToEndAsync(ct);
+                string error = await process.StandardError.ReadToEndAsync(ct);
+                await process.WaitForExitAsync(ct);
+
+                return process.ExitCode != 0
+                    ? script + "\n\nError al ejecutar el script:\n" + error
+                    : script + "\n\nSalida del script:\n" + output;
+            }
+
+            _ = Task.Run(() =>
+                System.Diagnostics.Process.Start(psi)?.WaitForExit(), ct);
+
+            return script;
+        }
+
+        private static void GuardarScript(string rutaArchivo, string script)
+        {
+            if (!Directory.Exists(rutaArchivo))
+                Directory.CreateDirectory(rutaArchivo);
+
+            File.WriteAllText(
+                Path.Combine(rutaArchivo, "script_ia.py"), script, Encoding.UTF8);
+        }
+
+        // =====================================================================
+        //  GESTIÓN DE PROCESOS PYTHON
+        // =====================================================================
+
+        public static bool ScriptEstaEjecutandose(string rutaScript) =>
+            BuscarProcesoPython(rutaScript) != null;
+
+        public static bool CerrarScriptSiEstaEjecutandose(string rutaScript)
+        {
+            var proc = BuscarProcesoPython(rutaScript);
+            if (proc == null) return false;
+            proc.Kill(true);
+            proc.WaitForExit();
+            return true;
+        }
+
+        private static System.Diagnostics.Process? BuscarProcesoPython(string rutaScript)
+        {
+            foreach (var p in System.Diagnostics.Process.GetProcessesByName("python"))
+            {
+                try
+                {
+                    using var s = new System.Management.ManagementObjectSearcher(
+                        $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {p.Id}");
+
+                    foreach (System.Management.ManagementObject o in s.Get())
+                    {
+                        string? cmd = o["CommandLine"]?.ToString();
+                        if (!string.IsNullOrEmpty(cmd) &&
+                            cmd.Contains(rutaScript, StringComparison.OrdinalIgnoreCase))
+                            return p;
+                    }
+                }
+                catch { /* proceso protegido, ignorar */ }
+            }
+            return null;
+        }
+    }
+}
