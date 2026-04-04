@@ -20,6 +20,7 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using OPENGIOAI.Entidades;
+using OPENGIOAI.Herramientas;
 using OPENGIOAI.ServiciosAI;
 using OPENGIOAI.Utilerias;
 using System.Net.Http.Headers;
@@ -130,6 +131,43 @@ namespace OPENGIOAI.Data
                 ct);
 
             return sb.ToString();
+        }
+
+        // =====================================================================
+        //  PUNTO DE ENTRADA — Agente con Herramientas (Tool Use)
+        // =====================================================================
+
+        /// <summary>
+        /// Ejecuta el agente en modo Tool Use.
+        /// El LLM puede llamar herramientas (leer archivos, HTTP, comandos, etc.)
+        /// en un bucle ReAct hasta producir una respuesta final.
+        ///
+        /// Proveedores soportados con tools nativos:
+        ///   OpenAI, Claude, Gemini, DeepSeek, OpenRouter, Ollama (modelos compatibles).
+        /// </summary>
+        /// <param name="instruccion">Instrucción del usuario en lenguaje natural.</param>
+        /// <param name="onProgreso">Callback opcional invocado en cada paso del bucle.</param>
+        /// <param name="maxIteraciones">Máximo de ciclos Pensar→Actuar. Por defecto 10.</param>
+        public static async Task<string> EjecutarConHerramientasAsync(
+            string instruccion,
+            string modelo = "",
+            string rutaArchivo = "",
+            string apiKey = "",
+            string clavesDisponibles = "",
+            bool soloChat = false,
+            Servicios servicio = Servicios.ChatGpt,
+            Action<string>? onProgreso = null,
+            CancellationToken ct = default,
+            int maxIteraciones = 10)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            AgentContext ctx = await AgentContext.BuildAsync(
+                rutaArchivo, modelo, apiKey, servicio,
+                soloChat, clavesDisponibles, ct);
+
+            return await MotorHerramientas.EjecutarConHerramientasAsync(
+                instruccion, ctx, onProgreso, ct, maxIteraciones);
         }
 
         // =====================================================================
