@@ -208,6 +208,28 @@ Nombre: Giovanni Sanchez
         }
 
         /// <summary>
+        /// Devuelve una copia del contexto con un prompt personalizado.
+        /// Usado por los agentes del pipeline (Planificador, Ejecutor, Verificador, Formateador)
+        /// y por el AgentePlanificador (ReAct/CoT) para inyectar sus propios system prompts
+        /// sin leer archivos del disco ni mutar estado global.
+        /// </summary>
+        public AgentContext ConPromptPersonalizado(string promptEfectivo)
+        {
+            return new AgentContext
+            {
+                PromptMaestro = PromptMaestro,
+                PromptRespuestaErr = PromptRespuestaErr,
+                RutaArchivo = RutaArchivo,
+                Modelo = Modelo,
+                ApiKey = ApiKey,
+                Servicio = Servicio,
+                SoloChat = SoloChat,
+                ClavesDisponibles = ClavesDisponibles,
+                PromptEfectivo = promptEfectivo,
+            };
+        }
+
+        /// <summary>
         /// Devuelve una copia para el prompt de bienvenida/inicio de sesión.
         /// </summary>
         public AgentContext ComoInicio()

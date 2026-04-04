@@ -25,6 +25,7 @@ namespace OPENGIOAI.Vistas
             InitializeComponent();
             AplicarTema();
             CargarDatosInicio();
+            AgregarBotonesAgentesAvanzados();
         }
 
         private void btnMando_Click(object sender, EventArgs e)
@@ -94,9 +95,54 @@ namespace OPENGIOAI.Vistas
         {
             Miconfiguracion = Utils.LeerConfig<ConfiguracionClient>(RutasProyecto.ObtenerRutaConfiguracion());
         }
+
         private void AplicarTema()
         {
-      
+
+        }
+
+        // ── Agentes Avanzados (1.3 y 1.4) ───────────────────────────────────
+
+        /// <summary>
+        /// Agrega los botones de Agentes Avanzados al menú lateral sin modificar
+        /// el Designer. Se insertan entre btnModelos (Y=158) y la sección
+        /// CONFIGURACION (label2, Y=296).
+        /// </summary>
+        private void AgregarBotonesAgentesAvanzados()
+        {
+            var btnPlanificacion = CrearBotonMenu("🧠  Agente Planificador", new Point(0, 200));
+            btnPlanificacion.Click += (s, e) => AbrirAgentesAvanzados(modoPipeline: false);
+            pnlMenu.Controls.Add(btnPlanificacion);
+
+            var btnPipeline = CrearBotonMenu("🔗  Pipeline Multi-Agente", new Point(0, 248));
+            btnPipeline.Click += (s, e) => AbrirAgentesAvanzados(modoPipeline: true);
+            pnlMenu.Controls.Add(btnPipeline);
+        }
+
+        private void AbrirAgentesAvanzados(bool modoPipeline)
+        {
+            var frm = new FrmPipelineAgente();
+            EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frm);
+        }
+
+        private Button CrearBotonMenu(string texto, Point ubicacion)
+        {
+            var btn = new Button
+            {
+                Text = texto,
+                Location = ubicacion,
+                Size = new Size(203, 41),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 0),
+                ForeColor = Color.FromArgb(148, 163, 184),
+                TextAlign = ContentAlignment.MiddleLeft,
+                UseVisualStyleBackColor = true,
+                Cursor = Cursors.Hand
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 0, 64);
+            btn.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 192, 255);
+            return btn;
         }
 
         private void btnOcultar_Click(object sender, EventArgs e)
