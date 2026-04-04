@@ -171,6 +171,72 @@ namespace OPENGIOAI.Data
         }
 
         // =====================================================================
+        //  PUNTO DE ENTRADA — 1.3 Agente con Planificación (ReAct / CoT)
+        // =====================================================================
+
+        /// <summary>
+        /// Ejecuta la instrucción usando planificación explícita ReAct/CoT.
+        /// El agente descompone la tarea en pasos, ejecuta cada uno,
+        /// verifica el resultado y adapta el plan si algo falla.
+        /// Bucle: Pensar → Actuar → Observar → Repetir.
+        /// </summary>
+        /// <param name="onProgreso">Callback para recibir actualizaciones en tiempo real.</param>
+        public static async Task<string> EjecutarConPlanificacionAsync(
+            string instruccion,
+            string modelo = "",
+            string rutaArchivo = "",
+            string apiKey = "",
+            string clavesDisponibles = "",
+            bool soloChat = false,
+            Servicios servicio = Servicios.Gemenni,
+            Action<string>? onProgreso = null,
+            CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            AgentContext ctx = await AgentContext.BuildAsync(
+                rutaArchivo, modelo, apiKey, servicio,
+                soloChat, clavesDisponibles, ct);
+
+            return await OPENGIOAI.Agentes.AgentePlanificador.EjecutarConPlanificacionAsync(
+                instruccion, ctx, onProgreso, ct);
+        }
+
+        // =====================================================================
+        //  PUNTO DE ENTRADA — 1.4 Pipeline Multi-Agente Avanzado
+        // =====================================================================
+
+        /// <summary>
+        /// Ejecuta la instrucción a través del pipeline de 4 agentes especializados:
+        ///   1. Planificador  — descompone la tarea en un plan detallado
+        ///   2. Ejecutor      — implementa el plan con código/acciones
+        ///   3. Verificador   — valida el output del ejecutor
+        ///   4. Formateador   — produce la respuesta final pulida
+        /// Cada agente recibe el output del anterior como contexto.
+        /// </summary>
+        /// <param name="onProgreso">Callback para recibir actualizaciones de cada agente.</param>
+        public static async Task<OPENGIOAI.Agentes.ResultadoPipeline> EjecutarPipelineMultiAgenteAsync(
+            string instruccion,
+            string modelo = "",
+            string rutaArchivo = "",
+            string apiKey = "",
+            string clavesDisponibles = "",
+            bool soloChat = false,
+            Servicios servicio = Servicios.Gemenni,
+            Action<string>? onProgreso = null,
+            CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            AgentContext ctx = await AgentContext.BuildAsync(
+                rutaArchivo, modelo, apiKey, servicio,
+                soloChat, clavesDisponibles, ct);
+
+            return await OPENGIOAI.Agentes.PipelineMultiAgente.EjecutarPipelineAsync(
+                instruccion, ctx, onProgreso, ct);
+        }
+
+        // =====================================================================
         //  PARALELO
         // =====================================================================
 
@@ -189,7 +255,9 @@ namespace OPENGIOAI.Data
         //  CAPA LLM — enruta al proveedor correcto
         // =====================================================================
 
-        private static Task<string> ObtenerRespuestaLLMAsync(
+        // internal para que AgentePlanificador y PipelineMultiAgente puedan usarlo
+        // sin duplicar la lógica de enrutamiento por proveedor.
+        internal static Task<string> ObtenerRespuestaLLMAsync(
             string instruccion, AgentContext ctx, CancellationToken ct)
         {
             return ctx.Servicio switch
