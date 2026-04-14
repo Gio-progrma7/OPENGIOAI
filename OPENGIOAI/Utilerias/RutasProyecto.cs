@@ -36,6 +36,12 @@ namespace OPENGIOAI.Utilerias
             return Path.Combine(rutaBase, "ListSkills.json");
         }
 
+        public static string ObtenerRutaListAutomatizaciones()
+        {
+            string rutaBase = AppDomain.CurrentDomain.BaseDirectory;
+            return Path.Combine(rutaBase, "ListAutomatizaciones.json");
+        }
+
 
         public static string ObtenerRutaListModelos()
         {

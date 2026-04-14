@@ -111,7 +111,6 @@ namespace OPENGIOAI.Vistas
             ChkNotiT.TabIndex = 17;
             ChkNotiT.TabStop = false;
             ChkNotiT.Visible = false;
-            //ChkNotiT.Click += ChkNotiT_Click;
             // 
             // btnLimpiar
             // 
@@ -138,7 +137,6 @@ namespace OPENGIOAI.Vistas
             ChkNotiS.TabIndex = 18;
             ChkNotiS.TabStop = false;
             ChkNotiS.Visible = false;
-            //ChkNotiS.Click += ChkNotiS_Click;
             // 
             // ChkConver
             // 
@@ -221,7 +219,7 @@ namespace OPENGIOAI.Vistas
             // lblConsumoA
             // 
             lblConsumoA.AutoSize = true;
-            lblConsumoA.Location = new Point(373, 24);
+            lblConsumoA.Location = new Point(579, 54);
             lblConsumoA.Name = "lblConsumoA";
             lblConsumoA.Size = new Size(0, 15);
             lblConsumoA.TabIndex = 10;
@@ -231,7 +229,7 @@ namespace OPENGIOAI.Vistas
             lblTimeR.AutoSize = true;
             lblTimeR.BackColor = Color.Transparent;
             lblTimeR.ForeColor = Color.MediumSpringGreen;
-            lblTimeR.Location = new Point(372, 39);
+            lblTimeR.Location = new Point(480, 54);
             lblTimeR.Name = "lblTimeR";
             lblTimeR.Size = new Size(0, 15);
             lblTimeR.TabIndex = 9;
@@ -241,7 +239,7 @@ namespace OPENGIOAI.Vistas
             lblTime.AutoSize = true;
             lblTime.BackColor = Color.Transparent;
             lblTime.ForeColor = Color.GreenYellow;
-            lblTime.Location = new Point(524, 10);
+            lblTime.Location = new Point(480, 28);
             lblTime.Name = "lblTime";
             lblTime.Size = new Size(0, 15);
             lblTime.TabIndex = 8;
@@ -249,10 +247,11 @@ namespace OPENGIOAI.Vistas
             // lblConsumo
             // 
             lblConsumo.AutoSize = true;
-            lblConsumo.Location = new Point(372, 54);
+            lblConsumo.Location = new Point(579, 68);
             lblConsumo.Name = "lblConsumo";
-            lblConsumo.Size = new Size(0, 15);
+            lblConsumo.Size = new Size(10, 15);
             lblConsumo.TabIndex = 0;
+            lblConsumo.Text = ".";
             // 
             // pnlContenedorArchivos
             // 
@@ -264,9 +263,9 @@ namespace OPENGIOAI.Vistas
             // pictureBoxCarga
             // 
             pictureBoxCarga.Image = Properties.Resources.cargaia;
-            pictureBoxCarga.Location = new Point(316, 19);
+            pictureBoxCarga.Location = new Point(325, 21);
             pictureBoxCarga.Name = "pictureBoxCarga";
-            pictureBoxCarga.Size = new Size(140, 66);
+            pictureBoxCarga.Size = new Size(125, 65);
             pictureBoxCarga.TabIndex = 6;
             pictureBoxCarga.TabStop = false;
             pictureBoxCarga.Visible = false;
@@ -486,7 +485,6 @@ namespace OPENGIOAI.Vistas
             Text = "FrmMandos";
             FormClosing += FrmMandos_FormClosing;
             Load += FrmMandos_Load;
-            //Shown += FrmMandos_Shown;
             Resize += FrmMandos_Resize;
             pnlContenedorTxt.ResumeLayout(false);
             pnlContenedorTxt.PerformLayout();

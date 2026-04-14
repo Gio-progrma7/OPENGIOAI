@@ -1,4 +1,5 @@
-﻿using OPENGIOAI.Entidades;
+﻿using OPENGIOAI.Data;
+using OPENGIOAI.Entidades;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
 using System;
@@ -19,13 +20,14 @@ namespace OPENGIOAI.Vistas
 
         private string RutaTrabajo = "";
         private ConfiguracionClient Miconfiguracion = new ConfiguracionClient();
+        private readonly AutomatizacionScheduler _scheduler = new();
 
         public FrmPrincipal()
         {
             InitializeComponent();
             AplicarTema();
             CargarDatosInicio();
-            AgregarBotonesAgentesAvanzados();
+           // AgregarBotonesAgentesAvanzados();
         }
 
         private void btnMando_Click(object sender, EventArgs e)
@@ -59,7 +61,7 @@ namespace OPENGIOAI.Vistas
         }
         private void btnAutomatizacion_Click(object sender, EventArgs e)
         {
-            FrmAutomatizaciones frmAutomatizaciones = new FrmAutomatizaciones();
+            FrmAutomatizaciones frmAutomatizaciones = new FrmAutomatizaciones(Miconfiguracion);
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmAutomatizaciones);
         }
 
@@ -82,6 +84,7 @@ namespace OPENGIOAI.Vistas
 
         private void btnSalir_Click(object sender, EventArgs e)
         {
+            _scheduler.Dispose();
             this.Close();
         }
         private void btnSkills_Click(object sender, EventArgs e)
@@ -94,6 +97,26 @@ namespace OPENGIOAI.Vistas
         private void CargarDatosInicio()
         {
             Miconfiguracion = Utils.LeerConfig<ConfiguracionClient>(RutasProyecto.ObtenerRutaConfiguracion());
+            IniciarScheduler();
+        }
+
+        private void IniciarScheduler()
+        {
+            try
+            {
+                var apis = JsonManager.Leer<Api>(RutasProyecto.ObtenerRutaListApis());
+                string claves = Utils.ObtenerNombresApis(apis);
+
+                _scheduler.Configurar(
+                    Miconfiguracion?.Mimodelo?.Modelos ?? "",
+                    Miconfiguracion?.Mimodelo?.ApiKey  ?? "",
+                    Miconfiguracion?.MiArchivo?.Ruta   ?? RutasProyecto.ObtenerRutaScripts(),
+                    claves,
+                    Miconfiguracion?.Mimodelo?.Agente  ?? Servicios.Gemenni);
+
+                _scheduler.Iniciar();
+            }
+            catch { }
         }
 
         private void AplicarTema()

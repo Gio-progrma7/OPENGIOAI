@@ -333,6 +333,26 @@ namespace OPENGIOAI.Themas
             Invalidate();
         }
 
+        /// <summary>
+        /// Actualiza el texto de la burbuja en tiempo real (usado para streaming de salida de scripts).
+        /// Seguro para llamar desde cualquier hilo — hace InvokeRequired internamente.
+        /// </summary>
+        public void ActualizarTexto(string nuevoTexto)
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(() => ActualizarTexto(nuevoTexto)); return; }
+
+            if (nuevoTexto == Text) return;
+            Text = nuevoTexto;
+            _txtMensaje.Text = nuevoTexto;
+            AplicarFormatoEnlaces();
+            CalcularTamaño();
+            // NO llamar Parent.PerformLayout() aquí — cambiar Width/Height ya
+            // dispara el re-layout del FlowLayoutPanel automáticamente.
+            // Llamarlo explícitamente en cada token causaba redibujado en cascada.
+            Invalidate();
+        }
+
         protected override void OnCreateControl()
         {
             base.OnCreateControl();

@@ -14,7 +14,8 @@ namespace OPENGIOAI.Entidades
         Gemenni = 3,
         Ollama = 4,
         Deespeek = 5,
-        OpenRouter = 6
+        OpenRouter = 6,
+        Antigravity = 7   // Google Vertex AI — auth via gcloud ADC
 
     }
 }
