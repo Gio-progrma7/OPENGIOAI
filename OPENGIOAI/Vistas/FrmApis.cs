@@ -357,7 +357,6 @@ namespace OPENGIOAI.Vistas
             panel.Controls.Add(btnEliminar);
 
             panel.RedondearPanel(borderRadius: 12, borderColor: Color.FromArgb(200, 210, 240));
-            pnlControl.Redondear();
             return panel;
         }
 
@@ -401,18 +400,12 @@ namespace OPENGIOAI.Vistas
             textBoxNombre.RedondearTextBox(borderRadius: 10, borderColor: inputBorder);
             textBoxKey.RedondearTextBox(borderRadius: 10, borderColor: inputBorder);
             textBoxDescripcion.RedondearTextBox(borderRadius: 10, borderColor: inputBorder);
-            textBoxFiltro.RedondearTextBox(borderRadius: 10, borderColor: Color.DarkGreen);
+            textBoxFiltro.RedondearTextBox(borderRadius: 10, borderColor: Color.FromArgb(34, 197, 94));
 
-            btnGuadar.AplicarEstiloOutline(
-                colorBorde: Color.RoyalBlue,
-                borderRadius: 9
-            );
-            btnCancelar.AplicarEstiloOutline(
-                colorBorde: Color.DarkRed,
-                borderRadius: 9
-            );
+            btnGuadar.AplicarEstiloOutline(colorBorde: Color.RoyalBlue, borderRadius: 9);
+            btnCancelar.AplicarEstiloOutline(colorBorde: Color.DarkRed, borderRadius: 9);
 
-
+            pnlControl.RedondearPanel(borderRadius: 12, borderColor: Color.FromArgb(51, 65, 85));
         }
 
         private void CancelarEdicion()

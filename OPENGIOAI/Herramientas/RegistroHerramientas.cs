@@ -6,7 +6,8 @@ namespace OPENGIOAI.Herramientas
     /// </summary>
     public class RegistroHerramientas
     {
-        private readonly Dictionary<string, IHerramienta> _herramientas;
+        // No readonly: AgregarSkills() necesita mutar el diccionario post-construcción
+        private Dictionary<string, IHerramienta> _herramientas;
 
         public RegistroHerramientas(IEnumerable<IHerramienta> herramientas)
         {
@@ -42,5 +43,38 @@ namespace OPENGIOAI.Herramientas
         /// Número de herramientas registradas.
         /// </summary>
         public int Count => _herramientas.Count;
+
+        /// <summary>
+        /// Registra skills cargados de ListSkills.json como herramientas de tool-use.
+        /// Cada skill se envuelve en <see cref="OPENGIOAI.Skills.HerramientaSkill"/>.
+        /// No sobreescribe herramientas nativas si hay colisión de nombre.
+        /// </summary>
+        /// <param name="skills">Skills activos del directorio de trabajo.</param>
+        /// <param name="rutaBase">Directorio de trabajo para resolver rutas relativas.</param>
+        public void AgregarSkills(
+            IEnumerable<OPENGIOAI.Entidades.Skill> skills,
+            string rutaBase = "")
+        {
+            foreach (var skill in skills)
+            {
+                var herramienta = new OPENGIOAI.Skills.HerramientaSkill(skill, rutaBase);
+                // Las herramientas nativas tienen prioridad — no sobreescribir
+                if (!_herramientas.ContainsKey(herramienta.Nombre))
+                    _herramientas[herramienta.Nombre] = herramienta;
+            }
+        }
+
+        /// <summary>
+        /// Crea un registro por defecto con herramientas nativas y añade los skills
+        /// del directorio de trabajo indicado en un solo paso.
+        /// </summary>
+        public static RegistroHerramientas CrearConSkills(
+            IEnumerable<OPENGIOAI.Entidades.Skill> skills,
+            string rutaBase)
+        {
+            var registro = CrearPorDefecto();
+            registro.AgregarSkills(skills, rutaBase);
+            return registro;
+        }
     }
 }

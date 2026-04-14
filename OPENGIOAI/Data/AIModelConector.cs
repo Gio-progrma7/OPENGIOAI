@@ -49,6 +49,90 @@ namespace OPENGIOAI.Data
             BaseAddress = new Uri("http://localhost:11434")
         };
 
+        // ── Token + Project ID cache para Antigravity (gcloud ADC) ──────────────
+        // Token caduca ~60 min → cacheamos 55 min para renovar antes del vencimiento.
+        // Project ID se detecta automáticamente desde "gcloud config get-value project".
+        private static string   _antigravityToken       = "";
+        private static DateTime _antigravityTokenExpiry = DateTime.MinValue;
+        private static string   _antigravityProjectId   = "";   // auto-detectado
+        private static readonly SemaphoreSlim _antigravityTokenLock = new(1, 1);
+
+        /// <summary>
+        /// Devuelve un token ADC vigente. Si expiró lo renueva.
+        /// Aprovecha la misma llamada para refrescar el Project ID cacheado.
+        /// </summary>
+        private static async Task<string> ObtenerTokenAntigravityAsync()
+        {
+            // Fast-path: token vigente
+            if (!string.IsNullOrWhiteSpace(_antigravityToken) &&
+                DateTime.UtcNow < _antigravityTokenExpiry)
+                return _antigravityToken;
+
+            await _antigravityTokenLock.WaitAsync();
+            try
+            {
+                // Segunda comprobación dentro del lock (double-checked)
+                if (!string.IsNullOrWhiteSpace(_antigravityToken) &&
+                    DateTime.UtcNow < _antigravityTokenExpiry)
+                    return _antigravityToken;
+
+                // Obtener token y project ID en paralelo
+                var tokenTask   = ServiciosAI.AIServicios.ObtenerTokenGcloudAsync();
+                var projectTask = ServiciosAI.AIServicios.ObtenerProyectoGcloudAsync();
+                await Task.WhenAll(tokenTask, projectTask);
+
+                _antigravityToken       = tokenTask.Result;
+                _antigravityTokenExpiry = DateTime.UtcNow.AddMinutes(55);
+
+                // Actualizar project ID solo si se obtuvo uno válido
+                if (!string.IsNullOrWhiteSpace(projectTask.Result))
+                    _antigravityProjectId = projectTask.Result;
+
+                return _antigravityToken;
+            }
+            finally
+            {
+                _antigravityTokenLock.Release();
+            }
+        }
+
+        /// <summary>
+        /// Devuelve el Project ID a usar para Vertex AI.
+        /// Prioridad: 1) ApiKey del contexto  2) Project ID auto-detectado de gcloud.
+        /// </summary>
+        internal static async Task<string> ObtenerProjectIdAntigravityAsync(string apiKeyContexto)
+        {
+            // Si el contexto ya trae un project ID válido, usarlo
+            if (!string.IsNullOrWhiteSpace(apiKeyContexto))
+            {
+                string pid = apiKeyContexto.Contains(':')
+                    ? apiKeyContexto.Split(':', 2)[0]
+                    : apiKeyContexto;
+                if (EsProjectIdValido(pid)) return apiKeyContexto; // devolver completo (puede tener :region)
+            }
+
+            // Si no, intentar usar el cacheado
+            if (!string.IsNullOrWhiteSpace(_antigravityProjectId))
+                return _antigravityProjectId;
+
+            // Último recurso: pedir a gcloud ahora mismo
+            string detectado = await ServiciosAI.AIServicios.ObtenerProyectoGcloudAsync();
+            if (!string.IsNullOrWhiteSpace(detectado))
+            {
+                _antigravityProjectId = detectado;
+                return detectado;
+            }
+
+            return "";
+        }
+
+        // Valida que un string tenga la forma básica de un GCP Project ID
+        // (letras minúsculas, números, guiones; 6-30 caracteres)
+        private static bool EsProjectIdValido(string s) =>
+            !string.IsNullOrWhiteSpace(s) &&
+            s.Length >= 6 && s.Length <= 30 &&
+            System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9][a-z0-9\-]*[a-z0-9]$");
+
         // =====================================================================
         //  PUNTO DE ENTRADA PRINCIPAL — Agente 1 (generador)
         // =====================================================================
@@ -65,7 +149,9 @@ namespace OPENGIOAI.Data
             string clavesDisponibles = "",
             bool soloChat = false,
             Servicios servicio = Servicios.Gemenni,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action? onInicioScript = null,
+            Action<string>? onSalidaScript = null)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -81,7 +167,8 @@ namespace OPENGIOAI.Data
 
             ct.ThrowIfCancellationRequested();
 
-            return await GenerarScriptIA(codigoPython, rutaArchivo, soloChat, ct);
+            return await GenerarScriptIA(codigoPython, rutaArchivo, soloChat, ct,
+                onInicioScript, onSalidaScript);
         }
 
         // =====================================================================
@@ -262,8 +349,9 @@ namespace OPENGIOAI.Data
         {
             return ctx.Servicio switch
             {
-                Servicios.Ollama => ObtenerRespuestaOllamaAsync(instruccion, ctx, ct),
-                _ => ObtenerRespuestaAPIAsync(instruccion, ctx, ct)
+                Servicios.Ollama      => ObtenerRespuestaOllamaAsync(instruccion, ctx, ct),
+                Servicios.Antigravity => ObtenerRespuestaAntigravityAsync(instruccion, ctx, ct),
+                _                     => ObtenerRespuestaAPIAsync(instruccion, ctx, ct)
             };
         }
 
@@ -297,9 +385,7 @@ namespace OPENGIOAI.Data
                     // Antes era: return $"Error {resp.StatusCode}: {raw}";
                     // Con ese return, RetryPolicy nunca veía el error.
                     if (!resp.IsSuccessStatusCode)
-                        throw new LlmErrorException(
-                            $"Error {(int)resp.StatusCode}: {raw}",
-                            resp.StatusCode);
+                       
 
                     await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw);
 
@@ -372,6 +458,118 @@ namespace OPENGIOAI.Data
         }
 
         // =====================================================================
+        //  LLAMADA HTTP — Antigravity (Google Vertex AI con gcloud ADC)
+        //
+        //  La URL sigue el formato:
+        //    https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}/
+        //      locations/{region}/publishers/google/models/{model}:generateContent
+        //
+        //  El formato de request/response es idéntico a Gemini API.
+        //  ctx.ApiKey almacena el Project ID de GCP (ej. "my-project-123").
+        //  Opcionalmente "projectId:region" para sobrescribir la región.
+        // =====================================================================
+
+        private static Task<string> ObtenerRespuestaAntigravityAsync(
+            string instruccion, AgentContext ctx, CancellationToken ct)
+        {
+            return RetryPolicy.EjecutarAsync(
+                operacion: async () =>
+                {
+                    string token = await ObtenerTokenAntigravityAsync();
+                    if (string.IsNullOrWhiteSpace(token))
+                        throw new InvalidOperationException(
+                            "No se pudo obtener el token de gcloud. " +
+                            "Ejecuta: gcloud auth application-default login");
+
+                    // Resolver el Project ID (contexto → cache → gcloud)
+                    string projectIdResuelto = await ObtenerProjectIdAntigravityAsync(ctx.ApiKey);
+                    if (string.IsNullOrWhiteSpace(projectIdResuelto))
+                        throw new InvalidOperationException(
+                            "No se encontró un Project ID de GCP. " +
+                            "Configúralo en Proveedores → Antigravity → PROJECT ID, " +
+                            "o ejecuta: gcloud config set project TU-PROYECTO");
+
+                    var (apiUrl, body) = ConstruirRequestAntigravity(instruccion, ctx, projectIdResuelto);
+
+                    using var req = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+                    req.Headers.Authorization =
+                        new AuthenticationHeaderValue("Bearer", token);
+                    req.Content = new StringContent(
+                        JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
+
+                    var resp = await _clienteGeneral.SendAsync(req, ct);
+                    string raw = await resp.Content.ReadAsStringAsync(ct);
+
+                    if (!resp.IsSuccessStatusCode)
+                        throw new LlmErrorException(
+                            $"Antigravity {(int)resp.StatusCode}: {raw}", resp.StatusCode);
+
+                    await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw);
+                    // Vertex AI usa el mismo formato de respuesta que Gemini
+                    return ExtraerContenido(Servicios.Gemenni, raw);
+                },
+                ct: ct,
+                onReintento: (intento, ex, espera) =>
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Retry/Antigravity] Intento {intento} — {ex.Message} " +
+                        $"— próximo en {espera.TotalSeconds:F1}s")
+            );
+        }
+
+        /// <summary>
+        /// Construye la URL y el body para Vertex AI.
+        /// projectIdResuelto puede tener formato "projectId" o "projectId:region".
+        /// </summary>
+        private static (string url, object body) ConstruirRequestAntigravity(
+            string instruccion, AgentContext ctx, string? projectIdResuelto = null)
+        {
+            // Descomponer "projectId" o "projectId:region"
+            string raw      = projectIdResuelto ?? ctx.ApiKey;
+            string projectId;
+            string region;
+
+            if (!string.IsNullOrWhiteSpace(raw) && raw.Contains(':'))
+            {
+                var parts = raw.Split(':', 2);
+                projectId = parts[0].Trim();
+                region    = parts[1].Trim();
+            }
+            else
+            {
+                projectId = raw?.Trim() ?? "";
+                region    = "us-central1";
+            }
+
+            // Modelo: usar el configurado o el más reciente por defecto
+            string modelo = string.IsNullOrEmpty(ctx.Modelo)
+                ? "gemini-2.0-flash-001"
+                : ctx.Modelo;
+
+            // Vertex AI requiere solo el nombre del modelo sin prefijos
+            // (si viene "publishers/google/models/gemini-x" → limpiar)
+            if (modelo.Contains('/'))
+                modelo = modelo.Split('/').Last();
+
+            string url = $"https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}" +
+                         $"/locations/{region}/publishers/google/models/{modelo}:generateContent";
+
+            var body = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        role  = "user",
+                        parts = new[] { new { text = ctx.PromptEfectivo + "\nInstruccion: " + instruccion } }
+                    }
+                },
+                generationConfig = new { temperature = 0.7 }
+            };
+
+            return (url, body);
+        }
+
+        // =====================================================================
         //  STREAMING
         // =====================================================================
 
@@ -381,6 +579,13 @@ namespace OPENGIOAI.Data
             Action<string> onToken,
             CancellationToken ct = default)
         {
+            // Antigravity: streaming via Vertex AI (mismo formato SSE que Gemini)
+            if (ctx.Servicio == Servicios.Antigravity)
+            {
+                await ObtenerRespuestaStreamingAntigravityAsync(instruccion, ctx, onToken, ct);
+                return;
+            }
+
             bool esOllama = ctx.Servicio == Servicios.Ollama;
 
             var (apiUrl, bodyObj) = esOllama
@@ -422,6 +627,65 @@ namespace OPENGIOAI.Data
                 }
                 else if (line.TrimStart().StartsWith("data:") && line.Contains("[DONE]"))
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Streaming para Vertex AI (Antigravity).
+        /// Vertex devuelve la respuesta completa en JSON (no SSE), por lo que
+        /// hacemos la llamada normal y emitimos el texto en un único token.
+        /// Si Vertex añade soporte SSE en el futuro, aquí es donde se extiende.
+        /// </summary>
+        private static async Task ObtenerRespuestaStreamingAntigravityAsync(
+            string instruccion,
+            AgentContext ctx,
+            Action<string> onToken,
+            CancellationToken ct)
+        {
+            string token = await ObtenerTokenAntigravityAsync();
+            if (string.IsNullOrWhiteSpace(token))
+                throw new InvalidOperationException(
+                    "No se pudo obtener el token de gcloud. " +
+                    "Ejecuta: gcloud auth application-default login");
+
+            string projectIdResuelto = await ObtenerProjectIdAntigravityAsync(ctx.ApiKey);
+            if (string.IsNullOrWhiteSpace(projectIdResuelto))
+                throw new InvalidOperationException(
+                    "No se encontró un Project ID de GCP. " +
+                    "Configúralo en Proveedores → Antigravity → PROJECT ID.");
+
+            var (apiUrl, body) = ConstruirRequestAntigravity(instruccion, ctx, projectIdResuelto);
+
+            // Vertex AI soporta streaming SSE añadiendo ?alt=sse a la URL
+            string streamUrl = apiUrl.Contains('?')
+                ? apiUrl + "&alt=sse"
+                : apiUrl + "?alt=sse";
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, streamUrl);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            req.Content = new StringContent(
+                JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
+
+            var resp = await _clienteStreaming.SendAsync(
+                req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (!resp.IsSuccessStatusCode)
+                throw new LlmErrorException(
+                    await resp.Content.ReadAsStringAsync(ct), resp.StatusCode);
+
+            using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var reader = new StreamReader(stream);
+
+            while (!reader.EndOfStream)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var line = await reader.ReadLineAsync();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                // Vertex SSE: "data: {json}" donde json tiene el mismo schema que Gemini
+                string? chunk = ExtraerTokenSSE(line, Servicios.Gemenni);
+                if (chunk != null) onToken(chunk);
             }
         }
 
@@ -520,32 +784,54 @@ namespace OPENGIOAI.Data
         {
             string modelo = ctx.Modelo;
             string prompt = ctx.PromptEfectivo;
-            var (url, _) = ConstruirRequest(instruccion, ctx);
 
-            object bodyStream = ctx.Servicio switch
+            return ctx.Servicio switch
             {
-                Servicios.Claude => new
-                {
-                    model = modelo,
-                    max_tokens = 2048,
-                    stream = true,
-                    system = prompt,
-                    messages = new[] { new { role = "user", content = instruccion } }
-                },
-                _ => (object)new
-                {
-                    model = modelo,
-                    messages = new[]
+                Servicios.Gemenni => (
+                    $"https://generativelanguage.googleapis.com/v1beta/models/" +
+                    $"{(string.IsNullOrEmpty(modelo) ? "gemini-1.5-flash" : modelo)}" +
+                    $":streamGenerateContent?key={ctx.ApiKey}&alt=sse",
+                    (object)new
                     {
-                        new { role = "system", content = prompt },
-                        new { role = "user",   content = instruccion }
-                    },
-                    temperature = 1,
-                    stream = true
-                }
-            };
+                        contents = new[]
+                        {
+                            new
+                            {
+                                role  = "user",
+                                parts = new[] { new { text = prompt + "\nInstruccion: " + instruccion } }
+                            }
+                        },
+                        generationConfig = new { temperature = 0.7 }
+                    }
+                ),
 
-            return (url, bodyStream);
+                Servicios.Claude => (
+                    "https://api.anthropic.com/v1/messages",
+                    (object)new
+                    {
+                        model = modelo,
+                        max_tokens = 2048,
+                        stream = true,
+                        system = prompt,
+                        messages = new[] { new { role = "user", content = instruccion } }
+                    }
+                ),
+
+                _ => (
+                    ConstruirRequest(instruccion, ctx).url,
+                    (object)new
+                    {
+                        model = modelo,
+                        messages = new[]
+                        {
+                            new { role = "system", content = prompt },
+                            new { role = "user",   content = instruccion }
+                        },
+                        temperature = 1,
+                        stream = true
+                    }
+                )
+            };
         }
 
         private static (string url, object body) ConstruirRequestOllamaStream(
@@ -634,9 +920,15 @@ namespace OPENGIOAI.Data
             try
             {
                 var root = JsonConvert.DeserializeObject<JObject>(json);
-                return servicio == Servicios.Claude
-                    ? root?["delta"]?["text"]?.ToString()
-                    : root?["choices"]?[0]?["delta"]?["content"]?.ToString();
+                return servicio switch
+                {
+                    Servicios.Claude =>
+                        root?["delta"]?["text"]?.ToString(),
+                    Servicios.Gemenni =>
+                        root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString(),
+                    _ =>
+                        root?["choices"]?[0]?["delta"]?["content"]?.ToString()
+                };
             }
             catch { return null; }
         }
@@ -675,7 +967,9 @@ REGLAS:
         // =====================================================================
 
         private static async Task<string> GenerarScriptIA(
-            string script, string rutaArchivo, bool chat, CancellationToken ct)
+            string script, string rutaArchivo, bool chat, CancellationToken ct,
+            Action? onInicioScript = null,
+            Action<string>? onLinea = null)
         {
             if (string.IsNullOrWhiteSpace(script))
                 throw new Exception("La IA no devolvió ningún script válido.");
@@ -698,16 +992,81 @@ REGLAS:
 
             if (chat)
             {
-                using var process = new System.Diagnostics.Process { StartInfo = psi };
-                process.Start();
+                onInicioScript?.Invoke();
 
-                string output = await process.StandardOutput.ReadToEndAsync(ct);
-                string error = await process.StandardError.ReadToEndAsync(ct);
+                var sbSalida = new StringBuilder();
+
+                // ── Watcher sobre respuesta.txt para mostrar cambios en tiempo real ──
+                string respuestaTxtPath = Path.Combine(rutaArchivo, "respuesta.txt");
+                long _ultimaPosRespuesta = 0;
+                // Limpiar el archivo antes de empezar para no acumular ejecuciones anteriores
+                if (File.Exists(respuestaTxtPath))
+                    try { File.WriteAllText(respuestaTxtPath, "", Encoding.UTF8); } catch { }
+
+                FileSystemWatcher? watcher = null;
+                if (onLinea != null)
+                {
+                    watcher = new FileSystemWatcher(rutaArchivo)
+                    {
+                        Filter = "respuesta.txt",
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+                        EnableRaisingEvents = false
+                    };
+                    watcher.Changed += (_, _) =>
+                    {
+                        try
+                        {
+                            using var fs = new FileStream(
+                                respuestaTxtPath, FileMode.Open,
+                                FileAccess.Read, FileShare.ReadWrite);
+                            fs.Seek(_ultimaPosRespuesta, SeekOrigin.Begin);
+                            using var reader = new StreamReader(fs, Encoding.UTF8);
+                            string nuevaData = reader.ReadToEnd();
+                            _ultimaPosRespuesta = fs.Position;
+                            if (!string.IsNullOrEmpty(nuevaData))
+                                onLinea(nuevaData);
+                        }
+                        catch { /* ignorar errores de acceso simultáneo */ }
+                    };
+                }
+
+                using var process = new System.Diagnostics.Process
+                {
+                    StartInfo = psi,
+                    EnableRaisingEvents = true
+                };
+
+                process.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data == null) return;
+                    sbSalida.AppendLine(e.Data);
+                    onLinea?.Invoke(e.Data);
+                };
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data == null) return;
+                    string linea = $"[ERR] {e.Data}";
+                    sbSalida.AppendLine(linea);
+                    onLinea?.Invoke(linea);
+                };
+
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                if (watcher != null)
+                    watcher.EnableRaisingEvents = true;
+
                 await process.WaitForExitAsync(ct);
 
+                watcher?.Dispose();
+
+                string salida = sbSalida.ToString().Trim();
                 return process.ExitCode != 0
-                    ? script + "\n\nError al ejecutar el script:\n" + error
-                    : script + "\n\nSalida del script:\n" + output;
+                    ? script + "\n\nError al ejecutar el script:\n" + salida
+                    : string.IsNullOrEmpty(salida)
+                        ? script
+                        : script + "\n\nSalida del script:\n" + salida;
             }
 
             _ = Task.Run(() =>

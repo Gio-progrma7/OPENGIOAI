@@ -52,6 +52,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 using Newtonsoft.Json.Linq;
+using OPENGIOAI.Agentes;
 using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Properties;
@@ -121,6 +122,24 @@ namespace OPENGIOAI.Vistas
         private readonly SemaphoreSlim _telegramSemaphore = new(1, 1);
         private TelegramListener _telegramListener;
 
+        // ── ARIA: panel de estado de agentes y tracking de fase ───────────────
+        private PanelAgentes _panelAgentes = null!;
+        private BurbujaChat? _burbujaFaseActual;
+
+        // ── Streaming de salida de script en vivo ─────────────────────────────
+        private BurbujaChat? _burbujaScriptActual;
+        private readonly StringBuilder _bufferScript = new();
+
+        // ── Control de reintentos del Guardián ────────────────────────────────
+        private NumericUpDown _nudReintentos = null!;
+
+        // ── Throttle de streaming (evita inundar el hilo UI) ──────────────────
+        // Agrupa las actualizaciones de la burbuja en intervalos de 120 ms.
+        private readonly System.Windows.Forms.Timer _timerStreaming = new() { Interval = 120 };
+        private volatile bool _streamingPendiente = false;
+        private BurbujaChat? _burbujaStreamingActual;
+        private string _streamingTextoActual = "";
+
         // ── Modelos de datos ──────────────────────────────────────────────────
         private ConfiguracionClient _configuracionClient;
         private SlackChat _slackChat = new();
@@ -139,6 +158,19 @@ namespace OPENGIOAI.Vistas
         {
             InitializeComponent();
             _configuracionClient = config ?? throw new ArgumentNullException(nameof(config));
+
+            // Timer de throttle: actualiza la burbuja de streaming a ~8 fps.
+            _timerStreaming.Tick += (_, _) =>
+            {
+                if (!_streamingPendiente) return;
+                _streamingPendiente = false;
+
+                if (_burbujaStreamingActual == null || _burbujaStreamingActual.IsDisposed) return;
+                _burbujaStreamingActual.ActualizarTexto(_streamingTextoActual);
+
+                if (_burbujaStreamingActual.Parent is ScrollableControl sc)
+                    sc.ScrollControlIntoView(_burbujaStreamingActual);
+            };
         }
 
         // =====================================================================
@@ -169,6 +201,8 @@ namespace OPENGIOAI.Vistas
         private void FrmMandos_FormClosing(object sender, FormClosingEventArgs e)
         {
             // [C1] Cancelar cualquier petición en vuelo al cerrar el formulario.
+            _timerStreaming.Stop();
+            _timerStreaming.Dispose();
             CancelarInstruccion();
             _telegramListener?.Stop();
             _slack?.Stop();
@@ -222,6 +256,14 @@ namespace OPENGIOAI.Vistas
 
         private void textBoxInstrucion_KeyDown(object sender, KeyEventArgs e)
         {
+            // Ctrl+Enter → enviar instrucción
+            if (e.Control && e.KeyCode == Keys.Enter)
+            {
+                e.SuppressKeyPress = true;
+                btnEnviar_Click(sender, EventArgs.Empty);
+                return;
+            }
+
             if (e.KeyCode != Keys.Tab || string.IsNullOrEmpty(_textoFaltante)) return;
 
             int cursor = textBoxInstrucion.SelectionStart;
@@ -374,13 +416,14 @@ namespace OPENGIOAI.Vistas
         {
             List<string> nombres = servicio switch
             {
-                Servicios.ChatGpt => await AIServicios.ObtenerModelosOpenAIAsync(apiKey),
-                Servicios.Gemenni => await AIServicios.ObtenerModelosGeminiAsync(apiKey),
-                Servicios.Ollama => await AIServicios.ObtenerModelosOllamaApiAsync(),
-                Servicios.OpenRouter => await AIServicios.ObtenerModelosOpenRouterAsync(apiKey),
-                Servicios.Claude => await AIServicios.ObtenerModelosClaudeAsync(apiKey),
-                Servicios.Deespeek => await AIServicios.ObtenerModelosDeepSeekAsync(apiKey),
-                _ => new List<string>()
+                Servicios.ChatGpt     => await AIServicios.ObtenerModelosOpenAIAsync(apiKey),
+                Servicios.Gemenni     => await AIServicios.ObtenerModelosGeminiAsync(apiKey),
+                Servicios.Ollama      => await AIServicios.ObtenerModelosOllamaApiAsync(),
+                Servicios.OpenRouter  => await AIServicios.ObtenerModelosOpenRouterAsync(apiKey),
+                Servicios.Claude      => await AIServicios.ObtenerModelosClaudeAsync(apiKey),
+                Servicios.Deespeek    => await AIServicios.ObtenerModelosDeepSeekAsync(apiKey),
+                Servicios.Antigravity => await AIServicios.ObtenerModelosAntigravityAsync(apiKey),
+                _                     => new List<string>()
             };
 
             return nombres
@@ -422,12 +465,10 @@ namespace OPENGIOAI.Vistas
             if (string.IsNullOrEmpty(texto)) return;
 
             MostrarMensaje(texto, true);
-            MostrarMensaje("Procesando tu solicitud, por favor espera...", false);
 
-            string respuesta = await EjecutarMotorIAAsync(texto, _telegramActivo, _slackActivo);
-
-            if (!_soloResptxt)
-                MostrarMensaje(respuesta, false);
+            // Las burbujas de streaming (Agente 1 y Agente 2) muestran el progreso en tiempo real.
+            // Ya no se necesita un mensaje "Procesando..." separado ni mostrar la respuesta al final.
+            await EjecutarMotorIAAsync(texto, _telegramActivo, _slackActivo);
         }
 
         /// <summary>
@@ -464,40 +505,270 @@ namespace OPENGIOAI.Vistas
             bool usarTelegram = false,
             bool usarSlack = false)
         {
-            // [C1] Liberar el token anterior antes de reemplazarlo.
+            // [ARIA] Delegar al nuevo orquestador de 4 agentes.
+            return await EjecutarConARIAAsync(instruccion, usarTelegram, usarSlack);
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        //  ORQUESTADOR ARIA — pipeline de 4 agentes con autocorrección
+        // ──────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Pipeline ARIA: Analista → Constructor → Guardián → Comunicador.
+        /// · Cada fase actualiza las píldoras de estado en tiempo real.
+        /// · El Guardián autocorrige errores hasta 3 veces sin molestar al usuario.
+        /// · El Comunicador produce respuesta final en streaming con lenguaje amigable.
+        /// </summary>
+        private async Task<string> EjecutarConARIAAsync(
+            string instruccion,
+            bool usarTelegram = false,
+            bool usarSlack = false)
+        {
             _ctsIA?.Cancel();
             _ctsIA?.Dispose();
             _ctsIA = new CancellationTokenSource(TimeSpan.FromSeconds(TimeoutSegundos));
-            CancellationToken ct = _ctsIA.Token;
+            var ct = _ctsIA.Token;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
 
             string instruccionOriginal = instruccion;
             instruccion = _ventana.CombinarConInstruccion(instruccion, _recordarTema, _soloChat);
 
-            // ── AGENTE 1 ──────────────────────────────────────────────────────
-            string respuesta = await EjecutarAgente1Async(instruccion, ct);
-            string resLimpia1 = Utils.LimpiarRespuesta(ObtenerContextoChat(_archivoSeleccionado.Ruta));
+            // ── Reset visual del panel de agentes ────────────────────────────
+            if (InvokeRequired) BeginInvoke(_panelAgentes.Reset);
+            else _panelAgentes.Reset();
 
-            MostrarMensaje(resLimpia1, false);
-            await EjecutarDifusionAsync(resLimpia1, usarTelegram, usarSlack);
+            // ── Crear orquestador y conectar eventos ─────────────────────────
+            var aria = new OrquestadorARIA(
+                _modeloSeleccionado.Modelos,
+                _archivoSeleccionado.Ruta,
+                _modeloSeleccionado.ApiKey,
+                Utils.ObtenerNombresApis(_listaApisDisponibles),
+                _soloChat,
+                _modeloSeleccionado.Agente,
+                maxReintentos: (int)_nudReintentos.Value);
 
-            // ── AGENTE 2 (solo si no es respuesta rápida) ─────────────────────
-            string resLimpiaFinal = resLimpia1;
-            if (!_soloResptxt)
+            aria.OnFaseIniciada += (fase, msg) =>
             {
-                ct.ThrowIfCancellationRequested(); // [C1] salida limpia si se canceló entre agentes
+                _panelAgentes.SetEstado(fase, EstadoAgente.Active);
+                if (!string.IsNullOrWhiteSpace(msg))
+                    MostrarBurbujaFase(fase, msg);
 
-                string contextoA2 = ConstruirContextoAgente2(instruccionOriginal, resLimpia1, respuesta);
-                respuesta = await EjecutarAgente2Async(contextoA2, ct);
-                resLimpiaFinal = Utils.LimpiarRespuesta(ObtenerContextoChat(_archivoSeleccionado.Ruta));
+                // Reenviar el plan del Analista a Telegram / Slack en tiempo real.
+                // Se filtra el mensaje genérico inicial; solo se envía el plan real.
+                if (fase == FaseAgente.Analista
+                    && !string.IsNullOrWhiteSpace(msg)
+                    && msg != "Analizando tu instrucción...")
+                {
+                    _ = EjecutarDifusionAsync($"🔍 {msg}", usarTelegram, usarSlack);
+                }
+            };
 
-                await EjecutarDifusionAsync(resLimpiaFinal, usarTelegram, usarSlack);
+            aria.OnFaseCompletada += (fase, ok) =>
+            {
+                _panelAgentes.SetEstado(fase, ok ? EstadoAgente.Done : EstadoAgente.Error);
+                // Flush streaming de la fase que termina
+                if (fase == FaseAgente.Constructor ||
+                    fase == FaseAgente.Guardian)
+                {
+                    FinalizarStreamingThrottle(
+                        _bufferScript.Length > 0 ? _bufferScript.ToString().TrimEnd() : null!);
+                }
+            };
+
+            aria.OnInicioScript += fase =>
+                BeginInvoke(() => IniciarBurbujaScriptFase(fase));
+
+            aria.OnLineaScript += (_, linea) =>
+                AgregarLineaScriptEnVivo(linea);
+
+            aria.OnToken += (fase, token) =>
+            {
+                if (fase == FaseAgente.Comunicador)
+                    AgregarTokenComunicador(token);
+            };
+
+            aria.OnReintentoGuardian += (intento, max, razon) =>
+                _panelAgentes.SetEstado(FaseAgente.Guardian, EstadoAgente.Active);
+
+            // ── Ejecutar pipeline ─────────────────────────────────────────────
+            string respuestaFinal;
+            try
+            {
+                respuestaFinal = await aria.EjecutarAsync(instruccion, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return "";
+            }
+            catch (Exception ex)
+            {
+                MostrarMensaje($"Error en el pipeline: {ex.Message}", false);
+                return "";
+            }
+            finally
+            {
+                sw.Stop();
+                ActualizarInfoRespuesta(
+                    $"ARIA: {sw.Elapsed.TotalSeconds:F1}s", "",
+                    Program.ComsumoTokens, "");
             }
 
-            // ── Registrar turno en ventana deslizante ─────────────────────────
-            _ventana.Agregar(instruccionOriginal, resLimpiaFinal);
+            // Flush final del Comunicador — pasar el buffer acumulado para garantizar
+            // que la burbuja muestre el texto aunque el timer aún no haya disparado.
+            // Bug: FinalizarStreamingThrottle(null!) dejaba la burbuja vacía cuando
+            // el streaming terminaba antes del primer tick de 120ms.
+            string textoFinalComunicador = _bufferScript.Length > 0
+                ? _bufferScript.ToString().TrimEnd()
+                : null!;
+            FinalizarStreamingThrottle(textoFinalComunicador);
 
-            return resLimpiaFinal;
+            // ── Registrar en ventana de contexto y difundir ───────────────────
+            _ventana.Agregar(instruccionOriginal, respuestaFinal);
+
+            if (!string.IsNullOrWhiteSpace(respuestaFinal))
+                await EjecutarDifusionAsync(respuestaFinal, usarTelegram, usarSlack);
+
+            return respuestaFinal;
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        //  HELPERS UI — BURBUJAS POR FASE ARIA
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Muestra o actualiza la burbuja de un agente específico.
+        /// Si ya existe una burbuja activa para esa fase, la actualiza en lugar de crear una nueva.
+        /// Thread-safe — puede llamarse desde cualquier hilo.
+        /// </summary>
+        private void MostrarBurbujaFase(FaseAgente fase, string mensaje)
+        {
+            if (InvokeRequired) { BeginInvoke(() => MostrarBurbujaFase(fase, mensaje)); return; }
+            if (string.IsNullOrWhiteSpace(mensaje)) return;
+
+            string faseTag = fase.ToString();
+
+            // Actualizar burbuja existente de esta fase si ya existe
+            if (_burbujaFaseActual != null &&
+                !_burbujaFaseActual.IsDisposed &&
+                _burbujaFaseActual.Tag?.ToString() == faseTag)
+            {
+                _burbujaFaseActual.ActualizarTexto(ObtenerPrefijoFase(fase) + mensaje);
+                return;
+            }
+
+            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            var burbuja = new BurbujaChat(
+                ObtenerPrefijoFase(fase) + mensaje,
+                false, anchoMax,
+                Properties.Resources.iconos1)
+            {
+                Tag     = faseTag,
+                Margin  = ObtenerMargenFase(fase)
+            };
+
+            _burbujaFaseActual = burbuja;
+            pnlChat.Controls.Add(burbuja);
+            pnlChat.ScrollControlIntoView(burbuja);
+        }
+
+        /// <summary>
+        /// Inicia la burbuja de streaming para la ejecución de script del Constructor o Guardián.
+        /// Debe llamarse desde el hilo UI (via BeginInvoke).
+        /// </summary>
+        private void IniciarBurbujaScriptFase(FaseAgente fase)
+        {
+            _bufferScript.Clear();
+            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+
+            string titulo = fase == FaseAgente.Guardian
+                ? "🛡 Corrigiendo..."
+                : "⚙ Ejecutando...";
+
+            _burbujaScriptActual = new BurbujaChat(
+                titulo, false, anchoMax, Properties.Resources.iconos1)
+            {
+                Tag    = fase.ToString(),
+                Margin = ObtenerMargenFase(fase)
+            };
+
+            pnlChat.Controls.Add(_burbujaScriptActual);
+            pnlChat.ScrollControlIntoView(_burbujaScriptActual);
+
+            _burbujaStreamingActual = _burbujaScriptActual;
+            _burbujaFaseActual = null; // Próximo OnFaseIniciada de este agente crea nueva burbuja
+            _timerStreaming.Start();
+        }
+
+        /// <summary>
+        /// Añade un token del Comunicador a la burbuja de streaming.
+        /// Crea la burbuja si aún no existe. Thread-safe.
+        /// </summary>
+        private void AgregarTokenComunicador(string token)
+        {
+            // Si la burbuja de streaming no pertenece al Comunicador, crear una nueva
+            if (_burbujaStreamingActual == null ||
+                _burbujaStreamingActual.IsDisposed ||
+                _burbujaStreamingActual.Tag?.ToString() != FaseAgente.Comunicador.ToString())
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(() => { IniciarBurbujaComunicador(); AgregarTokenComunicador(token); });
+                    return;
+                }
+                IniciarBurbujaComunicador();
+            }
+
+            _bufferScript.Append(token);
+            _streamingTextoActual = _bufferScript.ToString();
+            _streamingPendiente   = true;
+        }
+
+        /// <summary>
+        /// Crea la burbuja de streaming del Comunicador (respuesta final).
+        /// Llamar solo desde el hilo UI.
+        /// </summary>
+        private void IniciarBurbujaComunicador()
+        {
+            _bufferScript.Clear();
+            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+
+            var burbuja = new BurbujaChat(
+                "💬", false, anchoMax, Properties.Resources.iconos1)
+            {
+                Tag    = FaseAgente.Comunicador.ToString(),
+                Margin = new Padding(250, 5, 80, 5)
+            };
+
+            pnlChat.Controls.Add(burbuja);
+            pnlChat.ScrollControlIntoView(burbuja);
+
+            _burbujaStreamingActual = burbuja;
+            _timerStreaming.Start();
+        }
+
+        // ── Utilidades de presentación por fase ───────────────────────────────
+
+        private static string ObtenerPrefijoFase(FaseAgente fase) => fase switch
+        {
+            FaseAgente.Analista    => "🔍  ",
+            FaseAgente.Constructor => "⚙  ",
+            FaseAgente.Guardian    => "🛡  ",
+            FaseAgente.Comunicador => "",
+            _ => ""
+        };
+
+        private static Padding ObtenerMargenFase(FaseAgente fase) => fase switch
+        {
+            // Analista: margen izquierdo grande → burbuja pequeña a la izquierda
+            FaseAgente.Analista    => new Padding(10, 5, 350, 5),
+            // Constructor/Guardián: centrado, cuerpo técnico
+            FaseAgente.Constructor => new Padding(60, 5, 200, 5),
+            FaseAgente.Guardian    => new Padding(60, 5, 200, 5),
+            // Comunicador: margen derecho pequeño → burbuja principal (respuesta)
+            FaseAgente.Comunicador => new Padding(250, 5, 80, 5),
+            _ => new Padding(250, 5, 80, 5)
+        };
 
         /// <summary>
         /// Ejecuta Agente 1 (generación) con el token de cancelación activo.
@@ -516,19 +787,108 @@ namespace OPENGIOAI.Vistas
                 Utils.ObtenerNombresApis(_listaApisDisponibles),
                 _soloChat,
                 _modeloSeleccionado.Agente,
-                ct);
+                ct,
+                onInicioScript: () => BeginInvoke(IniciarBurbujaScriptEnVivo),
+                onSalidaScript: linea => AgregarLineaScriptEnVivo(linea));
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        //  STREAMING DE SALIDA DE SCRIPT EN VIVO
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Crea la burbuja de "en vivo" al inicio de la ejecución del script.
+        /// Debe llamarse en el hilo de UI (ya garantizado vía BeginInvoke).
+        /// </summary>
+        private void IniciarBurbujaScriptEnVivo()
+        {
+            _bufferScript.Clear();
+            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            _burbujaScriptActual = new BurbujaChat(
+                "⚙ Ejecutando script...", false, anchoMax, Properties.Resources.iconos1)
+            {
+                Tag = "10",
+                Margin = new Padding(250, 5, 80, 5)
+            };
+            pnlChat.Controls.Add(_burbujaScriptActual);
+            pnlChat.ScrollControlIntoView(_burbujaScriptActual);
+
+            // Activar throttle sobre esta burbuja
+            _burbujaStreamingActual = _burbujaScriptActual;
+            _timerStreaming.Start();
         }
 
         /// <summary>
-        /// Ejecuta Agente 2 (validación / mejora) con el token de cancelación activo.
-        /// [C2] Al estar separado, puede extenderse fácilmente para soportar un
-        ///      modelo diferente (ej: un validador más barato/rápido).
+        /// Acumula una línea de salida para el siguiente tick del timer de throttle.
+        /// Seguro para llamar desde cualquier hilo (incluso thread pool).
         /// </summary>
-        private async Task<string> EjecutarAgente2Async(string contexto, CancellationToken ct)
+        private void AgregarLineaScriptEnVivo(string linea)
+        {
+            if (_burbujaScriptActual == null || _burbujaScriptActual.IsDisposed) return;
+            _bufferScript.AppendLine(linea);
+            _streamingTextoActual = _bufferScript.ToString().TrimEnd();
+            _streamingPendiente = true;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        //  HELPERS DE THROTTLE STREAMING
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Apunta el throttle a una nueva burbuja y activa el timer.
+        /// Llamar desde el hilo UI.
+        /// </summary>
+        private void IniciarStreamingThrottle(BurbujaChat burbuja)
+        {
+            _burbujaStreamingActual = burbuja;
+            _streamingTextoActual = "";
+            _streamingPendiente = false;
+            _timerStreaming.Start();
+        }
+
+        /// <summary>
+        /// Detiene el timer, realiza la última actualización pendiente y hace scroll.
+        /// Llamar desde el hilo UI (o con InvokeRequired).
+        /// </summary>
+        private void FinalizarStreamingThrottle(string textoFinal)
+        {
+            if (InvokeRequired) { Invoke(() => FinalizarStreamingThrottle(textoFinal)); return; }
+
+            _timerStreaming.Stop();
+            _streamingPendiente = false;
+
+            if (_burbujaStreamingActual == null || _burbujaStreamingActual.IsDisposed) return;
+            if (!string.IsNullOrEmpty(textoFinal))
+                _burbujaStreamingActual.ActualizarTexto(textoFinal);
+
+            if (_burbujaStreamingActual.Parent is ScrollableControl sc)
+                sc.ScrollControlIntoView(_burbujaStreamingActual);
+
+            _burbujaStreamingActual = null;
+        }
+
+        /// <summary>
+        /// Agente 2: respuesta de texto directo del LLM con streaming token a token.
+        /// No genera ni ejecuta Python — es solo análisis y formateo de lenguaje natural.
+        /// Esto lo hace ~3x más rápido que la versión anterior (sin script execution).
+        /// </summary>
+        /// <summary>
+        /// Agente 2: genera un script Python que corrige errores o informa el resultado.
+        ///   - Si Agent 1 falló → el script corrige y ejecuta, escribe resultado en respuesta.txt
+        ///   - Si Agent 1 tuvo éxito → el script escribe resumen humano en respuesta.txt
+        /// La salida del script se muestra en tiempo real en una burbuja de streaming propia.
+        /// </summary>
+        private async Task<string> EjecutarAgente2StreamingAsync(
+            string instruccionOriginal,
+            string codigoGenerado,
+            string respuestaTxt,
+            CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
 
-            return await AIModelConector.EjecutarInstruccionIAAsync(
+            string contexto = ConstruirContextoAgente2(instruccionOriginal, respuestaTxt, codigoGenerado);
+
+            await AIModelConector.EjecutarInstruccionIAAsync(
                 contexto,
                 _modeloSeleccionado.Modelos,
                 _archivoSeleccionado.Ruta,
@@ -536,7 +896,36 @@ namespace OPENGIOAI.Vistas
                 Utils.ObtenerNombresApis(_listaApisDisponibles),
                 _soloChat,
                 _modeloSeleccionado.Agente,
-                ct);
+                ct,
+                onInicioScript: () => BeginInvoke(IniciarBurbujaAgente2),
+                onSalidaScript: linea => AgregarLineaScriptEnVivo(linea));
+
+            // Flush final de la burbuja de Agent 2
+            FinalizarStreamingThrottle(_bufferScript.Length > 0
+                ? _bufferScript.ToString().TrimEnd()
+                : null!);
+
+            // El resultado definitivo viene de respuesta.txt (Agent 2 lo escribe ahí)
+            return Utils.LimpiarRespuesta(ObtenerContextoChat(_archivoSeleccionado.Ruta));
+        }
+
+        /// <summary>
+        /// Crea la burbuja de streaming para Agente 2 (verificador/corrector).
+        /// Llamar solo desde el hilo UI (vía BeginInvoke).
+        /// </summary>
+        private void IniciarBurbujaAgente2()
+        {
+            _bufferScript.Clear();
+            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            _burbujaScriptActual = new BurbujaChat(
+                "🔍 Agente 2 verificando...", false, anchoMax, Properties.Resources.iconos1)
+            {
+                Tag = "10",
+                Margin = new Padding(250, 5, 80, 5)
+            };
+            pnlChat.Controls.Add(_burbujaScriptActual);
+            pnlChat.ScrollControlIntoView(_burbujaScriptActual);
+            IniciarStreamingThrottle(_burbujaScriptActual);
         }
 
         /// <summary>
@@ -558,6 +947,25 @@ namespace OPENGIOAI.Vistas
                 await Task.WhenAll(tareas);
         }
 
+        /// <summary>
+        /// Actualiza las etiquetas de tiempo y tokens en el hilo de UI.
+        /// Seguro para llamar desde cualquier hilo.
+        /// </summary>
+        private void ActualizarInfoRespuesta(
+            string tiempoA1, string tiempoA2,
+            string tokensA1, string tokensA2)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(() => ActualizarInfoRespuesta(tiempoA1, tiempoA2, tokensA1, tokensA2));
+                return;
+            }
+            lblTime.Text = tiempoA1;
+            lblTimeR.Text = tiempoA2;
+            lblConsumo.Text = tokensA1;
+            lblConsumoA.Text = tokensA2;
+        }
+
         // =====================================================================
         //  HELPERS DEL MOTOR
         // =====================================================================
@@ -577,21 +985,29 @@ namespace OPENGIOAI.Vistas
                 : codigoGenerado;
 
             return $@"
-            [INSTRUCCION_ORIGINAL]
-            {instruccion}
+[INSTRUCCION_ORIGINAL]
+{instruccion}
 
-            [RESPUESTA_AGENTE_1]
-            {respuestaAgente1}
+[SALIDA_AGENTE_1 — contenido de respuesta.txt]
+{respuestaAgente1}
 
-            [CODIGO_GENERADO]
-            {codigo}
+[CODIGO_EJECUTADO_POR_AGENTE_1]
+{codigo}
 
-            ERES UN SEGUNDO AGENTE , TU DEBES ANALIZAR LA RESPUESTA DEL AGENTE 1
-            DEBES COMPARAR CON LA INSTRUCCION ORIGINAL Y VER SI LA REALIZO.
-            SI ALGO FALLO: PROPON Y SOLUCIONA.
-            SI TODO SALIO BIEN : ANALIZA Y PUEDES DARLE UN MENSAJE COMO AGENTE , PROPONIENDO TAREAS ATRAVEZ DE SOLO ESCRITO EN respuesta.txt , NO ESCRIBIR EN FORMATO JSON , DEBE SER HUMANO 
-            ENTENDIBLE , SIN TANTO TECNISISMO.
-            TODO CON CODIGO PHYTON , TU TAREA ES ESCRIBIR EN EL txt o SOLUCIONAR EL PROBLEMA
+ERES EL AGENTE VERIFICADOR. Tu única tarea es escribir en respuesta.txt el resultado final.
+
+REGLA 1 — SI HAY ERROR o la salida está vacía o no cumple la instrucción original:
+  · Genera un script Python que corrija el problema y lo ejecute.
+  · Escribe SOLO el resultado corregido en respuesta.txt.
+  · Sin explicaciones, sin comentarios, solo la salida.
+
+REGLA 2 — SI TODO SALIÓ BIEN:
+  · Genera un script Python que escriba en respuesta.txt un resumen claro y humano
+    de lo que se hizo y el resultado obtenido.
+  · Lenguaje natural, sin tecnicismos, puedes usar emojis con moderación.
+  · Sin repetir el código, solo el resultado.
+
+SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             ";
         }
 
@@ -709,17 +1125,30 @@ namespace OPENGIOAI.Vistas
         {
             bool valida = agente switch
             {
-                Servicios.Gemenni => await AIServicios.ApiKeyGeminiValidaAsync(apikey),
-                Servicios.ChatGpt => await AIServicios.ApiKeyOpenAIValidaAsync(apikey),
-                Servicios.Ollama => await AIServicios.OllamaEstaActivoAsync(),
-                Servicios.OpenRouter => await AIServicios.ApiKeyOpenRouterValidaAsync(apikey),
-                Servicios.Claude => await AIServicios.ApiKeyClaudeValidaAsync(apikey),
-                Servicios.Deespeek => await AIServicios.ApiKeyDeepSeekValidaAsync(apikey),
-                _ => false
+                Servicios.Gemenni     => await AIServicios.ApiKeyGeminiValidaAsync(apikey),
+                Servicios.ChatGpt     => await AIServicios.ApiKeyOpenAIValidaAsync(apikey),
+                Servicios.Ollama      => await AIServicios.OllamaEstaActivoAsync(),
+                Servicios.OpenRouter  => await AIServicios.ApiKeyOpenRouterValidaAsync(apikey),
+                Servicios.Claude      => await AIServicios.ApiKeyClaudeValidaAsync(apikey),
+                Servicios.Deespeek    => await AIServicios.ApiKeyDeepSeekValidaAsync(apikey),
+                // Antigravity: AntigravityEstaActivoAsync ya auto-detecta project si apikey es inválido
+                Servicios.Antigravity => await AIServicios.AntigravityEstaActivoAsync(apikey),
+                _                     => false
             };
 
             if (!valida)
-                MostrarMensaje("Tu Api no es correcta o tiene algún error, comprueba por favor.", false);
+            {
+                string msg = agente == Servicios.Antigravity
+                    ? "Antigravity no está disponible.\n\n" +
+                      "Verifica:\n" +
+                      "• Ejecuta 'gcloud auth application-default login'\n" +
+                      "• Ejecuta 'gcloud config set project TU-PROYECTO'\n" +
+                      "• Que la API Vertex AI esté habilitada en el proyecto\n" +
+                      "• Guarda la config en Proveedores → Antigravity"
+                    : "Tu Api no es correcta o tiene algún error, comprueba por favor.";
+
+                MostrarMensaje(msg, false);
+            }
         }
 
         // =====================================================================
@@ -1078,8 +1507,9 @@ namespace OPENGIOAI.Vistas
                         try
                         {
                             if (string.IsNullOrEmpty(textoOriginal)) return;
-                            string resp = await EjecutarMotorIAAsync(textoOriginal, usarTelegram);
-                            MostrarMensaje(resp, false);
+                            // EjecutarMotorIAAsync ya muestra las burbujas de streaming
+                            // internamente — no hace falta llamar MostrarMensaje aquí.
+                            await EjecutarMotorIAAsync(textoOriginal, usarTelegram);
                         }
                         finally
                         {
@@ -1358,6 +1788,19 @@ namespace OPENGIOAI.Vistas
                 textBoxInstrucion.AllowDrop = true;
                 textBoxInstrucion.AcceptsTab = true;
 
+                // ── Barra de estado de agentes ARIA ─────────────────────────────
+                // Se inserta entre panelHead (DockStyle.Top) y pnlChat (Fill).
+                // SetChildIndex con el índice de panelHead empuja panelHead al siguiente
+                // z-order, de modo que panelHead se acople primero (arriba del todo)
+                // y _panelAgentes se acople debajo sin tocar el Designer.
+                _panelAgentes = new PanelAgentes
+                {
+                    Dock = DockStyle.Top,
+                    Height = 40
+                };
+                Controls.Add(_panelAgentes);
+                Controls.SetChildIndex(_panelAgentes, Controls.IndexOf(panelHead));
+
                 pnlContenedorTxt.Redondear();
                 pnlChat.Redondear();
                 pnlContenedorArchivos.Redondear();
@@ -1384,6 +1827,41 @@ namespace OPENGIOAI.Vistas
                 _toolTipArchivos.InitialDelay = 500;
                 _toolTipArchivos.ReshowDelay = 200;
                 _toolTipArchivos.ShowAlways = true;
+
+                // ── Control de reintentos del Guardián ──────────────────────
+                var lblReintentos = new Label
+                {
+                    Text      = "Reintentos:",
+                    AutoSize  = true,
+                    ForeColor = Color.FromArgb(160, 180, 210),
+                    BackColor = Color.Transparent,
+                    Font      = new Font("Segoe UI", 7.5f),
+                    Location  = new Point(740, 8)
+                };
+
+                _nudReintentos = new NumericUpDown
+                {
+                    Minimum   = 0,
+                    Maximum   = 5,
+                    Value     = 3,
+                    Width     = 45,
+                    Height    = 22,
+                    Location  = new Point(810, 5),
+                    BackColor = Color.FromArgb(30, 41, 59),
+                    ForeColor = Color.White,
+                    Font      = new Font("Segoe UI", 9f, FontStyle.Bold),
+                    BorderStyle = BorderStyle.FixedSingle,
+                    TextAlign = HorizontalAlignment.Center,
+                    InterceptArrowKeys = true
+                };
+
+                _toolTipArchivos.SetToolTip(_nudReintentos,
+                    "Número de correcciones automáticas del Guardián (0 = sin reintentos)");
+                _toolTipArchivos.SetToolTip(lblReintentos,
+                    "Número de correcciones automáticas del Guardián");
+
+                pnlContenedorTxt.Controls.Add(lblReintentos);
+                pnlContenedorTxt.Controls.Add(_nudReintentos);
             }
             finally
             {

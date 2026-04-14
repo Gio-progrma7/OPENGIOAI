@@ -16,6 +16,7 @@
 
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Promts;
+using OPENGIOAI.Skills;
 using OPENGIOAI.Utilerias;
 
 namespace OPENGIOAI.Data
@@ -46,6 +47,11 @@ namespace OPENGIOAI.Data
         // Se construye una sola vez en BuildAsync(), nunca se muta.
         public string PromptEfectivo { get; private set; } = "";
 
+        // ── Skills cargados para este contexto ────────────────
+        public IReadOnlyList<Skill> Skills { get; init; } =
+            System.Array.Empty<Skill>();
+        public string ManifiestoSkills { get; init; } = "";
+
         // ── Constructor privado — usar BuildAsync() ───────────
         private AgentContext() { }
 
@@ -74,16 +80,25 @@ namespace OPENGIOAI.Data
             string promptErr = await MarkdownFileManager
                 .LeerAsync(RutasProyecto.ObtenerRutaPromtAgente());
 
+            // ── Cargar skills del directorio de trabajo ──────────────────────
+            var skills = SkillLoader.CargarActivas(rutaArchivo);
+            string manifiesto = SkillManifestBuilder.Construir(skills);
+
+            // Generar skill_runner.py en background — no bloquea el pipeline
+            _ = SkillRunnerHelper.GenerarAsync(rutaArchivo, skills, ct);
+
             var ctx = new AgentContext
             {
-                PromptMaestro = promptMaestro,
+                PromptMaestro      = promptMaestro,
                 PromptRespuestaErr = promptErr,
-                RutaArchivo = rutaArchivo,
-                Modelo = modelo,
-                ApiKey = apiKey,
-                Servicio = servicio,
-                SoloChat = soloChat,
-                ClavesDisponibles = clavesDisponibles,
+                RutaArchivo        = rutaArchivo,
+                Modelo             = modelo,
+                ApiKey             = apiKey,
+                Servicio           = servicio,
+                SoloChat           = soloChat,
+                ClavesDisponibles  = clavesDisponibles,
+                Skills             = skills,
+                ManifiestoSkills   = manifiesto,
             };
 
             // Ensamblar prompt efectivo una sola vez
@@ -141,12 +156,15 @@ Tu respuesta SIEMPRE debe ser código Python válido. Sin texto plano.
 ");
             }
 
-            // ── Sección: skills ──────────────────────────────────
-            sb.Append($@"
-================= SISTEMA DE SKILLS =================
-Scripts en: {RutaArchivo}\skills\
-Lista en:   {RutaArchivo}\ListSkills.json
+            // ── Sección: skills disponibles (manifiesto dinámico) ──
+            if (!string.IsNullOrWhiteSpace(ManifiestoSkills))
+            {
+                sb.Append($@"
+================= SKILLS DISPONIBLES =================
+{ManifiestoSkills}
+Importar en Python: from skill_runner import skill_run, skill_run_json
 ");
+            }
 
             // ── Sección: automatizaciones ────────────────────────
             sb.Append($@"
@@ -194,16 +212,17 @@ Nombre: Giovanni Sanchez
         {
             return new AgentContext
             {
-                PromptMaestro = PromptMaestro,
+                PromptMaestro      = PromptMaestro,
                 PromptRespuestaErr = PromptRespuestaErr,
-                RutaArchivo = RutaArchivo,
-                Modelo = Modelo,
-                ApiKey = ApiKey,
-                Servicio = Servicio,
-                SoloChat = SoloChat,
-                ClavesDisponibles = ClavesDisponibles,
-                // El agente 2 usa el prompt de error/respuesta como base
-                PromptEfectivo = PromptRespuestaErr,
+                RutaArchivo        = RutaArchivo,
+                Modelo             = Modelo,
+                ApiKey             = ApiKey,
+                Servicio           = Servicio,
+                SoloChat           = SoloChat,
+                ClavesDisponibles  = ClavesDisponibles,
+                Skills             = Skills,
+                ManifiestoSkills   = ManifiestoSkills,
+                PromptEfectivo     = PromptRespuestaErr,
             };
         }
 
@@ -217,15 +236,17 @@ Nombre: Giovanni Sanchez
         {
             return new AgentContext
             {
-                PromptMaestro = PromptMaestro,
+                PromptMaestro      = PromptMaestro,
                 PromptRespuestaErr = PromptRespuestaErr,
-                RutaArchivo = RutaArchivo,
-                Modelo = Modelo,
-                ApiKey = ApiKey,
-                Servicio = Servicio,
-                SoloChat = SoloChat,
-                ClavesDisponibles = ClavesDisponibles,
-                PromptEfectivo = promptEfectivo,
+                RutaArchivo        = RutaArchivo,
+                Modelo             = Modelo,
+                ApiKey             = ApiKey,
+                Servicio           = Servicio,
+                SoloChat           = SoloChat,
+                ClavesDisponibles  = ClavesDisponibles,
+                Skills             = Skills,
+                ManifiestoSkills   = ManifiestoSkills,
+                PromptEfectivo     = promptEfectivo,
             };
         }
 

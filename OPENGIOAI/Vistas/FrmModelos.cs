@@ -23,6 +23,9 @@ namespace OPENGIOAI.Vistas
         private List<Servicios> _listaServicios = new();
         private bool _cargandoControles = false;
 
+        // Project ID de GCP detectado desde gcloud (se actualiza al verificar estado)
+        private string _antigravityProjectId = "";
+
         #endregion
 
         #region Constructor e inicialización
@@ -46,11 +49,20 @@ namespace OPENGIOAI.Vistas
         {
             EstadoPanels(false);
 
+            // Ocultar combobox de API para Antigravity — el Project ID viene de gcloud,
+            // no de la lista de API keys. Mostrar solo el label explicativo.
+            comboBoxApiAntigravity.Visible  = false;
+            labelAntigravityApiKey.Text     = "Project ID detectado por gcloud:";
+            labelAntigravityApiKey.ForeColor = Color.FromArgb(100, 116, 139);
+
             await CargarDatos();
             CargarControles();
             await CargarInfoAgentes();
 
             EstadoPanels(true);
+
+            // Verificar estado de autenticación gcloud en background
+            _ = VerificarEstadoGcloudAsync();
         }
 
         #endregion
@@ -85,32 +97,35 @@ namespace OPENGIOAI.Vistas
             {
                 _listaApis = new()
                 {
-                    comboBoxApiChat,
-                    comboBoxApiClau,
-                    comboBoxApiGem,
-                    comboBoxApiOlla,
-                    comboBoxApiDesp,
-                    ComboxApiOpenroute
+                    comboBoxApiChat,          // [0] ChatGpt    = 1
+                    comboBoxApiClau,          // [1] Claude     = 2
+                    comboBoxApiGem,           // [2] Gemenni    = 3
+                    comboBoxApiOlla,          // [3] Ollama     = 4
+                    comboBoxApiDesp,          // [4] Deespeek   = 5
+                    ComboxApiOpenroute,       // [5] OpenRouter = 6
+                    comboBoxApiAntigravity    // [6] Antigravity= 7
                 };
 
                 _listaModels = new()
                 {
-                    comboBoxMChat,
-                    comboBoxMClau,
-                    comboBoxMGem,
-                    comboBoxmOlla,
-                    comboBoxMDesp,
-                    ComboxMOpenroute
+                    comboBoxMChat,            // [0] ChatGpt
+                    comboBoxMClau,            // [1] Claude
+                    comboBoxMGem,             // [2] Gemenni
+                    comboBoxmOlla,            // [3] Ollama
+                    comboBoxMDesp,            // [4] Deespeek
+                    ComboxMOpenroute,         // [5] OpenRouter
+                    comboBoxMAntigravity      // [6] Antigravity
                 };
 
                 _listaEstados = new()
                 {
-                    checkBoxChat,
-                    checkBoxClua,
-                    checkBoxGem,
-                    checkBoxOlla,
-                    checkBoxDeesp,
-                    checkBoxOpenroute
+                    checkBoxChat,             // [0] ChatGpt
+                    checkBoxClua,             // [1] Claude
+                    checkBoxGem,              // [2] Gemenni
+                    checkBoxOlla,             // [3] Ollama
+                    checkBoxDeesp,            // [4] Deespeek
+                    checkBoxOpenroute,        // [5] OpenRouter
+                    checkBoxAntigravity       // [6] Antigravity
                 };
 
                 for (int i = 0; i < _listaApis.Count; i++)
@@ -162,13 +177,14 @@ namespace OPENGIOAI.Vistas
         {
             List<string> lsModels = servicio switch
             {
-                Servicios.ChatGpt => await AIServicios.ObtenerModelosOpenAIAsync(apiKey),
-                Servicios.Gemenni => await AIServicios.ObtenerModelosGeminiAsync(apiKey),
-                Servicios.Ollama => await AIServicios.ObtenerModelosOllamaApiAsync(),
-                Servicios.OpenRouter => await AIServicios.ObtenerModelosOpenRouterAsync(apiKey),
-                Servicios.Claude => await AIServicios.ObtenerModelosClaudeAsync(apiKey),
-                Servicios.Deespeek => await AIServicios.ObtenerModelosDeepSeekAsync(apiKey),
-                _ => new List<string>()
+                Servicios.ChatGpt     => await AIServicios.ObtenerModelosOpenAIAsync(apiKey),
+                Servicios.Gemenni     => await AIServicios.ObtenerModelosGeminiAsync(apiKey),
+                Servicios.Ollama      => await AIServicios.ObtenerModelosOllamaApiAsync(),
+                Servicios.OpenRouter  => await AIServicios.ObtenerModelosOpenRouterAsync(apiKey),
+                Servicios.Claude      => await AIServicios.ObtenerModelosClaudeAsync(apiKey),
+                Servicios.Deespeek    => await AIServicios.ObtenerModelosDeepSeekAsync(apiKey),
+                Servicios.Antigravity => await AIServicios.ObtenerModelosAntigravityAsync(apiKey),
+                _                     => new List<string>()
             };
 
             return lsModels
@@ -254,20 +270,49 @@ namespace OPENGIOAI.Vistas
         {
             int index = (int)servicio - 1;
 
-            Api apiSeleccionada = _listaApis[index].SelectedItem as Api;
+            string apiKey;
+
+            if (servicio == Servicios.Antigravity)
+            {
+                // Para Antigravity el "ApiKey" NO es una key de la lista —
+                // es el GCP Project ID detectado por gcloud.
+                apiKey = _antigravityProjectId;
+
+                if (string.IsNullOrWhiteSpace(apiKey))
+                {
+                    MessageBox.Show(
+                        "No se detectó un Project ID de GCP activo.\n\n" +
+                        "Pasos:\n" +
+                        "1. Haz clic en '🔑 Autenticar gcloud'\n" +
+                        "2. Completa el login en el navegador\n" +
+                        "3. Ejecuta: gcloud config set project TU-PROYECTO\n" +
+                        "4. Vuelve a abrir este panel",
+                        "Project ID requerido",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                Api apiSeleccionada = _listaApis[index].SelectedItem as Api;
+                apiKey = apiSeleccionada?.key ?? string.Empty;
+            }
 
             Modelo modeloEditado = new()
             {
                 Agente = servicio,
                 Estado = _listaEstados[index].Checked,
-                ApiKey = apiSeleccionada?.key ?? string.Empty,
+                ApiKey = apiKey,
                 Modelos = _listaModels[index].Text
             };
 
             ModificarAgente(modeloEditado);
 
             MessageBox.Show(
-                "Configuración guardada correctamente.",
+                servicio == Servicios.Antigravity
+                    ? $"Configuración guardada.\nProject ID: {apiKey}\nModelo: {modeloEditado.Modelos}"
+                    : "Configuración guardada correctamente.",
                 "Guardar",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -283,6 +328,70 @@ namespace OPENGIOAI.Vistas
         private void btnGuardarClau_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Claude);
         private void btnGuardarDeesp_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Deespeek);
         private void btnOpenroute_Click(object sender, EventArgs e) => InicializarAgente(Servicios.OpenRouter);
+        private void btnGuardarAntigravity_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Antigravity);
+
+        /// <summary>
+        /// Abre una ventana CMD con el comando de autenticación gcloud.
+        /// El usuario completa el login en el browser; al volver se actualiza el indicador.
+        /// </summary>
+        private async void btnAutenticarAntigravity_Click(object sender, EventArgs e)
+        {
+            btnAutenticarAntigravity.Enabled = false;
+            lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); // ámbar
+            lblGcloudStatus.Text = "⬤  Buscando gcloud...";
+
+            try
+            {
+                // Buscar ruta real de gcloud (evita el error "no se reconoce como comando")
+                string gcloudExe = AIServicios.EncontrarGcloudExe();
+
+                string cmdArgs;
+                if (!string.IsNullOrEmpty(gcloudExe))
+                {
+                    // Ruta encontrada — abrir cmd con la ruta completa
+                    cmdArgs = $"/k \"{gcloudExe}\" auth application-default login";
+                    lblGcloudStatus.Text = "⬤  Abriendo terminal...";
+                }
+                else
+                {
+                    // No encontrado en rutas conocidas — intentar igualmente vía cmd
+                    cmdArgs = "/k gcloud auth application-default login";
+                    lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11);
+                    lblGcloudStatus.Text = "⬤  gcloud no encontrado en rutas conocidas";
+                    MessageBox.Show(
+                        "No se encontró gcloud en las rutas de instalación estándar.\n\n" +
+                        "Si tienes Google Cloud SDK instalado, asegúrate de que esté en el PATH.\n" +
+                        "Descárgalo desde: https://cloud.google.com/sdk/docs/install",
+                        "Google Cloud SDK",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+
+                // Abrir terminal visible para que el usuario complete el login
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName        = "cmd.exe",
+                    Arguments       = cmdArgs,
+                    UseShellExecute = true   // true = ventana visible con foco
+                });
+
+                // Esperar a que el usuario complete el proceso en el browser
+                lblGcloudStatus.Text = "⬤  Esperando autorización en el browser...";
+                await Task.Delay(12000);
+
+                // Re-verificar estado
+                await VerificarEstadoGcloudAsync();
+            }
+            catch (Exception ex)
+            {
+                lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68);
+                lblGcloudStatus.Text = $"⬤  Error: {ex.Message}";
+            }
+            finally
+            {
+                btnAutenticarAntigravity.Enabled = true;
+            }
+        }
 
         #endregion
 
@@ -318,6 +427,92 @@ namespace OPENGIOAI.Vistas
             await SeleccionarApi(Servicios.Deespeek, api.key);
         }
 
+        private async void comboBoxApiAntigravity_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (_cargandoControles || comboBoxApiAntigravity.SelectedItem is not Api api) return;
+            await SeleccionarApi(Servicios.Antigravity, api.key);
+        }
+
+        #endregion
+
+        #region Antigravity — Estado gcloud
+
+        /// <summary>
+        /// Verifica si hay un token ADC activo y actualiza el indicador visual.
+        /// Se llama al cargar el formulario y después de autenticar.
+        /// </summary>
+        private async Task VerificarEstadoGcloudAsync()
+        {
+            try
+            {
+                string token = await AIServicios.ObtenerTokenGcloudAsync();
+                bool autenticado = !string.IsNullOrWhiteSpace(token);
+
+                // ActualizarIndicadorGcloud es async void → invocar siempre en UI thread
+                if (InvokeRequired)
+                    Invoke(() => ActualizarIndicadorGcloud(autenticado));
+                else
+                    ActualizarIndicadorGcloud(autenticado);
+            }
+            catch
+            {
+                if (InvokeRequired)
+                    Invoke(() => ActualizarIndicadorGcloud(false));
+                else
+                    ActualizarIndicadorGcloud(false);
+            }
+        }
+
+        private async void ActualizarIndicadorGcloud(bool autenticado)
+        {
+            if (!autenticado)
+            {
+                lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68);  // rojo
+                lblGcloudStatus.Text = "⬤  No autenticado";
+                return;
+            }
+
+            // Autenticado → obtener project ID activo
+            lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); // ámbar mientras carga
+            lblGcloudStatus.Text = "⬤  Detectando proyecto...";
+
+            string projectId = await AIServicios.ObtenerProyectoGcloudAsync();
+
+            if (!string.IsNullOrWhiteSpace(projectId))
+            {
+                _antigravityProjectId = projectId;   // guardar para usarlo en Guardar
+                lblGcloudStatus.ForeColor = Color.FromArgb(34, 197, 94);  // verde
+                lblGcloudStatus.Text = $"⬤  {projectId}";
+
+                // Si el campo Project ID está vacío, cargarlo automáticamente
+                // y disparar la carga de modelos
+                if (comboBoxApiAntigravity.SelectedItem is not Api selectedApi ||
+                    string.IsNullOrWhiteSpace(selectedApi.key))
+                {
+                    // Buscar en la lista de APIs si ya existe una entrada con ese project
+                    var apiExistente = _listaApisDisponibles
+                        .FirstOrDefault(a => a.key == projectId || a.Nombre == projectId);
+
+                    if (apiExistente != null)
+                    {
+                        comboBoxApiAntigravity.SelectedValue = apiExistente.key;
+                    }
+                    else
+                    {
+                        // Cargar modelos directamente con el project ID detectado
+                        await SeleccionarApi(Servicios.Antigravity, projectId);
+                    }
+                }
+            }
+            else
+            {
+                lblGcloudStatus.ForeColor = Color.FromArgb(34, 197, 94);  // verde (autenticado)
+                lblGcloudStatus.Text = "⬤  Autenticado (sin proyecto)";
+                // Sin proyecto → cargar igual con lista de respaldo
+                await SeleccionarApi(Servicios.Antigravity, "");
+            }
+        }
+
         #endregion
 
         #region UI — Visual y tema
@@ -329,12 +524,13 @@ namespace OPENGIOAI.Vistas
         /// <param name="estado"><c>true</c> para habilitar; <c>false</c> para deshabilitar.</param>
         private void EstadoPanels(bool estado)
         {
-            pnllChat.Enabled = estado;
-            pnlGem.Enabled = estado;
-            pnlDeesp.Enabled = estado;
-            pnlClau.Enabled = estado;
-            pnlOllla.Enabled = estado;
-            pnlOpenroute.Enabled = estado; // BUG FIX: faltaba este panel
+            pnllChat.Enabled       = estado;
+            pnlGem.Enabled         = estado;
+            pnlDeesp.Enabled       = estado;
+            pnlClau.Enabled        = estado;
+            pnlOllla.Enabled       = estado;
+            pnlOpenroute.Enabled   = estado;
+            pnlAntigravity.Enabled = estado;
         }
 
         /// <summary>
@@ -346,7 +542,7 @@ namespace OPENGIOAI.Vistas
             var paneles = new[]
             {
                 pnlClau, pnlGem, pnlOllla,
-                pnlDeesp, pnllChat, pnlOpenroute
+                pnlDeesp, pnllChat, pnlOpenroute, pnlAntigravity
             };
 
             foreach (var panel in paneles)
