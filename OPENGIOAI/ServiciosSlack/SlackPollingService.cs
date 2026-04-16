@@ -132,5 +132,84 @@ namespace OPENGIOAI.ServiciosSlack
                 content
             );
         }
+
+        /// <summary>
+        /// Envía texto plano con soporte mrkdwn (sin Blocks Kit).
+        /// Usar para código / triple backtick que Block Kit no renderiza bien.
+        /// </summary>
+        public async Task EnviarCodigoAsync(string text)
+        {
+            try
+            {
+                var payload = new
+                {
+                    channel = _channelId,
+                    text    = text,
+                    mrkdwn  = true
+                };
+                var content = new StringContent(
+                    JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                await _http.PostAsync("https://slack.com/api/chat.postMessage", content);
+            }
+            catch { /* ignorar errores secundarios */ }
+        }
+
+        /// <summary>
+        /// Envía un mensaje temporal de "pensando..." en el canal y devuelve su timestamp (ts).
+        /// Usa el ts devuelto para eliminar el mensaje con <see cref="EliminarMensajeAsync"/> cuando
+        /// el procesamiento termine.
+        /// Devuelve null si el envío falla.
+        /// </summary>
+        public async Task<string?> EnviarPensandoAsync()
+        {
+            try
+            {
+                var payload = new
+                {
+                    channel = _channelId,
+                    text    = "⏳ Procesando tu solicitud..."
+                };
+
+                var content = new StringContent(
+                    JsonSerializer.Serialize(payload),
+                    Encoding.UTF8, "application/json");
+
+                var resp = await _http.PostAsync(
+                    "https://slack.com/api/chat.postMessage", content);
+
+                var body = await resp.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(body);
+
+                if (doc.RootElement.TryGetProperty("ok", out var ok) && ok.GetBoolean() &&
+                    doc.RootElement.TryGetProperty("ts", out var ts))
+                    return ts.GetString();
+            }
+            catch { /* ignorar — indicador secundario */ }
+            return null;
+        }
+
+        /// <summary>
+        /// Elimina un mensaje previo usando su timestamp (ts).
+        /// Requiere que el bot tenga el scope <c>chat:write</c> y <c>chat:write.public</c>.
+        /// </summary>
+        public async Task EliminarMensajeAsync(string ts)
+        {
+            try
+            {
+                var payload = new
+                {
+                    channel = _channelId,
+                    ts      = ts
+                };
+
+                var content = new StringContent(
+                    JsonSerializer.Serialize(payload),
+                    Encoding.UTF8, "application/json");
+
+                await _http.PostAsync(
+                    "https://slack.com/api/chat.delete", content);
+            }
+            catch { /* ignorar */ }
+        }
     }
 }

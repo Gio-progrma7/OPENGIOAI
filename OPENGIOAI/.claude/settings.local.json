@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\PC ONE\\\\Desktop\\\\PRUEBASIA\\\\ARIALog.md' | Select-String '## 🧠 ARIA' | Select-Object -Last 40\")",
+      "Bash(python3 -c ':*)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Vistas/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Skills/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Entidades/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Data/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Agentes/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Herramientas/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/ServiciosSlack/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/ServiciosTelegram/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/ServiciosAI/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Themas/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Utilerias/*.cs)",
+      "Bash(wc -l \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\"/Promts/*.cs)",
+      "Bash(powershell -NoProfile -Command \"Select-String -Path 'C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\\\\Vistas\\\\FrmAutomatizaciones.cs' -Pattern 'GenerarScript|btnGenScript|GenerarNodo|EjecutarNodo|EjecutarFlujo|OrquestadorARIA|NodoActual' | Select-Object LineNumber, Line | Format-Table -AutoSize -Wrap\")",
+      "Bash(powershell -NoProfile -Command \"Select-String -Path 'C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\\\\Vistas\\\\FrmAutomatizaciones.cs' -Pattern 'PromptSistemaGenerador|PromptUsuarioGenerador|CorregirScriptConIA|AnalizarYCorregir|ProbarNodoConReintentos|ObtenerContextoCombinado|AsegurarScript' | Select-Object LineNumber, Line\")",
+      "Bash(dotnet build:*)",
+      "Bash(xargs grep:*)",
+      "Bash(wc -l \"/c/Users/PC ONE/source/repos/OPENGIOAI/OPENGIOAI/Skills\"/*.cs)",
+      "Bash(dir \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\" /b)",
+      "Bash(gh gist:*)",
+      "Bash(python3 upload_skills.py)",
+      "Bash(python upload_skills.py)"
+    ]
+  }
+}

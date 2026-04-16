@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json.Linq;
+﻿using Google.Apis.Auth.OAuth2;
+using Newtonsoft.Json.Linq;
 using OPENGIOAI.Entidades;
 using System;
 using System.Collections.Generic;
@@ -326,9 +327,10 @@ namespace OPENGIOAI.ServiciosAI
         /// </summary>
         public static async Task<List<string>> ObtenerModelosAntigravityAsync(string projectId)
         {
-            // Modelos Gemini disponibles en Vertex AI (lista de respaldo siempre visible)
+            // Lista curada de modelos Vertex AI — visible aunque la API falle
             var fallback = new List<string>
             {
+                "gemini-2.5-pro-preview-03-25",
                 "gemini-2.0-flash-001",
                 "gemini-2.0-flash-lite-001",
                 "gemini-2.0-flash-exp",
@@ -338,28 +340,32 @@ namespace OPENGIOAI.ServiciosAI
                 "gemini-1.0-pro-002",
             };
 
-            // Si no hay project ID, intentar detectarlo desde gcloud
+            // Resolver Project ID: parámetro → auto-detección
             if (string.IsNullOrWhiteSpace(projectId))
                 projectId = await ObtenerProyectoGcloudAsync();
 
-            // Si sigue sin haber project ID, devolver la lista de respaldo
+            // Sin proyecto → sólo fallback (no hay URL que construir)
             if (string.IsNullOrWhiteSpace(projectId))
                 return fallback;
 
             try
             {
-                // Solicitar token gcloud ADC
                 string token = await ObtenerTokenGcloudAsync();
                 if (string.IsNullOrWhiteSpace(token))
                     return fallback;
 
+                // ── Endpoint correcto para listar publisher models de Google ──────
+                // v1beta1/publishers/google/models  (sin project en la ruta)
+                // El proyecto se envía como cabecera de cuota para billing
                 string region = "us-central1";
-                string url = $"https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}" +
-                             $"/locations/{region}/publishers/google/models";
+                string url = $"https://{region}-aiplatform.googleapis.com" +
+                             $"/v1beta1/publishers/google/models";
 
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
                 http.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                // Cabecera requerida para imputar cuota y facturación al proyecto
+                http.DefaultRequestHeaders.Add("x-goog-user-project", projectId);
 
                 var resp = await http.GetAsync(url);
                 if (!resp.IsSuccessStatusCode)
@@ -369,13 +375,20 @@ namespace OPENGIOAI.ServiciosAI
                 var json = JObject.Parse(jsonText);
                 var modelos = new List<string>();
 
-                foreach (var m in json["models"] ?? new JArray())
+                // ── La respuesta usa "publisherModels", NO "models" ──────────────
+                foreach (var m in json["publisherModels"] ?? new JArray())
                 {
                     string name = m["name"]?.ToString() ?? "";
                     // "publishers/google/models/gemini-1.5-pro" → "gemini-1.5-pro"
                     int lastSlash = name.LastIndexOf('/');
                     if (lastSlash >= 0) name = name[(lastSlash + 1)..];
-                    if (!string.IsNullOrWhiteSpace(name))
+
+                    // Incluir sólo modelos con soporte de generación de contenido
+                    bool puedeGenerar =
+                        m["supportedActions"]?["generateContent"] != null ||
+                        m["supportedActions"]?["serverStreamingGenerateContent"] != null;
+
+                    if (!string.IsNullOrWhiteSpace(name) && puedeGenerar)
                         modelos.Add(name);
                 }
 
@@ -445,36 +458,39 @@ namespace OPENGIOAI.ServiciosAI
             System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z][a-z0-9\-]{4,28}[a-z0-9]$");
 
         /// <summary>
-        /// Obtiene un token de acceso usando las credenciales predeterminadas de aplicación
-        /// de Google Cloud (Application Default Credentials).
+        /// Obtiene un token de acceso GCP usando Application Default Credentials (ADC).
         ///
-        /// Estrategia (en orden):
-        ///  1. Busca gcloud.cmd en las rutas de instalación conocidas de Windows.
-        ///  2. Si no lo encuentra, intenta via "cmd /c gcloud ..." (hereda PATH del shell).
-        ///  3. Si aún falla, devuelve string vacío.
+        /// Estrategia (en orden de preferencia):
+        ///  1. Google.Apis.Auth  — lee el archivo ADC directamente; NO requiere gcloud CLI.
+        ///     Funciona si existe %APPDATA%\gcloud\application_default_credentials.json
+        ///     (creado al ejecutar una sola vez: gcloud auth application-default login).
+        ///  2. gcloud CLI        — fallback para entornos donde Google.Apis.Auth no puede
+        ///     leer el archivo ADC pero sí está disponible el CLI.
         /// </summary>
         internal static async Task<string> ObtenerTokenGcloudAsync()
         {
+            // ── Opción 1: Google.Apis.Auth (no requiere gcloud en runtime) ────────
+            try
+            {
+                var credential = await GoogleCredential.GetApplicationDefaultAsync();
+                // Scope requerido para Vertex AI / Cloud Platform
+                credential = credential.CreateScoped(
+                    "https://www.googleapis.com/auth/cloud-platform");
+                string adcToken = await ((ITokenAccess)credential)
+                    .GetAccessTokenForRequestAsync();
+                if (!string.IsNullOrWhiteSpace(adcToken))
+                    return adcToken;
+            }
+            catch { /* continuar con fallback */ }
+
+            // ── Opción 2: gcloud CLI (fallback) ───────────────────────────────────
             try
             {
                 string gcloudExe = EncontrarGcloudExe();
-
-                string fileName;
-                string arguments;
-
-                if (!string.IsNullOrEmpty(gcloudExe))
-                {
-                    // Ruta directa encontrada — ejecutar gcloud.cmd directamente via cmd
-                    // (los .cmd necesitan cmd.exe como host en Windows)
-                    fileName  = "cmd.exe";
-                    arguments = $"/c \"{gcloudExe}\" auth application-default print-access-token";
-                }
-                else
-                {
-                    // Fallback: dejar que cmd.exe resuelva gcloud desde su propio PATH
-                    fileName  = "cmd.exe";
-                    arguments = "/c gcloud auth application-default print-access-token";
-                }
+                string fileName  = "cmd.exe";
+                string arguments = string.IsNullOrEmpty(gcloudExe)
+                    ? "/c gcloud auth application-default print-access-token"
+                    : $"/c \"{gcloudExe}\" auth application-default print-access-token";
 
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
@@ -491,7 +507,6 @@ namespace OPENGIOAI.ServiciosAI
 
                 string token = await proc.StandardOutput.ReadToEndAsync();
                 await proc.WaitForExitAsync();
-
                 return token.Trim();
             }
             catch
@@ -501,12 +516,45 @@ namespace OPENGIOAI.ServiciosAI
         }
 
         /// <summary>
-        /// Obtiene el Project ID activo en la configuración de gcloud.
-        /// Ejecuta: gcloud config get-value project
-        /// Retorna string vacío si no hay proyecto configurado o gcloud no está disponible.
+        /// Obtiene el GCP Project ID activo.
+        ///
+        /// Estrategia (en orden de preferencia):
+        ///  1. Variables de entorno estándar de GCP (GOOGLE_CLOUD_PROJECT, etc.).
+        ///  2. Archivo ADC (%APPDATA%\gcloud\application_default_credentials.json):
+        ///       • "quota_project_id"  → credenciales de usuario (authorized_user)
+        ///       • "project_id"        → cuenta de servicio (service_account)
+        ///  3. gcloud CLI             → fallback si los anteriores no aplican.
         /// </summary>
         internal static async Task<string> ObtenerProyectoGcloudAsync()
         {
+            // ── Opción 1: Variables de entorno ────────────────────────────────────
+            foreach (string var in new[] { "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT" })
+            {
+                string? v = Environment.GetEnvironmentVariable(var);
+                if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
+            }
+
+            // ── Opción 2: Leer directamente el archivo ADC ────────────────────────
+            try
+            {
+                string adcPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "gcloud", "application_default_credentials.json");
+
+                if (File.Exists(adcPath))
+                {
+                    var adcJson = JObject.Parse(await File.ReadAllTextAsync(adcPath));
+                    // authorized_user → quota_project_id
+                    string? qp = adcJson["quota_project_id"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(qp)) return qp.Trim();
+                    // service_account → project_id
+                    string? sp = adcJson["project_id"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(sp)) return sp.Trim();
+                }
+            }
+            catch { /* continuar con fallback */ }
+
+            // ── Opción 3: gcloud CLI ──────────────────────────────────────────────
             try
             {
                 string gcloudExe = EncontrarGcloudExe();
@@ -532,7 +580,6 @@ namespace OPENGIOAI.ServiciosAI
                 await proc.WaitForExitAsync();
 
                 string projectId = output.Trim();
-
                 // gcloud puede devolver "(unset)" si no hay proyecto configurado
                 if (projectId == "(unset)" || projectId.StartsWith("Your active configuration"))
                     return "";
@@ -603,6 +650,35 @@ namespace OPENGIOAI.ServiciosAI
             catch { /* ignorar */ }
 
             return string.Empty; // no encontrado
+        }
+
+        /// <summary>
+        /// Diagnóstico rápido de la conexión Antigravity (Vertex AI).
+        /// Devuelve una tupla que describe exactamente qué paso falla,
+        /// para mostrar mensajes precisos en la UI sin swallow silencioso.
+        /// </summary>
+        /// <returns>
+        ///   tokenOk    — true si se obtuvo un token ADC válido.
+        ///   projectOk  — true si se detectó un GCP Project ID.
+        ///   projectId  — el Project ID detectado (vacío si projectOk=false).
+        ///   mensaje    — texto descriptivo del estado para mostrar en UI.
+        /// </returns>
+        public static async Task<(bool tokenOk, bool projectOk, string projectId, string mensaje)>
+            DiagnosticarAntigravityAsync()
+        {
+            // 1. ¿Hay credenciales ADC?
+            string token = await ObtenerTokenGcloudAsync();
+            if (string.IsNullOrWhiteSpace(token))
+                return (false, false, "",
+                    "Sin credenciales — ejecuta: gcloud auth application-default login");
+
+            // 2. ¿Hay un Project ID configurado?
+            string projectId = await ObtenerProyectoGcloudAsync();
+            if (string.IsNullOrWhiteSpace(projectId))
+                return (true, false, "",
+                    "Token OK · Sin proyecto — ejecuta: gcloud config set project TU-PROYECTO");
+
+            return (true, true, projectId, $"Conectado · {projectId}");
         }
 
         public static async Task MostrarConsumoTokens(Servicios servicio, string result)

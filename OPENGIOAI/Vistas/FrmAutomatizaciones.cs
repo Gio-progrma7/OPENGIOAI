@@ -1,5 +1,6 @@
 using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
+using OPENGIOAI.ServiciosTelegram;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
 using System;
@@ -2612,6 +2613,9 @@ Devuelve el JSON de modificación.";
                 auto.UltimaEjecucion = DateTime.Now;
                 LogW($"\n══ {auto.UltimoEstado} ══\n", todoOk ? Emerald4 : WarnColor);
                 EstadoIA(auto.UltimoEstado, todoOk ? Emerald4 : WarnColor);
+
+                // ── Notificación Telegram/Slack al finalizar ──────────────
+                _ = NotificarFinAutomatizacionAsync(auto, todoOk, resultados);
             }
             catch (OperationCanceledException)
             {
@@ -2630,6 +2634,74 @@ Devuelve el JSON de modificación.";
                 GuardarLista();
                 RefrescarCardActual();
             }
+        }
+
+        /// <summary>
+        /// Envía una notificación de Telegram (y/o Slack si está disponible) al terminar
+        /// una automatización — tanto en ejecución manual como programada.
+        /// Lee la config de Telegram del mismo directorio de trabajo que FrmMandos.
+        /// No lanza excepciones al caller.
+        /// </summary>
+        private async Task NotificarFinAutomatizacionAsync(
+            Automatizacion auto, bool todoOk,
+            System.Collections.Concurrent.ConcurrentDictionary<string, string> resultados)
+        {
+            try
+            {
+                // Leer configuración Telegram
+                var telegramList = JsonManager.Leer<TelegramChat>(
+                    RutasProyecto.ObtenerRutaListTelegram(RutaTrabajo));
+                var telegram = telegramList.Count > 0 ? telegramList[0] : null;
+
+                bool tieneTelegram = telegram != null &&
+                                     telegram.ChatId != 0 &&
+                                     !string.IsNullOrWhiteSpace(telegram.Apikey);
+
+                if (!tieneTelegram) return; // sin config → salir silenciosamente
+
+                // Construir resumen del resultado
+                string icono   = todoOk ? "✅" : "⚠️";
+                string estado  = todoOk ? "Completada" : "Completada con errores";
+                var sb = new StringBuilder();
+                sb.AppendLine($"{icono} <b>Automatización {estado}</b>");
+                sb.AppendLine($"📋 <b>{HtmlEncode(auto.Nombre)}</b>");
+                sb.AppendLine($"🕐 {auto.UltimaEjecucion:HH:mm:ss}  ·  {auto.Nodos.Count} nodo(s)");
+
+                // Resumir resultados de nodos (máx 5 para no saturar)
+                var nodosConResultado = auto.Nodos
+                    .Where(n => !string.IsNullOrWhiteSpace(n.UltimaRespuesta))
+                    .Take(5).ToList();
+
+                if (nodosConResultado.Count > 0)
+                {
+                    sb.AppendLine();
+                    foreach (var n in nodosConResultado)
+                    {
+                        string respCorta = n.UltimaRespuesta!.Replace("\n", " ").Trim();
+                        if (respCorta.Length > 120) respCorta = respCorta[..120] + "…";
+                        string nodoIcon = n.UltimaRespuesta!.StartsWith("Error") ? "❌" : "✔";
+                        sb.AppendLine($"{nodoIcon} <b>{HtmlEncode(n.Titulo)}</b>: {HtmlEncode(respCorta)}");
+                    }
+                    if (auto.Nodos.Count > 5)
+                        sb.AppendLine($"  … y {auto.Nodos.Count - 5} nodo(s) más");
+                }
+
+                await TelegramSender.EnviarMensajeAsync(
+                    telegram!.Apikey, telegram.ChatId, sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                // Error de red u otro — no interrumpir el flujo principal
+                LogW($"  ⚠ Notificación Telegram: {ex.Message}\n",
+                    Color.FromArgb(80, 251, 191, 36));
+            }
+        }
+
+        /// <summary>Escapa los caracteres especiales HTML para mensajes Telegram HTML-mode.</summary>
+        private static string HtmlEncode(string? s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
         }
 
         /// <summary>Asegura que el script del nodo existe; si no, lo genera via LLM. Devuelve la ruta o "".</summary>
@@ -2805,6 +2877,7 @@ SOLO devuelve el JSON. Nada más.";
             // Construir listado completo de credenciales para que el LLM sepa qué usar
             string credencialesDetalle = ConstruirDetalleCredenciales();
 
+            string rutaApis = RutasProyecto.ObtenerRutaListApis();
             return $@"
 Eres el AGENTE GENERADOR DE SCRIPTS de un sistema de automatización.
 
@@ -2812,7 +2885,7 @@ TU ÚNICO TRABAJO: recibir la descripción de un paso y devolver código Python
 COMPLETO, FUNCIONAL y AUTÓNOMO que lo ejecute.
 
 CARPETA DE TRABAJO: {carpeta}
-ARCHIVO DE CREDENCIALES: {RutasProyecto.ObtenerRutaListApis()}
+ARCHIVO DE CREDENCIALES: {rutaApis}
 
 ═══════════════════════════════════════════════════
   CREDENCIALES DISPONIBLES (ListApis.json)
@@ -2820,31 +2893,43 @@ ARCHIVO DE CREDENCIALES: {RutasProyecto.ObtenerRutaListApis()}
 {credencialesDetalle}
 
 CÓMO USAR CREDENCIALES EN TU SCRIPT:
-```python
 import json
-with open(r'{RutasProyecto.ObtenerRutaListApis()}', 'r', encoding='utf-8') as f:
+APIS_PATH = r'{rutaApis}'
+with open(APIS_PATH, 'r', encoding='utf-8') as f:
     apis = json.load(f)
 # Buscar por nombre (case-insensitive):
-api = next((a for a in apis if '{"{"}nombre_servicio{"}"}' .lower() in a['Nombre'].lower()), None)
-if api:
-    key = api['key']
-```
+api = next((a for a in apis if 'nombre_servicio' in a['Nombre'].lower()), None)
+key = api['key'] if api else ''
 
 REGLAS ABSOLUTAS:
 1. Devuelve SOLO código Python — sin texto, sin markdown, sin ```python, sin explicaciones
-2. El script escribe su resultado en respuesta.txt (MISMA carpeta del script):
-   import os
-   SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-   RESP_PATH = os.path.join(SCRIPT_DIR, 'respuesta.txt')
-3. Si necesitas el resultado del paso anterior, léelo de variable de entorno:
-   resultado_anterior = os.environ.get('NODO_ANTERIOR_RESULTADO', '')
-4. USA las credenciales de ListApis.json — NUNCA inventes claves ni las hardcodees
-5. Instala dependencias automáticamente: subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'paquete'])
-6. NO uses input() ni nada interactivo
-7. Maneja TODOS los errores con try/except — escribe el error en respuesta.txt
-8. El script debe poder ejecutarse MÚLTIPLES VECES sin problemas (idempotente)
-9. Usa encoding UTF-8 en toda lectura/escritura de archivos
-10. Al final SIEMPRE escribe algo en respuesta.txt (resultado o confirmación)
+2. Siempre define las rutas así al inicio:
+      import os
+      SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+      RESP_PATH  = os.path.join(SCRIPT_DIR, 'respuesta.txt')
+3. SIEMPRE escribe el resultado final en respuesta.txt Y haz print() del mismo.
+   El contenido de respuesta.txt es lo que el siguiente nodo usa como entrada.
+   Si la tarea no produce un valor (ej: enviar email), escribe la confirmación:
+      with open(RESP_PATH, 'w', encoding='utf-8') as f:
+          f.write('OK: email enviado a destino@ejemplo.com')
+      print('OK: email enviado a destino@ejemplo.com')
+4. Si necesitas el resultado del paso anterior:
+      resultado_anterior = os.environ.get('NODO_ANTERIOR_RESULTADO', '')
+5. USA las credenciales de ListApis.json — NUNCA inventes claves ni las hardcodees
+6. Instala dependencias automáticamente antes de importarlas:
+      import subprocess, sys
+      subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'paquete'], stdout=subprocess.DEVNULL)
+7. NO uses input() ni nada interactivo
+8. Maneja errores así — escribe el error en respuesta.txt (NO silencies con pass):
+      except Exception as e:
+          msg = f'Error: {{e}}'
+          with open(RESP_PATH, 'w', encoding='utf-8') as f: f.write(msg)
+          print(msg)
+          raise
+9. El script debe poder ejecutarse MÚLTIPLES VECES sin efectos secundarios (idempotente)
+10. Usa encoding UTF-8 en toda lectura/escritura de archivos
+
+IMPORTANTE: respuesta.txt NUNCA puede quedar vacía después de que el script termine.
 
 SOLO código Python. Primera línea: import";
         }
@@ -3369,6 +3454,38 @@ SOLO código Python. Primera línea: import";
         }
 
         /// <summary>
+        /// Evalúa semánticamente si la salida de un nodo es válida.
+        /// Devuelve null si el resultado es aceptable, o un string con la descripción
+        /// del problema si el script corrió pero no cumplió la tarea.
+        ///
+        /// Detecta tres casos problemáticos:
+        ///  1. respuesta.txt vacía o inexistente — el script no escribió nada
+        ///  2. Contenido que comienza con "Error:" / "Traceback" — error capturado en el script
+        ///  3. Resultado demasiado corto para una tarea con instrucción sustancial
+        /// </summary>
+        private static string? VerificarSalidaSemantica(string resultado, string instruccion)
+        {
+            // Caso 1: sin salida
+            if (string.IsNullOrWhiteSpace(resultado))
+                return "El script se ejecutó pero no escribió ningún resultado en respuesta.txt. " +
+                       "Asegúrate de que el script siempre escriba algo útil al final.";
+
+            string trim = resultado.Trim();
+
+            // Caso 2: el script escribió su propio mensaje de error
+            if (trim.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) ||
+                trim.StartsWith("Traceback", StringComparison.OrdinalIgnoreCase) ||
+                trim.StartsWith("Exception:", StringComparison.OrdinalIgnoreCase))
+                return $"El script escribió un error en respuesta.txt en lugar del resultado esperado: {trim[..Math.Min(200, trim.Length)]}";
+
+            // Caso 3: respuesta simbólica que no dice nada (< 10 chars y tarea no trivial)
+            if (trim.Length < 10 && instruccion.Length > 20)
+                return $"El script escribió una respuesta demasiado corta ('{trim}') para la tarea: {instruccion[..Math.Min(80, instruccion.Length)]}";
+
+            return null; // OK semántico
+        }
+
+        /// <summary>
         /// Extrae tipo de error, número de línea y mensaje clave de un traceback Python.
         /// </summary>
         private static (string tipo, int linea, string mensaje) ParsearTipoError(string error)
@@ -3425,39 +3542,69 @@ SOLO código Python. Primera línea: import";
             string credenciales = ConstruirDetalleCredenciales();
             string resumen = ConstruirResumenFlujo(auto);
 
+            // Detectar si el fallo es semántico (script corrió pero no produjo resultado)
+            // o si es un crash técnico (excepción Python)
+            bool falloSemantico = errorMsg.StartsWith("El script se ejecutó") ||
+                                  errorMsg.StartsWith("El script escribió un error") ||
+                                  errorMsg.StartsWith("El script escribió una respuesta demasiado");
+
+            string tipoFallo = falloSemantico
+                ? "FALLO SEMÁNTICO — el script corrió sin excepciones pero no produjo el resultado esperado"
+                : "FALLO TÉCNICO — el script lanzó una excepción Python";
+
+            string instruccionCorrecion = falloSemantico
+                ? $@"El script corrió sin errores Python pero NO cumplió la tarea.
+PROBLEMA: {errorMsg}
+TAREA ORIGINAL: {nodo.InstruccionNatural}
+
+Reescribe el script para que:
+1. Realice la tarea completa especificada
+2. Escriba el resultado real (no vacío, no un placeholder) en respuesta.txt
+3. También haga print() del resultado para visibilidad
+4. Defina SCRIPT_DIR y RESP_PATH correctamente"
+                : $@"El script lanzó una excepción Python.
+ERROR: {errorMsg}
+TAREA ORIGINAL: {nodo.InstruccionNatural}
+
+Corrige la causa raíz técnica. No ocultes el error con try/except vacío.";
+
             string promptSistema = $@"
-Eres el AGENTE CORRECTOR DE SCRIPTS. Tu trabajo es recibir un script Python que falló,
-analizar el error, y devolver el script CORREGIDO y FUNCIONAL.
+Eres el AGENTE CORRECTOR DE SCRIPTS. Recibes un script Python con un problema
+y debes devolver la versión CORREGIDA y COMPLETAMENTE FUNCIONAL.
 
 CARPETA DE TRABAJO: {carpeta}
 ARCHIVO DE CREDENCIALES: {RutasProyecto.ObtenerRutaListApis()}
 CREDENCIALES DISPONIBLES:
 {credenciales}
 
+TIPO DE PROBLEMA: {tipoFallo}
+
 REGLAS:
 1. Devuelve SOLO el código Python corregido — sin texto, sin markdown, sin explicaciones
-2. Analiza el error y corrige la causa raíz, no pongas un try/except que oculte el problema
+2. Corrige la CAUSA RAÍZ, no pongas un try/except que oculte el problema
 3. Si falta un import o dependencia, agrégalo
 4. Si la credencial es incorrecta, busca la correcta en ListApis.json
-5. Mantén toda la lógica funcional del script original
-6. El script debe escribir resultado en respuesta.txt (misma carpeta)
-7. Resultado del paso anterior: os.environ.get('NODO_ANTERIOR_RESULTADO', '')
+5. El script SIEMPRE debe escribir algo útil en respuesta.txt Y hacer print() del resultado
+6. Resultado del paso anterior: os.environ.get('NODO_ANTERIOR_RESULTADO', '')
+7. Define siempre:
+   SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+   RESP_PATH  = os.path.join(SCRIPT_DIR, 'respuesta.txt')
 
 SOLO código Python corregido.";
 
-            string promptUsuario = $@"Este script del paso {idx + 1} ({nodo.Titulo}) FALLÓ:
+            string promptUsuario = $@"Script del paso {idx + 1} ({nodo.Titulo}):
 
-TAREA ORIGINAL: {nodo.InstruccionNatural}
+{instruccionCorrecion}
 
 {resumen}
 
-══════ CÓDIGO QUE FALLÓ ══════
+══════ CÓDIGO ACTUAL ══════
 {codigoActual}
 
-══════ ERROR ══════
+══════ PROBLEMA ══════
 {errorMsg}
 
-Corrige el script para que funcione correctamente. Devuelve SOLO el código Python corregido.";
+Devuelve SOLO el script Python corregido.";
 
             AgentContext ctxCorr = ctxBase.ConPromptPersonalizado(promptSistema);
             string resp = await AIModelConector.ObtenerRespuestaLLMAsync(promptUsuario, ctxCorr, ct);
@@ -3588,6 +3735,44 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
 
                     sw.Stop();
                     nodo.UltimaRespuesta = resultado;
+
+                    // ── Validación semántica del resultado ───────────────────
+                    // Un script puede ejecutarse sin excepciones y aun así
+                    // no haber producido ningún resultado útil en respuesta.txt.
+                    string? falloSemantico = VerificarSalidaSemantica(resultado, nodo.InstruccionNatural);
+
+                    if (falloSemantico != null)
+                    {
+                        // Tratar como fallo semántico: el script corrió pero no cumplió la tarea
+                        ctrl?.ActualizarEstado(EstadoNodo.Error);
+                        string errorSemantico = falloSemantico;
+                        nodo.UltimaRespuesta  = errorSemantico;
+
+                        LogW($"  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n", cSep);
+                        LogW($"  ⚠  FALLO SEMÁNTICO  ({sw.Elapsed.TotalSeconds:F2}s)\n", WarnColor);
+                        LogW($"  ┄ {errorSemantico}\n", WarnColor);
+                        LogW($"  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n", cSep);
+
+                        // Auto-corrección con contexto semántico (en ambos modos)
+                        if (intentoAuto >= MAX_AUTO)
+                        {
+                            LogW($"  ⏸ [{nodo.Titulo}] agotó {MAX_AUTO} correcciones semánticas\n\n", ErrorColor);
+                            break; // sale del while — nodoOk permanece false
+                        }
+                        intentoAuto++;
+                        LogW($"  ━━ CORRECCIÓN SEMÁNTICA {intentoAuto}/{MAX_AUTO} ━━\n", WarnColor);
+
+                        string? fix = await AnalizarYCorregirConPasos(
+                            nodo, auto, idx, carpeta, codigoActual, errorSemantico, null, ct,
+                            cOut, cErr, cSep, cPrev);
+                        if (fix != null)
+                        {
+                            File.WriteAllText(rutaScript, fix, Encoding.UTF8);
+                            nodo.ScriptGenerado = fix;
+                            ctrl?.ActualizarEstado(EstadoNodo.Ejecutando);
+                        }
+                        continue; // reintentar
+                    }
 
                     // ── OK ───────────────────────────────────────────────────
                     LogW($"  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n", cSep);

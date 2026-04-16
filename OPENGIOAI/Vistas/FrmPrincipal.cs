@@ -89,7 +89,7 @@ namespace OPENGIOAI.Vistas
         }
         private void btnSkills_Click(object sender, EventArgs e)
         {
-            Skills fmrSkills = new Skills(Miconfiguracion.MiArchivo.Ruta);
+            Skills fmrSkills = new Skills(Miconfiguracion);
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, fmrSkills);
         }
 

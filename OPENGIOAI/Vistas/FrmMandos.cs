@@ -94,6 +94,8 @@ namespace OPENGIOAI.Vistas
         private bool _primeraEjecucion = true;
         private bool _primeraEjecucionAgente = true;
         private bool _telegramActivo = false;
+        private bool _enviarConstructorTelegram = false;
+        private bool _enviarConstructorSlack    = false;
         private bool _slackActivo = false;
         private bool _recordarTema = false;
         private bool _soloResptxt = false;
@@ -196,6 +198,29 @@ namespace OPENGIOAI.Vistas
                 if (c is BurbujaChat burbuja)
                     burbuja.ActualizarAncho(anchoMax);
             }
+            AjustarBotonesInput();
+        }
+
+        /// <summary>
+        /// Alinea btnEnviar y btnCancelar al borde derecho del wrapper del textbox.
+        /// Se invoca en ConfigurarUI() y en cada FrmMandos_Resize para que los botones
+        /// siempre queden pegados al cuadro de instrucción sin importar el tamaño del form.
+        /// </summary>
+        private void AjustarBotonesInput()
+        {
+            foreach (Control c in pnlContenedorTxt.Controls)
+            {
+                if (c is Panel wrapper && wrapper.Controls.Contains(textBoxInstrucion))
+                {
+                    int xBtn = wrapper.Right + 6;
+                    btnEnviar.Left   = xBtn;
+                    btnCancelar.Left = xBtn;
+                    // Alinear verticalmente: enviar al tope del wrapper, cancelar debajo
+                    btnEnviar.Top   = wrapper.Top;
+                    btnCancelar.Top = wrapper.Top + btnEnviar.Height + 4;
+                    return;
+                }
+            }
         }
 
         private void FrmMandos_FormClosing(object sender, FormClosingEventArgs e)
@@ -249,7 +274,7 @@ namespace OPENGIOAI.Vistas
         private void textBoxInstrucion_TextChanged(object sender, EventArgs e)
         {
             if (_ajustandoAltura) return;
-            ConsultasApis(textBoxInstrucion);
+            //ConsultasApis(textBoxInstrucion);
             MostrarPreview(textBoxInstrucion, labelSugerencia);
             TextBoxRounder.AjustarAlturaConRedondeo(textBoxInstrucion);
         }
@@ -301,7 +326,15 @@ namespace OPENGIOAI.Vistas
         private async void checkBoxSlack_CheckedChanged(object sender, EventArgs e)
         {
             _slackActivo = checkBoxSlack.Checked;
+            // Habilitar / deshabilitar la sub-opción del Constructor para Slack
+            checkBoxConstructorSlack.Enabled = _slackActivo;
+            if (!_slackActivo) checkBoxConstructorSlack.Checked = false;
             await IniciarSlack();
+        }
+
+        private void checkBoxConstructorSlack_CheckedChanged(object sender, EventArgs e)
+        {
+            _enviarConstructorSlack = checkBoxConstructorSlack.Checked;
         }
 
         private async void comboBoxRuta_SelectedIndexChanged(object sender, EventArgs e)
@@ -315,16 +348,24 @@ namespace OPENGIOAI.Vistas
         private async void btnEnviar_Click(object sender, EventArgs e)
         {
             LimpiarResumen();
-            pictureBoxCarga.Visible = true;
+            //pictureBoxCarga.Visible = true;
             await Procesar_Instrucciones();
-            pictureBoxCarga.Visible = false;
+           // pictureBoxCarga.Visible = false;
             LimpiarControles();
         }
 
         private async void checkBoxTelegram_CheckedChanged(object sender, EventArgs e)
         {
             _telegramActivo = checkBoxTelegram.Checked;
+            // Habilitar / deshabilitar la sub-opción del Constructor
+            checkBoxConstructorTelegram.Enabled = _telegramActivo;
+            if (!_telegramActivo) checkBoxConstructorTelegram.Checked = false;
             await IniciarConversasionTelegram();
+        }
+
+        private void checkBoxConstructorTelegram_CheckedChanged(object sender, EventArgs e)
+        {
+            _enviarConstructorTelegram = checkBoxConstructorTelegram.Checked;
         }
 
         private void checkBoxRapida_CheckedChanged(object sender, EventArgs e)
@@ -372,6 +413,23 @@ namespace OPENGIOAI.Vistas
         }
 
         private void btnLimpiar_Click(object sender, EventArgs e) => pnlChat.Controls.Clear();
+
+        /// <summary>
+        /// Muestra / oculta las etiquetas de tiempo y consumo de tokens.
+        /// Sirve como botón ℹ de estadísticas en la barra inferior.
+        /// </summary>
+        private void btnInfo_Click(object sender, EventArgs e)
+        {
+            bool visible = !lblTime.Visible;
+            lblTime.Visible     = visible;
+            lblTimeR.Visible    = visible;
+            lblConsumo.Visible  = visible;
+            lblConsumoA.Visible = visible;
+
+            btnInfo.ForeColor = visible
+                ? Color.FromArgb(80, 200, 255)   // azul brillante = activo
+                : Color.FromArgb(120, 150, 200);  // gris-azul = inactivo
+        }
 
         // =====================================================================
         //  LÓGICA DE AGENTE Y RUTA
@@ -548,8 +606,15 @@ namespace OPENGIOAI.Vistas
                 _modeloSeleccionado.Agente,
                 maxReintentos: (int)_nudReintentos.Value);
 
+            // Flag para indicar si la fase actual debe activar el indicador "escribiendo"
+            // Solo se activa en Analista y Comunicador, NO en Constructor ni Guardián.
+            bool[] typingEnabled = { false };
+
             aria.OnFaseIniciada += (fase, msg) =>
             {
+                // Actualizar flag de typing según la fase
+                typingEnabled[0] = fase == FaseAgente.Analista || fase == FaseAgente.Comunicador;
+
                 _panelAgentes.SetEstado(fase, EstadoAgente.Active);
                 if (!string.IsNullOrWhiteSpace(msg))
                     MostrarBurbujaFase(fase, msg);
@@ -562,6 +627,13 @@ namespace OPENGIOAI.Vistas
                 {
                     _ = EjecutarDifusionAsync($"🔍 {msg}", usarTelegram, usarSlack);
                 }
+            };
+
+            aria.OnFaseCompletada += (fase2, _ok) =>
+            {
+                // Al completar Constructor o Guardián, asegurarse de que typing siga desactivado
+                if (fase2 == FaseAgente.Constructor || fase2 == FaseAgente.Guardian)
+                    typingEnabled[0] = false;
             };
 
             aria.OnFaseCompletada += (fase, ok) =>
@@ -591,6 +663,48 @@ namespace OPENGIOAI.Vistas
             aria.OnReintentoGuardian += (intento, max, razon) =>
                 _panelAgentes.SetEstado(FaseAgente.Guardian, EstadoAgente.Active);
 
+            // ── Reenvío opcional del Constructor a Telegram y/o Slack ────────
+            aria.OnConstructorCompletado += salidaRaw =>
+            {
+                if (string.IsNullOrWhiteSpace(salidaRaw)) return;
+
+                if (_enviarConstructorTelegram && usarTelegram)
+                    _ = EnviarTelegramDesdeActivacion(FormatearConstructorParaTelegram(salidaRaw));
+
+                if (_enviarConstructorSlack && usarSlack && _slack != null)
+                    _ = _slack.EnviarCodigoAsync(FormatearConstructorParaSlack(salidaRaw));
+            };
+
+            // ── Indicadores de "escribiendo / pensando" mientras el pipeline corre ──
+
+            // Telegram: enviar acción "typing" cada 4 s (solo durante Analista y Comunicador)
+            using var ctsTyping = new CancellationTokenSource();
+            if (usarTelegram && _telegramChat?.ChatId != 0)
+            {
+                _ = Task.Run(async () =>
+                {
+                    while (!ctsTyping.Token.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            // Solo enviar el indicador si la fase actual lo requiere
+                            if (typingEnabled[0])
+                            {
+                                await ServiciosTelegram.TelegramSender.EnviarAccionEscribiendoAsync(
+                                    _telegramChat!.Apikey, _telegramChat.ChatId);
+                            }
+                            await Task.Delay(4_000, ctsTyping.Token);
+                        }
+                        catch { break; }
+                    }
+                }, ctsTyping.Token);
+            }
+
+            // Slack: mensaje "pensando..." que se elimina al finalizar
+            string? slackTsPensando = null;
+            if (usarSlack && _slack != null)
+                slackTsPensando = await _slack.EnviarPensandoAsync();
+
             // ── Ejecutar pipeline ─────────────────────────────────────────────
             string respuestaFinal;
             try
@@ -612,6 +726,11 @@ namespace OPENGIOAI.Vistas
                 ActualizarInfoRespuesta(
                     $"ARIA: {sw.Elapsed.TotalSeconds:F1}s", "",
                     Program.ComsumoTokens, "");
+
+                // Detener indicadores en cuanto termina el pipeline
+                ctsTyping.Cancel();
+                if (slackTsPensando != null && _slack != null)
+                    _ = _slack.EliminarMensajeAsync(slackTsPensando);
             }
 
             // Flush final del Comunicador — pasar el buffer acumulado para garantizar
@@ -945,6 +1064,78 @@ namespace OPENGIOAI.Vistas
 
             if (tareas.Count > 0)
                 await Task.WhenAll(tareas);
+        }
+
+        /// <summary>
+        /// Formatea la salida técnica cruda del Constructor para que se vea legible en Telegram.
+        /// · Si el contenido es JSON válido → lo indenta y lo envuelve en bloque de código.
+        /// · Cualquier otro texto → bloque &lt;pre&gt; monoespacio.
+        /// · Trunca a 3 800 chars para respetar el límite de 4 096 de Telegram.
+        /// </summary>
+        private static string FormatearConstructorParaTelegram(string rawOutput)
+        {
+            if (string.IsNullOrWhiteSpace(rawOutput))
+                return "⚙️ <b>Constructor</b>\n<i>(sin salida)</i>";
+
+            string contenido = rawOutput.Trim();
+
+            // ── Intentar pretty-print si parece JSON ─────────────────────────
+            bool esJson = contenido.StartsWith("{") || contenido.StartsWith("[");
+            if (esJson)
+            {
+                try
+                {
+                    var token = Newtonsoft.Json.Linq.JToken.Parse(contenido);
+                    contenido = token.ToString(Newtonsoft.Json.Formatting.Indented);
+                }
+                catch { /* dejar como está si no es JSON válido */ }
+            }
+
+            // ── Escapar caracteres especiales de HTML ────────────────────────
+            contenido = contenido
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;");
+
+            // ── Truncar si supera el límite (reservar ~300 chars para cabecera) ─
+            const int MaxChars = 3_750;
+            if (contenido.Length > MaxChars)
+                contenido = contenido[..MaxChars] + "\n<i>… (truncado)</i>";
+
+            // ── Construir mensaje con bloque de código monoespacio ───────────
+            // <pre><code> en Telegram HTML = bloque con fondo gris, fuente mono
+            return $"⚙️ <b>Constructor — resultado técnico</b>\n\n<pre><code>{contenido}</code></pre>";
+        }
+
+        /// <summary>
+        /// Formatea la salida técnica del Constructor para Slack.
+        /// · JSON válido → pretty-print dentro de bloque de código (triple backtick).
+        /// · Truncado a 3 800 chars (límite práctico de Slack por mensaje).
+        /// </summary>
+        private static string FormatearConstructorParaSlack(string rawOutput)
+        {
+            if (string.IsNullOrWhiteSpace(rawOutput))
+                return "⚙️ *Constructor* — _(sin salida)_";
+
+            string contenido = rawOutput.Trim();
+
+            // Pretty-print si parece JSON
+            if (contenido.StartsWith("{") || contenido.StartsWith("["))
+            {
+                try
+                {
+                    var token = Newtonsoft.Json.Linq.JToken.Parse(contenido);
+                    contenido = token.ToString(Newtonsoft.Json.Formatting.Indented);
+                }
+                catch { }
+            }
+
+            const int MaxChars = 3_750;
+            if (contenido.Length > MaxChars)
+                contenido = contenido[..MaxChars] + "\n… (truncado)";
+
+            // Slack usa triple backtick para bloques de código monoespaciado
+            return $"⚙️ *Constructor — resultado técnico*\n```\n{contenido}\n```";
         }
 
         /// <summary>
@@ -1503,7 +1694,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                     if (!usarSlack)
                     {
                         textBoxInstrucion.Text = textoOriginal;
-                        pictureBoxCarga.Visible = true;
+                       // pictureBoxCarga.Visible = true;
                         try
                         {
                             if (string.IsNullOrEmpty(textoOriginal)) return;
@@ -1513,7 +1704,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                         }
                         finally
                         {
-                            pictureBoxCarga.Visible = false;
+                            //pictureBoxCarga.Visible = false;
                             textBoxInstrucion.Text = "";
                         }
                     }
@@ -1595,13 +1786,13 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         /// </summary>
         private async Task<string> Realizar_Peticiones_Slack(string instruccion)
         {
-            BeginInvoke(() => pictureBoxCarga.Visible = true);
+            //BeginInvoke(() => pictureBoxCarga.Visible = true);
 
             var (ok, error) = ValidarCondiciones(instruccion);
             if (!ok)
             {
                 MostrarMensaje(error, false);
-                BeginInvoke(() => pictureBoxCarga.Visible = false);
+                //BeginInvoke(() => pictureBoxCarga.Visible = false);
                 return error;
             }
 
@@ -1615,7 +1806,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
 
             BeginInvoke(() =>
             {
-                pictureBoxCarga.Visible = false;
+                //pictureBoxCarga.Visible = false;
                 if (!string.IsNullOrEmpty(respuesta))
                     MostrarMensaje(respuesta, false);
             });
@@ -1752,7 +1943,47 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         /// [C1] Solo cancela el token; Dispose se hace en la próxima llamada
         ///      o en FormClosing para evitar doble-dispose.
         /// </summary>
-        private void CancelarInstruccion() => _ctsIA?.Cancel();
+        private void CancelarInstruccion()
+        {
+            if (_ctsIA == null || _ctsIA.IsCancellationRequested)
+                return;
+
+            _ctsIA.Cancel();
+
+            // Feedback visual inmediato en el botón
+            if (btnCancelar.InvokeRequired)
+            {
+                btnCancelar.BeginInvoke(() => MostrarFeedbackCancelacion());
+            }
+            else
+            {
+                MostrarFeedbackCancelacion();
+            }
+        }
+
+        private async void MostrarFeedbackCancelacion()
+        {
+            var colorOriginal   = btnCancelar.FlatAppearance.BorderColor;
+            var colorOriginalFG = btnCancelar.ForeColor;
+            var textoOriginal   = btnCancelar.Text;
+
+            // Estado "Cancelando..."
+            btnCancelar.Text      = "⏹ Cancelando...";
+            btnCancelar.ForeColor = Color.OrangeRed;
+            btnCancelar.FlatAppearance.BorderColor = Color.OrangeRed;
+            btnCancelar.Enabled   = false;
+
+            await Task.Delay(1_800);
+
+            // Restaurar
+            if (!btnCancelar.IsDisposed)
+            {
+                btnCancelar.Text      = textoOriginal;
+                btnCancelar.ForeColor = colorOriginalFG;
+                btnCancelar.FlatAppearance.BorderColor = colorOriginal;
+                btnCancelar.Enabled   = true;
+            }
+        }
 
         private async Task CargarThemas()
         {
@@ -1784,7 +2015,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 comboBoxAgentes.ValueMember = "ApiKey";
 
                 textBoxInstrucion.Multiline = true;
-                textBoxInstrucion.Height = 70;
+                textBoxInstrucion.Height = 80;
                 textBoxInstrucion.AllowDrop = true;
                 textBoxInstrucion.AcceptsTab = true;
 
@@ -1796,7 +2027,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 _panelAgentes = new PanelAgentes
                 {
                     Dock = DockStyle.Top,
-                    Height = 40
+                    Height = 30
                 };
                 Controls.Add(_panelAgentes);
                 Controls.SetChildIndex(_panelAgentes, Controls.IndexOf(panelHead));
@@ -1821,6 +2052,23 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                     focusColor: Color.FromArgb(41, 128, 185),
                     agregarSombra: true);
 
+                // ── Propagar Anchor al wrapper creado por RedondearRichTextBox ──────────
+                // RedondearRichTextBox reparenta textBoxInstrucion dentro de un Panel nuevo
+                // que no hereda el Anchor original (Left|Right). Sin este fix el wrapper
+                // no se expande al redimensionar y btnEnviar/btnCancelar quedan sueltos.
+                foreach (Control c in pnlContenedorTxt.Controls)
+                {
+                    if (c is Panel rtbWrapper && rtbWrapper.Controls.Contains(textBoxInstrucion))
+                    {
+                        rtbWrapper.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                        break;
+                    }
+                }
+
+                // Llevar los botones al frente (z-order) y alinearlos al wrapper
+                btnEnviar.BringToFront();
+                btnCancelar.BringToFront();
+
                 ConfigurarPanelArchivos();
 
                 _toolTipArchivos.AutoPopDelay = 5000;
@@ -1828,45 +2076,91 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 _toolTipArchivos.ReshowDelay = 200;
                 _toolTipArchivos.ShowAlways = true;
 
-                // ── Control de reintentos del Guardián ──────────────────────
+                // ── Barra inferior: label "🔔 Notificar en:" ─────────────────
+                var lblNotif = new Label
+                {
+                    Text      = "🔔 Notif.:",
+                    AutoSize  = true,
+                    ForeColor = Color.FromArgb(100, 120, 155),
+                    BackColor = Color.Transparent,
+                    Font      = new Font("Segoe UI", 8f, FontStyle.Regular),
+                    Location  = new Point(8, 114)
+                };
+                pnlContenedorTxt.Controls.Add(lblNotif);
+                lblNotif.BringToFront();
+
+                // Separador visual entre Telegram y Slack
+                var pnlSepNotif = new Panel
+                {
+                    Location  = new Point(268, 114),
+                    Size      = new Size(1, 16),
+                    BackColor = Color.FromArgb(50, 65, 90)
+                };
+                pnlContenedorTxt.Controls.Add(pnlSepNotif);
+                pnlSepNotif.BringToFront();
+
+                // Asegurar z-order correcto para toda la barra inferior
+                checkBoxTelegram.BringToFront();
+                checkBoxConstructorTelegram.BringToFront();
+                checkBoxSlack.BringToFront();
+                checkBoxConstructorSlack.BringToFront();
+                btnLimpiar.BringToFront();
+                btnInfo.BringToFront();
+
+                // ── Control de reintentos del Guardián (barra inferior) ────
                 var lblReintentos = new Label
                 {
                     Text      = "Reintentos:",
                     AutoSize  = true,
-                    ForeColor = Color.FromArgb(160, 180, 210),
+                    ForeColor = Color.FromArgb(140, 165, 205),
                     BackColor = Color.Transparent,
                     Font      = new Font("Segoe UI", 7.5f),
-                    Location  = new Point(740, 8)
+                    Location  = new Point(448, 114)
                 };
 
                 _nudReintentos = new NumericUpDown
                 {
-                    Minimum   = 0,
-                    Maximum   = 5,
-                    Value     = 3,
-                    Width     = 45,
-                    Height    = 22,
-                    Location  = new Point(810, 5),
-                    BackColor = Color.FromArgb(30, 41, 59),
-                    ForeColor = Color.White,
-                    Font      = new Font("Segoe UI", 9f, FontStyle.Bold),
-                    BorderStyle = BorderStyle.FixedSingle,
-                    TextAlign = HorizontalAlignment.Center,
+                    Minimum            = 0,
+                    Maximum            = 5,
+                    Value              = 3,
+                    Width              = 42,
+                    Height             = 22,
+                    Location           = new Point(524, 110),
+                    BackColor          = Color.FromArgb(30, 41, 59),
+                    ForeColor          = Color.White,
+                    Font               = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                    BorderStyle        = BorderStyle.FixedSingle,
+                    TextAlign          = HorizontalAlignment.Center,
                     InterceptArrowKeys = true
                 };
 
                 _toolTipArchivos.SetToolTip(_nudReintentos,
-                    "Número de correcciones automáticas del Guardián (0 = sin reintentos)");
+                    "Correcciones automáticas del Guardián (0 = sin reintentos)");
                 _toolTipArchivos.SetToolTip(lblReintentos,
-                    "Número de correcciones automáticas del Guardián");
+                    "Correcciones automáticas del Guardián");
 
                 pnlContenedorTxt.Controls.Add(lblReintentos);
                 pnlContenedorTxt.Controls.Add(_nudReintentos);
+                lblReintentos.BringToFront();
+                _nudReintentos.BringToFront();
+
+                // ── Sub-checkboxes del Constructor: deshabilitados hasta activar el canal ──
+                checkBoxConstructorTelegram.Enabled = false;
+                checkBoxConstructorSlack.Enabled    = false;
+
+                // ── Labels de estadísticas ocultas hasta presionar ℹ ──────
+                lblTime.Visible     = false;
+                lblTimeR.Visible    = false;
+                lblConsumo.Visible  = false;
+                lblConsumoA.Visible = false;
             }
             finally
             {
                 ResumeLayout(true);
             }
+
+            // Alinear botones al wrapper del textbox tras el layout inicial
+            AjustarBotonesInput();
         }
 
         private void ConfigurarEventos()
