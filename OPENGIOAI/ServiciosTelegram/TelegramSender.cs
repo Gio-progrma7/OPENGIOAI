@@ -77,6 +77,28 @@ namespace OPENGIOAI.ServiciosTelegram
         }
 
         /// <summary>
+        /// Envía la acción "escribiendo..." (typing) a un chat de Telegram.
+        /// El indicador dura ~5 s en la UI del receptor.
+        /// Llamar cada ≤4 s mientras el bot esté procesando para mantenerlo visible.
+        /// </summary>
+        public static async Task EnviarAccionEscribiendoAsync(string token, long chatId)
+        {
+            try
+            {
+                var url = $"https://api.telegram.org/bot{token}/sendChatAction";
+                var parameters = new Dictionary<string, string>
+                {
+                    { "chat_id", chatId.ToString() },
+                    { "action",  "typing"           }
+                };
+                using var client  = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                using var content = new FormUrlEncodedContent(parameters);
+                await client.PostAsync(url, content).ConfigureAwait(false);
+            }
+            catch { /* ignorar errores de red en acción secundaria */ }
+        }
+
+        /// <summary>
         /// Crea un teclado inline de Telegram en formato JSON dinámico.
         /// Permite generar filas y columnas de botones interactivos, donde cada botón contiene el texto visible y el valor de callback asociado.
         /// El resultado puede ser enviado como parte del parámetro reply_markup en los mensajes del bot.

@@ -52,6 +52,26 @@ namespace OPENGIOAI.Entidades
         /// <summary>Cuerpo del .md (sin el frontmatter). Contiene ## Código, ## Parámetros, etc.</summary>
         public string ContenidoMd { get; set; } = "";
 
+        // ── Campos Hub (skills instalados desde URL remota) ──────────────────
+
+        /// <summary>
+        /// URL desde la que se instaló este skill.
+        /// Vacío = skill local (creado manualmente).
+        /// Presente = skill del Hub; permite re-descargarlo para actualizar.
+        /// </summary>
+        public string SourceUrl { get; set; } = "";
+
+        /// <summary>Autor del skill. Ej: "opengio", "username".</summary>
+        public string Autor { get; set; } = "";
+
+        /// <summary>Versión semántica. Ej: "1.0.0", "2.3.1".</summary>
+        public string Version { get; set; } = "";
+
+        // ── Propiedad computada de origen ────────────────────────────────────
+
+        /// <summary>True si este skill fue instalado desde el Hub (tiene SourceUrl).</summary>
+        public bool EsDeHub => !string.IsNullOrWhiteSpace(SourceUrl);
+
         // ── Propiedades computadas (no serializadas) ─────────────────────────
 
         /// <summary>

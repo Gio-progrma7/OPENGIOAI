@@ -72,6 +72,10 @@ namespace OPENGIOAI.Skills
                     // RutaScript apunta al .py generado (mismo nombre que el .md)
                     RutaScript   = Path.ChangeExtension(Path.GetFileName(rutaMd), ".py"),
                     Parametros   = ParsearParametros(cuerpo),
+                    // Campos Hub (opcionales — solo presentes en skills instalados desde URL)
+                    SourceUrl    = ObtenerValor(metadata, "source_url"),
+                    Autor        = ObtenerValor(metadata, "autor"),
+                    Version      = ObtenerValor(metadata, "version"),
                 };
 
                 // Si no tiene Id, derivarlo del nombre del archivo

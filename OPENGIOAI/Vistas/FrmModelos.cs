@@ -438,79 +438,78 @@ namespace OPENGIOAI.Vistas
         #region Antigravity — Estado gcloud
 
         /// <summary>
-        /// Verifica si hay un token ADC activo y actualiza el indicador visual.
-        /// Se llama al cargar el formulario y después de autenticar.
+        /// Verifica el estado completo de Antigravity (token + project ID) y actualiza
+        /// el indicador visual con mensajes precisos para cada caso de fallo.
         /// </summary>
         private async Task VerificarEstadoGcloudAsync()
         {
+            // Mostrar estado intermedio mientras se comprueba
+            if (InvokeRequired)
+                Invoke(() => { lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); lblGcloudStatus.Text = "⬤  Verificando..."; });
+            else
+            { lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); lblGcloudStatus.Text = "⬤  Verificando..."; }
+
             try
             {
-                string token = await AIServicios.ObtenerTokenGcloudAsync();
-                bool autenticado = !string.IsNullOrWhiteSpace(token);
+                // DiagnosticarAntigravityAsync distingue los tres estados posibles:
+                //   a) Sin credenciales ADC
+                //   b) Token OK pero sin Project ID
+                //   c) Todo OK
+                var (tokenOk, projectOk, projectId, mensaje) =
+                    await AIServicios.DiagnosticarAntigravityAsync();
 
-                // ActualizarIndicadorGcloud es async void → invocar siempre en UI thread
                 if (InvokeRequired)
-                    Invoke(() => ActualizarIndicadorGcloud(autenticado));
+                    Invoke(() => AplicarEstadoAntigravity(tokenOk, projectOk, projectId, mensaje));
                 else
-                    ActualizarIndicadorGcloud(autenticado);
+                    await AplicarEstadoAntigravity(tokenOk, projectOk, projectId, mensaje);
             }
-            catch
+            catch (Exception ex)
             {
+                string msg = $"Error al verificar: {ex.Message}";
                 if (InvokeRequired)
-                    Invoke(() => ActualizarIndicadorGcloud(false));
+                    Invoke(() => { lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68); lblGcloudStatus.Text = $"⬤  {msg}"; });
                 else
-                    ActualizarIndicadorGcloud(false);
+                { lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68); lblGcloudStatus.Text = $"⬤  {msg}"; }
             }
         }
 
-        private async void ActualizarIndicadorGcloud(bool autenticado)
+        /// <summary>
+        /// Aplica el resultado del diagnóstico al indicador visual y carga de modelos.
+        /// </summary>
+        private async Task AplicarEstadoAntigravity(
+            bool tokenOk, bool projectOk, string projectId, string mensaje)
         {
-            if (!autenticado)
+            if (!tokenOk)
             {
-                lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68);  // rojo
-                lblGcloudStatus.Text = "⬤  No autenticado";
+                // Sin credenciales — rojo + instrucción precisa
+                lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68);
+                lblGcloudStatus.Text = $"⬤  {mensaje}";
                 return;
             }
 
-            // Autenticado → obtener project ID activo
-            lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); // ámbar mientras carga
-            lblGcloudStatus.Text = "⬤  Detectando proyecto...";
-
-            string projectId = await AIServicios.ObtenerProyectoGcloudAsync();
-
-            if (!string.IsNullOrWhiteSpace(projectId))
+            if (!projectOk)
             {
-                _antigravityProjectId = projectId;   // guardar para usarlo en Guardar
-                lblGcloudStatus.ForeColor = Color.FromArgb(34, 197, 94);  // verde
-                lblGcloudStatus.Text = $"⬤  {projectId}";
-
-                // Si el campo Project ID está vacío, cargarlo automáticamente
-                // y disparar la carga de modelos
-                if (comboBoxApiAntigravity.SelectedItem is not Api selectedApi ||
-                    string.IsNullOrWhiteSpace(selectedApi.key))
-                {
-                    // Buscar en la lista de APIs si ya existe una entrada con ese project
-                    var apiExistente = _listaApisDisponibles
-                        .FirstOrDefault(a => a.key == projectId || a.Nombre == projectId);
-
-                    if (apiExistente != null)
-                    {
-                        comboBoxApiAntigravity.SelectedValue = apiExistente.key;
-                    }
-                    else
-                    {
-                        // Cargar modelos directamente con el project ID detectado
-                        await SeleccionarApi(Servicios.Antigravity, projectId);
-                    }
-                }
-            }
-            else
-            {
-                lblGcloudStatus.ForeColor = Color.FromArgb(34, 197, 94);  // verde (autenticado)
-                lblGcloudStatus.Text = "⬤  Autenticado (sin proyecto)";
-                // Sin proyecto → cargar igual con lista de respaldo
+                // Token OK pero sin proyecto — ámbar + instrucción
+                lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11);
+                lblGcloudStatus.Text = $"⬤  {mensaje}";
+                // Cargamos igual con fallback para que el comboBox no quede vacío
                 await SeleccionarApi(Servicios.Antigravity, "");
+                return;
             }
+
+            // ── Todo OK: token + proyecto detectados ─────────────────────────────
+            _antigravityProjectId = projectId;
+            lblGcloudStatus.ForeColor = Color.FromArgb(34, 197, 94);
+            lblGcloudStatus.Text = $"⬤  {mensaje}";
+
+            // Buscar si ya existe una entrada API con ese project ID
+            var apiExistente = _listaApisDisponibles
+                .FirstOrDefault(a => a.key == projectId || a.Nombre == projectId);
+
+            if (apiExistente != null)
+                comboBoxApiAntigravity.SelectedValue = apiExistente.key;
+            else
+                await SeleccionarApi(Servicios.Antigravity, projectId);
         }
 
         #endregion

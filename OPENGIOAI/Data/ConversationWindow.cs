@@ -194,10 +194,10 @@ namespace OPENGIOAI.Data
 
             sb.Append(instruccionActual);
 
-            if (soloChat)
-                sb.Append(" , SOLO CHAT = TRUE");
-            else
-                sb.Append(" , SOLO CHAT = FALSE");
+            // NOTA: El modo soloChat se comunica al LLM a través del contexto del agente
+            // (AgentContext.soloChat), NO agregándolo al texto de la instrucción del usuario.
+            // Antes se hacía " , SOLO CHAT = TRUE" aquí lo que corrompía el contenido
+            // de tareas como "crea un archivo con el texto X" → escribía "X , SOLO CHAT = TRUE".
 
             return sb.ToString();
         }

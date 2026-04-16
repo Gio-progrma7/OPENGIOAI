@@ -89,6 +89,13 @@ namespace OPENGIOAI.Agentes
         /// <summary>Línea de salida del script en tiempo real.</summary>
         public event Action<FaseAgente, string>? OnLineaScript;
 
+        /// <summary>
+        /// El Constructor completó su ejecución.
+        /// Proporciona la salida técnica cruda (contenido de respuesta.txt)
+        /// para que la UI pueda reenviarla formateada (ej. a Telegram).
+        /// </summary>
+        public event Action<string>? OnConstructorCompletado;
+
         // ── Constructor ──────────────────────────────────────────────────────
 
         /// <param name="maxReintentos">
@@ -154,10 +161,43 @@ namespace OPENGIOAI.Agentes
 
             // ── FASE 2: CONSTRUCTOR ──────────────────────────────────────────
             OnFaseIniciada?.Invoke(FaseAgente.Constructor, "Trabajando en ello...");
-            string codigoGenerado = await FaseConstructorAsync(instruccion, ct);
+            var (codigoGenerado, stdoutConstructor) = await FaseConstructorAsync(instruccion, ct);
             OnFaseCompletada?.Invoke(FaseAgente.Constructor, true);
 
+            // ── Determinar la salida real del Constructor ────────────────────
+            // Prioridad:
+            //   1. respuesta.txt → el script la escribió explícitamente (caso ideal)
+            //   2. stdout capturado → el script imprimió a consola pero no escribió respuesta.txt
+            //      En este caso lo persistimos en respuesta.txt para que el Analizador y
+            //      el Guardián también lo lean (ambos llaman a LeerRespuestaTxt internamente)
+            //   3. codigoGenerado → modo soloChat sin script (LLM respondió texto directo)
             string salidaRawConstructor = LeerRespuestaTxt();
+
+            if (string.IsNullOrWhiteSpace(salidaRawConstructor))
+            {
+                if (!string.IsNullOrWhiteSpace(stdoutConstructor))
+                {
+                    // El script produjo stdout pero no escribió respuesta.txt
+                    // → persistirlo para que todo el pipeline lo use
+                    salidaRawConstructor = stdoutConstructor;
+                    try
+                    {
+                        await File.WriteAllTextAsync(
+                            Path.Combine(_ruta, "respuesta.txt"),
+                            stdoutConstructor,
+                            System.Text.Encoding.UTF8);
+                    }
+                    catch { /* Silenciar — el flujo continúa igual */ }
+                }
+                else
+                {
+                    // Sin script (soloChat): el LLM respondió texto directamente
+                    salidaRawConstructor = codigoGenerado;
+                }
+            }
+
+            // Notificar a la UI con la salida real (para reenvío opcional por Telegram, etc.)
+            OnConstructorCompletado?.Invoke(salidaRawConstructor);
             log.AppendLine("### ⚙️ Constructor");
             log.AppendLine($"- Código: {codigoGenerado.Split('\n').Length} líneas");
             log.AppendLine($"- Salida raw: `{Truncar(salidaRawConstructor, 400)}`");
@@ -225,28 +265,30 @@ namespace OPENGIOAI.Agentes
                 _ruta, _modelo, _apiKey, _servicio,
                 soloChat: true, _claves, ct);
 
-            // Prompt del Analista — refuerza capacidad total, prohíbe negativas.
-            string promptAnalista = $@"Eres un agente de inteligencia artificial con capacidad TOTAL.
-Puedes ejecutar código, acceder a archivos, llamar APIs, automatizar cualquier tarea en el sistema.
-NUNCA dices que no puedes hacer algo. SIEMPRE asumes que la tarea es posible y explicas cómo la harás.
-Si la instrucción parece compleja, la divides en pasos simples y la resuelves igual.
+            // Prompt del Analista — tono cálido, conversacional, sin tecnicismos.
+            string promptAnalista = $@"Eres un asistente cercano y natural que le responde al usuario en primera persona,
+con un tono cálido, como si fuera un amigo muy capaz ayudando con lo que se le pide.
 
-Tu ÚNICA tarea ahora es leer la instrucción del usuario y responder con un JSON que describa
-en lenguaje SIMPLE y AMIGABLE qué vas a hacer. No evalúes si es posible — siempre lo es.
+Tu ÚNICA tarea ahora es leer la instrucción del usuario y responder con un JSON que refleje,
+en tono conversacional y amigable, lo que vas a hacer.
 
 INSTRUCCIÓN DEL USUARIO: {instruccion}
 
 Responde SOLO con este JSON (sin bloques de código, sin texto adicional):
 {{
-  ""resumen"": ""1 o 2 frases simples de lo que harás. Nada técnico. Sin 'no puedo'."",
-  ""pasos"": [""Lo que harás en paso 1"", ""Lo que harás en paso 2""]
+  ""resumen"": ""1 o 2 frases en tono conversacional, cálido, como: '¡Claro! Ahorita mismo te lo hago.' o 'En seguida lo reviso y te digo.' o 'Ya lo tengo, déjame procesarlo.' Sin palabras técnicas."",
+  ""pasos"": [""Paso 1 en lenguaje natural y amigable"", ""Paso 2 si aplica""]
 }}
 
 REGLAS ESTRICTAS:
-- Máximo 3 pasos concretos.
-- Primera persona afirmativa: 'voy a', 'haré', 'buscaré', 'crearé', 'calcularé'...
-- PROHIBIDO: 'no puedo', 'no es posible', 'lamentablemente', 'sin embargo', 'pero'
-- Si hay dudas sobre cómo hacerlo, igualmente describe el plan como si ya supieras.";
+- Máximo 3 pasos.
+- Tono conversacional latinoamericano: usa 'ahorita', 'en seguida', 'ya te lo', 'claro que sí', 'con gusto', 'listo', etc.
+- PROHIBIDO lenguaje técnico: no uses 'procesar', 'ejecutar', 'algoritmo', 'implementar', 'validar', 'generar output'.
+- PROHIBIDO: 'no puedo', 'no es posible', 'lamentablemente', 'sin embargo'.
+- El resumen debe sonar como lo diría una persona real, no un sistema.
+- Ejemplos de resumen: '¡Con gusto! En seguida lo modifico.', 'Claro, ahorita lo busco y te lo traigo.', 'Sí, ya te lo arreglo.', '¡Listo! Ahorita mismo lo hago para ti.'
+- Si hay dudas sobre cómo hacerlo, igualmente responde con confianza y calidez.
+- No me preguntes , no me digas que yo lo haga , tu eres el que lo va hacer , solo informa que lo haras";
 
             var ctxAnalista = ctx.ConPromptPersonalizado("");
             string raw = await AIModelConector.ObtenerRespuestaLLMAsync(promptAnalista, ctxAnalista, ct);
@@ -259,9 +301,7 @@ REGLAS ESTRICTAS:
             try
             {
                 // Limpiar bloques de código si el modelo los añadió
-                string limpio = raw.Trim()
-                    .TrimStart('`').TrimEnd('`')
-                    .Replace("```json", "").Replace("```", "").Trim();
+                string limpio = ExtraerBloquePuro(raw);
 
                 var obj = JObject.Parse(limpio);
                 string resumen = obj["resumen"]?.ToString() ?? "";
@@ -337,11 +377,7 @@ o
             {
                 raw = await AIModelConector.ObtenerRespuestaLLMAsync(promptAnalisis, ctxAnalizador, ct);
 
-                string limpio = raw.Trim()
-                    .TrimStart('`').TrimEnd('`')
-                    .Replace("```json", "").Replace("```", "").Trim();
-
-                var json = JObject.Parse(limpio);
+                var json = JObject.Parse(ExtraerBloquePuro(raw));
                 bool exito = json["exito"]?.Value<bool>() ?? false;
 
                 if (!exito)
@@ -486,13 +522,25 @@ o
         //  Usa el pipeline existente: LLM genera Python → se ejecuta → salida.
         // ════════════════════════════════════════════════════════════════════
 
-        private async Task<string> FaseConstructorAsync(string instruccion, CancellationToken ct)
+        /// <summary>
+        /// Ejecuta el Constructor y captura tanto el código generado como el stdout del script.
+        /// El stdout es la salida real de ejecución (lo que el script imprime / escribe en pantalla),
+        /// distinto de respuesta.txt que el propio script puede o no escribir.
+        /// </summary>
+        private async Task<(string codigo, string stdout)> FaseConstructorAsync(
+            string instruccion, CancellationToken ct)
         {
-            return await AIModelConector.EjecutarInstruccionIAAsync(
+            var sbStdout = new StringBuilder();
+            string codigo = await AIModelConector.EjecutarInstruccionIAAsync(
                 instruccion,
                 _modelo, _ruta, _apiKey, _claves, _soloChat, _servicio, ct,
                 onInicioScript: () => OnInicioScript?.Invoke(FaseAgente.Constructor),
-                onSalidaScript: linea => OnLineaScript?.Invoke(FaseAgente.Constructor, linea));
+                onSalidaScript: linea =>
+                {
+                    sbStdout.AppendLine(linea);
+                    OnLineaScript?.Invoke(FaseAgente.Constructor, linea);
+                });
+            return (codigo, sbStdout.ToString().Trim());
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -519,20 +567,23 @@ o
                     _ruta, _modelo, _apiKey, _servicio,
                     soloChat: true, _claves, ct);
 
-                string promptGuardian = $@"Eres un revisor tecnico que valida si un script cumplio la instruccion del usuario.
-REGLA: El RESULTADO es salida tecnica de un script Python. JSON con status ok es CORRECTO Y VALIDO.
-Marca FALLO solo si: status=error, datos pedidos ausentes, hay traceback/excepcion, o resultado vacio.
+                string promptGuardian = $@"Eres un revisor tecnico que valida si un script Python cumplio la instruccion del usuario.
+
+REGLA 1: JSON con status=ok es CORRECTO aunque tenga formato tecnico — no es fallo.
+REGLA 2: Marca FALLO solo si: status=error, datos pedidos ausentes, hay Traceback/excepcion, resultado vacio, o importaciones faltantes.
+REGLA 3: Si hay fallo, la instruccion_correctora debe RESOLVER COMPLETAMENTE LA TAREA ORIGINAL del usuario (no solo parchear el error). Debe ser autosuficiente: incluir todos los imports necesarios, manejar excepciones, y escribir el resultado completo en respuesta.txt.
+
 Responde SOLO con JSON valido (sin bloques de codigo):
 
 Si los datos estan presentes (exito real):
-{{""exito"": true, ""razon"": ""Que datos se obtuvieron en 1 frase""}}
+{{""exito"": true, ""razon"": ""Que dato concreto se obtuvo en 1 frase""}}
 
-Si hay fallo real (datos ausentes, error Python, vacio):
-{{""exito"": false, ""razon"": ""Que fallo (max 1 frase)"", ""instruccion_correctora"": ""Instruccion concreta para corregirlo""}}
+Si hay fallo real:
+{{""exito"": false, ""razon"": ""Que fallo exactamente (max 1 frase)"", ""instruccion_correctora"": ""Instruccion completa y autosuficiente para lograr: {instruccion.Replace("\"", "'")}. Debe incluir todos los imports y manejar el error anterior.""}}
 
-INSTRUCCION ORIGINAL: {instruccion}
+INSTRUCCION ORIGINAL DEL USUARIO: {instruccion}
 
-RESULTADO OBTENIDO (salida del script):
+RESULTADO ACTUAL (salida del script):
 {(string.IsNullOrWhiteSpace(resultado) ? "[Sin resultado — el script no genero salida]" : resultado)}
 
 CODIGO EJECUTADO (ultimas 30 lineas):
@@ -566,11 +617,7 @@ CODIGO EJECUTADO (ultimas 30 lineas):
         {
             try
             {
-                string limpio = rawJson.Trim()
-                    .TrimStart('`').TrimEnd('`')
-                    .Replace("```json", "").Replace("```", "").Trim();
-
-                var json = JObject.Parse(limpio);
+                var json = JObject.Parse(ExtraerBloquePuro(rawJson));
                 bool exito = json["exito"]?.Value<bool>() ?? true;
                 string razon = json["razon"]?.ToString() ?? "";
                 string instruccionCorrectora = json["instruccion_correctora"]?.ToString() ?? "";
@@ -584,14 +631,35 @@ CODIGO EJECUTADO (ultimas 30 lineas):
                     $"Encontré algo que mejorar: {razon}\nHaciendo una corrección automática... ({intentoActual}/{_maxIntentosGuardian})");
 
                 // Aplicar corrección — usa el Constructor con la instrucción correctora
+                var sbStdoutCorrector = new StringBuilder();
                 await AIModelConector.EjecutarInstruccionIAAsync(
                     instruccionCorrectora,
                     _modelo, _ruta, _apiKey, _claves, _soloChat, _servicio, ct,
                     onInicioScript: () => OnInicioScript?.Invoke(FaseAgente.Guardian),
-                    onSalidaScript: linea => OnLineaScript?.Invoke(FaseAgente.Guardian, linea));
+                    onSalidaScript: linea =>
+                    {
+                        sbStdoutCorrector.AppendLine(linea);
+                        OnLineaScript?.Invoke(FaseAgente.Guardian, linea);
+                    });
 
-                // Devolver nuevo resultado para la siguiente iteración
-                string nuevoResultado = LeerRespuestaTxt();
+                // Nuevo resultado: preferir respuesta.txt; fallback a stdout si está vacío
+                string nuevoResultado = NormalizarSalidaJSON(LeerRespuestaTxt());
+                if (string.IsNullOrWhiteSpace(nuevoResultado))
+                {
+                    string stdoutCorrector = sbStdoutCorrector.ToString().Trim();
+                    if (!string.IsNullOrWhiteSpace(stdoutCorrector))
+                    {
+                        nuevoResultado = NormalizarSalidaJSON(stdoutCorrector);
+                        try
+                        {
+                            await File.WriteAllTextAsync(
+                                Path.Combine(_ruta, "respuesta.txt"),
+                                stdoutCorrector,
+                                System.Text.Encoding.UTF8);
+                        }
+                        catch { }
+                    }
+                }
                 return (true, nuevoResultado);
             }
             catch
@@ -646,29 +714,65 @@ RESULTADO OBTENIDO:
             return sb.ToString();
         }
 
-        private static string ConstruirPromptComunicador() => @"Eres el Comunicador final del sistema ARIA. Tu misión es transmitir al usuario los resultados que ya fueron obtenidos.
+        private static string ConstruirPromptComunicador() => @"Eres el Comunicador final del sistema ARIA. Tu misión es decirle al usuario el resultado concreto.
 
-══ REGLA CRÍTICA (PRIORIDAD MÁXIMA) ══
-Los datos en 'RESULTADO OBTENIDO' son REALES y ya fueron ejecutados exitosamente por el sistema.
-JAMÁS digas que no puedes ver, acceder, ejecutar o consultar nada — eso YA SE HIZO antes de que hablaras.
-Tu trabajo es SOLO comunicar esos datos de forma clara y amigable. Nunca los ignores.
+══ REGLA #1 — EL DATO SIEMPRE VA PRIMERO (PRIORIDAD MÁXIMA) ══
+El 'RESULTADO OBTENIDO' contiene datos REALES. Tu primera oración DEBE incluir el valor exacto.
+NUNCA digas solo 'lo obtuve', 'lo encontré', 'se completó' sin mencionar QUÉ se obtuvo.
+EJEMPLOS INCORRECTOS:
+  ✗ 'Obtuve la hora y todo salió bien'   → no dice QUÉ hora es
+  ✗ 'Encontré los datos de tu PC'        → no dice los datos
+  ✗ 'La operación se completó sin error' → no dice el resultado
+EJEMPLOS CORRECTOS:
+  ✓ 'Son las 3:10 PM.'
+  ✓ 'Tienes 7.9 GB de RAM, de los que 89% está en uso.'
+  ✓ 'Hay 10 archivos en tu escritorio.'
+
+══ REGLA #2 — JAMÁS DIGAS QUE NO PUEDES ══
+Los datos ya fueron obtenidos antes de que hablaras. Tu trabajo es comunicarlos, no repetir el proceso.
 
 ESTILO:
 1. Lenguaje cotidiano — cero tecnicismos
-2. PROHIBIDO usar: script, función, variable, ejecutar, código, Python, proceso, módulo, import
-3. USA siempre: busqué, encontré, guardé, calculé, obtuve, creé, calculé
-4. Máximo 3 párrafos cortos
-5. Máximo 2 emojis, usados con intención
-6. Segunda persona directa: te, tu, tus
-7. Empieza directo con el dato — sin 'Hola', 'Por supuesto', ni frases de incapacidad
+2. PROHIBIDO: script, función, variable, ejecutar, código, Python, módulo, import, proceso
+3. PROHIBIDO hablar del tiempo de ejecución a menos que sea relevante ('lo hice en 1 seg' solo si tardó más de 3s)
+4. Máximo 3 párrafos cortos · Máximo 2 emojis · Segunda persona: te, tu, tus
+5. Empieza DIRECTO con el dato — sin 'Hola', 'Por supuesto', 'Claro que sí'
 
 FORMATO:
-8. Listas o conjuntos de datos → viñetas o numeración clara
-9. NUNCA muestres JSON crudo ni etiquetas técnicas
-10. Muchos elementos → resumen primero, luego lista completa
-11. Algo salió imperfecto → 1 frase breve, optimista, sin dramatismo";
+6. Listas o conjuntos → viñetas o números claros
+7. NUNCA JSON crudo ni etiquetas técnicas
+8. Muchos elementos → resumen primero, lista completa después
+9. Error o resultado vacío → 1 frase honesta y breve, sin dramatismo";
 
         // ── Utilidades ───────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Extrae el bloque JSON puro de una respuesta LLM que puede venir envuelta
+        /// en markdown (```json ... ```, ``` ... ```) o con texto adicional.
+        /// Estrategia: buscar el primer '{' o '[' y el último '}' o ']' correspondiente.
+        /// Es más robusto que hacer Replace/TrimStart porque no depende del orden de los delimitadores.
+        /// </summary>
+        private static string ExtraerBloquePuro(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return raw ?? "";
+
+            // Buscar primer carácter de apertura JSON
+            int inicio = -1;
+            char cierre = '}';
+            for (int i = 0; i < raw.Length; i++)
+            {
+                if (raw[i] == '{') { inicio = i; cierre = '}'; break; }
+                if (raw[i] == '[') { inicio = i; cierre = ']'; break; }
+            }
+
+            if (inicio < 0) return raw.Trim(); // No parece JSON — devolver tal cual
+
+            // Buscar el último carácter de cierre correspondiente
+            int fin = raw.LastIndexOf(cierre);
+            if (fin <= inicio) return raw.Trim();
+
+            return raw[inicio..(fin + 1)];
+        }
 
         private string LeerRespuestaTxt()
         {
