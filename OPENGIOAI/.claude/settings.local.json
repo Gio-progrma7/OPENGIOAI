@@ -26,7 +26,11 @@
       "Bash(dir \"C:\\\\Users\\\\PC ONE\\\\source\\\\repos\\\\OPENGIOAI\\\\OPENGIOAI\" /b)",
       "Bash(gh gist:*)",
       "Bash(python3 upload_skills.py)",
-      "Bash(python upload_skills.py)"
+      "Bash(python upload_skills.py)",
+      "Bash(dotnet --version)",
+      "Bash(dotnet --list-runtimes)",
+      "Bash(dotnet --list-sdks)",
+      "Bash(dotnet restore:*)"
     ]
   }
 }

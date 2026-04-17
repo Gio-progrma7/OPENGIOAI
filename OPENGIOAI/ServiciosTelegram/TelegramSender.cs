@@ -3,6 +3,7 @@ using OPENGIOAI.Utilerias;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -312,6 +313,46 @@ namespace OPENGIOAI.ServiciosTelegram
         /// Divide la cadena usando el carácter guion bajo (_) como separador entre el comando y su parámetro.
         /// Si no existe un valor adicional, devuelve el comando y el mismo texto como valor.
         /// </summary>
+        /// <summary>
+        /// Envía un archivo al chat de Telegram usando la API sendDocument.
+        /// Admite cualquier tipo de archivo (código, imágenes, datos, etc.).
+        /// </summary>
+        public static async Task<bool> EnviarArchivoAsync(
+            string token, long chatId, string rutaArchivo, string caption = "")
+        {
+            try
+            {
+                if (!File.Exists(rutaArchivo)) return false;
+
+                var url = $"https://api.telegram.org/bot{token}/sendDocument";
+                using var client = new HttpClient();
+                using var form   = new MultipartFormDataContent();
+
+                form.Add(new StringContent(chatId.ToString()), "chat_id");
+
+                if (!string.IsNullOrWhiteSpace(caption))
+                    form.Add(new StringContent(caption), "caption");
+
+                var fileBytes   = await File.ReadAllBytesAsync(rutaArchivo);
+                var fileContent = new ByteArrayContent(fileBytes);
+                fileContent.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                form.Add(fileContent, "document", Path.GetFileName(rutaArchivo));
+
+                var response = await client.PostAsync(url, form).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) return false;
+
+                var json = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(json);
+                return doc.RootElement.TryGetProperty("ok", out var ok) && ok.GetBoolean();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error enviando archivo Telegram: " + ex.Message);
+                return false;
+            }
+        }
+
         public static (string comando, string valor) ExtraerComandoYValor(string input)
         {
             if (string.IsNullOrWhiteSpace(input))

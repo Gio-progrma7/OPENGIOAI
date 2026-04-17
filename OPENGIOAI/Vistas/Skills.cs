@@ -38,6 +38,9 @@ namespace OPENGIOAI.Vistas
         private Button         _btnNuevo   = null!;
         private Label          _lblEditor  = null!;
 
+        // ── Referencia al TabControl inferior ────────────────────────────────
+        private TabControl     _tabInferior     = null!;
+
         // ── Hub ───────────────────────────────────────────────────────────────
         private Panel          _pnlHub         = null!;
         private TextBox        _txtHubUrl       = null!;
@@ -99,26 +102,55 @@ namespace OPENGIOAI.Vistas
         /// <summary>Agrega controles que no están en el .Designer: output RTB, botón Nuevo.</summary>
         private void AgregarControlesExtra()
         {
-            // ── RichTextBox de output (debajo de btnEjecutar) ─────────────────
+            // ── RichTextBox de output (vive dentro del tab Log) ───────────────
             _rtbOutput = new RichTextBox
             {
-                Location  = new Point(btnGuardar.Left, btnEjecutar.Bottom + 8),
-                Size      = new Size(pnlContenedor.Right - btnGuardar.Left, 80),
-                BackColor = Color.FromArgb(2, 6, 23),
-                ForeColor = ColorTextoSecundario,
-                Font      = new Font("Consolas", 8.5f),
-                ReadOnly  = true,
+                Dock        = DockStyle.Fill,
+                BackColor   = Color.FromArgb(2, 6, 23),
+                ForeColor   = ColorTextoSecundario,
+                Font        = new Font("Consolas", 9f),
+                ReadOnly    = true,
                 BorderStyle = BorderStyle.None,
                 ScrollBars  = RichTextBoxScrollBars.Vertical,
                 Name        = "rtbOutput"
             };
-            Controls.Add(_rtbOutput);
 
-            // Ajustar pnlContenedor para empezar debajo del output
-            pnlContenedor.Location = new Point(
-                pnlContenedor.Left,
-                _rtbOutput.Bottom + 8);
-            pnlContenedor.Height = ClientSize.Height - pnlContenedor.Top - 10;
+            // ── Tab: 📋 Skills ────────────────────────────────────────────────
+            var tabSkills = new TabPage
+            {
+                Text      = "  📋  Skills  ",
+                BackColor = Color.FromArgb(15, 23, 42),
+                Padding   = new Padding(0)
+            };
+            pnlContenedor.Dock = DockStyle.Fill;
+            tabSkills.Controls.Add(pnlContenedor);
+
+            // ── Tab: 📄 Output / Log ──────────────────────────────────────────
+            var tabLog = new TabPage
+            {
+                Text      = "  📄  Output / Log  ",
+                BackColor = Color.FromArgb(2, 6, 18),
+                Padding   = new Padding(0)
+            };
+            tabLog.Controls.Add(_rtbOutput);
+
+            // ── TabControl inferior ───────────────────────────────────────────
+            var tabInferior = new TabControl
+            {
+                Anchor    = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                Location  = new Point(btnGuardar.Left, btnEjecutar.Bottom + 10),
+                Size      = new Size(ClientSize.Width - btnGuardar.Left - 10,
+                                     ClientSize.Height - btnEjecutar.Bottom - 20),
+                Font      = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Name      = "tabInferior"
+            };
+            tabInferior.TabPages.Add(tabSkills);
+            tabInferior.TabPages.Add(tabLog);
+            Controls.Add(tabInferior);
+            _tabInferior = tabInferior;
+
+            // Quitar pnlContenedor del form (ahora vive en el tab)
+            Controls.Remove(pnlContenedor);
 
             // ── Botón NUEVO ───────────────────────────────────────────────────
             _btnNuevo = new Button
@@ -458,6 +490,37 @@ namespace OPENGIOAI.Vistas
 
             // Cards container
             pnlContenedor.BackColor = ColorFondo;
+
+            // TabControl inferior — tema oscuro
+            if (_tabInferior != null)
+            {
+                _tabInferior.BackColor   = ColorFondo;
+                _tabInferior.ForeColor   = ColorTextoSecundario;
+                _tabInferior.DrawMode    = TabDrawMode.OwnerDrawFixed;
+                _tabInferior.ItemSize    = new Size(0, 30);
+                _tabInferior.DrawItem   += (s, e) =>
+                {
+                    var tab  = (TabControl)s!;
+                    var page = tab.TabPages[e.Index];
+                    bool sel = tab.SelectedIndex == e.Index;
+                    using var bgBrush = new SolidBrush(sel
+                        ? Color.FromArgb(30, 41, 59)
+                        : Color.FromArgb(15, 23, 42));
+                    e.Graphics.FillRectangle(bgBrush, e.Bounds);
+                    using var fgBrush = new SolidBrush(sel
+                        ? ColorTextoPrincipal
+                        : ColorTextoSecundario);
+                    var sf = new StringFormat
+                        { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                    e.Graphics.DrawString(page.Text, tab.Font, fgBrush, e.Bounds, sf);
+                    if (sel)
+                    {
+                        using var linePen = new Pen(ColorAcento, 2);
+                        e.Graphics.DrawLine(linePen, e.Bounds.Left, e.Bounds.Bottom - 1,
+                            e.Bounds.Right, e.Bounds.Bottom - 1);
+                    }
+                };
+            }
         }
 
         // ── Cargar datos ──────────────────────────────────────────────────────
@@ -1049,8 +1112,8 @@ if __name__ == ""__main__"":
         private void AlternarPanelHub()
         {
             bool mostrar = !_pnlHub.Visible;
-            _pnlHub.Location = pnlContenedor.Location;
-            _pnlHub.Size     = pnlContenedor.Size;
+            _pnlHub.Location = _tabInferior.Location;
+            _pnlHub.Size     = _tabInferior.Size;
             _pnlHub.Visible  = mostrar;
 
             if (mostrar)
@@ -1619,8 +1682,8 @@ if __name__ == ""__main__"":
         private void AlternarPanelCreador()
         {
             bool mostrar = !_pnlCreador.Visible;
-            _pnlCreador.Location = pnlContenedor.Location;
-            _pnlCreador.Size     = pnlContenedor.Size;
+            _pnlCreador.Location = _tabInferior.Location;
+            _pnlCreador.Size     = _tabInferior.Size;
             _pnlCreador.Visible  = mostrar;
             if (mostrar)
             {
@@ -1640,7 +1703,8 @@ if __name__ == ""__main__"":
                 EstadoCreador("Escribe una descripción primero.", ColorAmbar);
                 return;
             }
-            if (string.IsNullOrWhiteSpace(Modelo) || string.IsNullOrWhiteSpace(ApiKey))
+            bool requiereApiKey = Agente != Servicios.Ollama;
+            if (string.IsNullOrWhiteSpace(Modelo) || (requiereApiKey && string.IsNullOrWhiteSpace(ApiKey)))
             {
                 EstadoCreador("Sin modelo/API key configurados.", ColorRojo);
                 return;
