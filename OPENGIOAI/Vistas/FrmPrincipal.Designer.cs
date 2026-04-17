@@ -31,6 +31,7 @@
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FrmPrincipal));
             pnlMenu = new Panel();
             btnAutomatizacion = new Button();
+            btnPromts = new Button();
             label3 = new Label();
             label2 = new Label();
             btnMultiples = new Button();
@@ -59,6 +60,7 @@
             // 
             pnlMenu.BackColor = Color.FromArgb(30, 41, 59);
             pnlMenu.Controls.Add(btnAutomatizacion);
+            pnlMenu.Controls.Add(btnPromts);
             pnlMenu.Controls.Add(label3);
             pnlMenu.Controls.Add(label2);
             pnlMenu.Controls.Add(btnMultiples);
@@ -94,6 +96,24 @@
             btnAutomatizacion.TextAlign = ContentAlignment.MiddleLeft;
             btnAutomatizacion.UseVisualStyleBackColor = true;
             btnAutomatizacion.Click += btnAutomatizacion_Click;
+            //
+            // btnPromts
+            //
+            btnPromts.FlatAppearance.BorderColor = Color.RoyalBlue;
+            btnPromts.FlatAppearance.BorderSize = 0;
+            btnPromts.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 192, 255);
+            btnPromts.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 0, 64);
+            btnPromts.FlatStyle = FlatStyle.Flat;
+            btnPromts.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 0);
+            btnPromts.ForeColor = Color.FromArgb(148, 163, 184);
+            btnPromts.Location = new Point(0, 408);
+            btnPromts.Name = "btnPromts";
+            btnPromts.Size = new Size(203, 41);
+            btnPromts.TabIndex = 12;
+            btnPromts.Text = "🧠  Prompts";
+            btnPromts.TextAlign = ContentAlignment.MiddleLeft;
+            btnPromts.UseVisualStyleBackColor = true;
+            btnPromts.Click += btnPromts_Click;
             // 
             // label3
             // 
@@ -392,5 +412,6 @@
         private Button btnOcultar;
         private Button btnAutomatizacion;
         private Button btnComunicadores;
+        private Button btnPromts;
     }
 }
