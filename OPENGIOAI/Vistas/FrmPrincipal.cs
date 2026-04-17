@@ -27,6 +27,7 @@ namespace OPENGIOAI.Vistas
             InitializeComponent();
             AplicarTema();
             CargarDatosInicio();
+            btnComunicadores.Visible = true;
            // AgregarBotonesAgentesAvanzados();
         }
 
@@ -91,6 +92,12 @@ namespace OPENGIOAI.Vistas
         {
             Skills fmrSkills = new Skills(Miconfiguracion);
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, fmrSkills);
+        }
+
+        private void btnComunicadores_Click(object sender, EventArgs e)
+        {
+            FrmComunicadores frmComunicadores = new FrmComunicadores(Miconfiguracion);
+            EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmComunicadores);
         }
 
 

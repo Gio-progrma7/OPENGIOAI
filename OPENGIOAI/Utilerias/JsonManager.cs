@@ -26,6 +26,37 @@ namespace OPENGIOAI.Utilerias
             return JsonSerializer.Deserialize<List<T>>(json) ?? new List<T>();
         }
 
+        /// <summary>
+        /// Lee la lista desde el archivo JSON.
+        /// Si el archivo no existe (o la carpeta tampoco), lo crea con un array
+        /// vacío <c>[]</c> para que la estructura quede lista para futuras escrituras.
+        /// </summary>
+        public static List<T> LeerOCrear<T>(string ruta)
+        {
+            // Crear directorio si no existe
+            string? carpeta = Path.GetDirectoryName(ruta);
+            if (!string.IsNullOrEmpty(carpeta) && !Directory.Exists(carpeta))
+                Directory.CreateDirectory(carpeta);
+
+            // Crear archivo vacío si no existe
+            if (!File.Exists(ruta))
+            {
+                File.WriteAllText(ruta, "[]");
+                return new List<T>();
+            }
+
+            string json = File.ReadAllText(ruta);
+
+            // Si el archivo estaba vacío, dejarlo como [] y devolver lista vacía
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                File.WriteAllText(ruta, "[]");
+                return new List<T>();
+            }
+
+            return JsonSerializer.Deserialize<List<T>>(json) ?? new List<T>();
+        }
+
         public static void Guardar<T>(string ruta, List<T> datos)
         {
             string json = JsonSerializer.Serialize(datos, opciones);

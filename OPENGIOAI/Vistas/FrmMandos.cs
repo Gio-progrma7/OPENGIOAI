@@ -58,6 +58,7 @@ using OPENGIOAI.Entidades;
 using OPENGIOAI.Properties;
 using OPENGIOAI.ServiciosAI;
 using OPENGIOAI.ServiciosSlack;
+using OPENGIOAI.ServiciosTTS;
 using OPENGIOAI.ServiciosTelegram;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
@@ -96,6 +97,9 @@ namespace OPENGIOAI.Vistas
         private bool _telegramActivo = false;
         private bool _enviarConstructorTelegram = false;
         private bool _enviarConstructorSlack    = false;
+        private bool _enviarArchivosTelegram    = false;
+        private bool _enviarArchivosSlack       = false;
+        private bool _enviarAudio               = false;
         private bool _slackActivo = false;
         private bool _recordarTema = false;
         private bool _soloResptxt = false;
@@ -144,6 +148,7 @@ namespace OPENGIOAI.Vistas
 
         // ── Modelos de datos ──────────────────────────────────────────────────
         private ConfiguracionClient _configuracionClient;
+        private ConfiguracionTTS _configTTS = new();
         private SlackChat _slackChat = new();
         private TelegramChat _telegramChat = new();
         private Modelo _modeloSeleccionado = new();
@@ -326,15 +331,42 @@ namespace OPENGIOAI.Vistas
         private async void checkBoxSlack_CheckedChanged(object sender, EventArgs e)
         {
             _slackActivo = checkBoxSlack.Checked;
-            // Habilitar / deshabilitar la sub-opción del Constructor para Slack
+            // Habilitar / deshabilitar las sub-opciones del Constructor y archivos para Slack
             checkBoxConstructorSlack.Enabled = _slackActivo;
-            if (!_slackActivo) checkBoxConstructorSlack.Checked = false;
+            checkBoxArchivosSlack.Enabled    = _slackActivo;
+            if (!_slackActivo)
+            {
+                checkBoxConstructorSlack.Checked = false;
+                checkBoxArchivosSlack.Checked    = false;
+            }
             await IniciarSlack();
         }
 
         private void checkBoxConstructorSlack_CheckedChanged(object sender, EventArgs e)
         {
             _enviarConstructorSlack = checkBoxConstructorSlack.Checked;
+        }
+
+        private void checkBoxArchivosSlack_CheckedChanged(object sender, EventArgs e)
+        {
+            _enviarArchivosSlack = checkBoxArchivosSlack.Checked;
+        }
+
+        private void checkBoxAudio_CheckedChanged(object sender, EventArgs e)
+        {
+            if (!checkBoxAudio.Checked) { _enviarAudio = false; return; }
+
+            // Verificar que TTS esté configurado antes de activar
+            _configTTS = Utils.LeerConfig<ConfiguracionTTS>(RutasProyecto.ObtenerRutaConfiguracionTTS());
+            if (!_configTTS.Activo)
+            {
+                checkBoxAudio.Checked = false;
+                _toolTipArchivos.Show(
+                    "Configura el proveedor de voz en\nComunicadores → 🔊 Audio TTS",
+                    checkBoxAudio, 0, -48, 3500);
+                return;
+            }
+            _enviarAudio = true;
         }
 
         private async void comboBoxRuta_SelectedIndexChanged(object sender, EventArgs e)
@@ -357,15 +389,25 @@ namespace OPENGIOAI.Vistas
         private async void checkBoxTelegram_CheckedChanged(object sender, EventArgs e)
         {
             _telegramActivo = checkBoxTelegram.Checked;
-            // Habilitar / deshabilitar la sub-opción del Constructor
+            // Habilitar / deshabilitar las sub-opciones del Constructor y archivos
             checkBoxConstructorTelegram.Enabled = _telegramActivo;
-            if (!_telegramActivo) checkBoxConstructorTelegram.Checked = false;
+            checkBoxArchivosTelegram.Enabled    = _telegramActivo;
+            if (!_telegramActivo)
+            {
+                checkBoxConstructorTelegram.Checked = false;
+                checkBoxArchivosTelegram.Checked    = false;
+            }
             await IniciarConversasionTelegram();
         }
 
         private void checkBoxConstructorTelegram_CheckedChanged(object sender, EventArgs e)
         {
             _enviarConstructorTelegram = checkBoxConstructorTelegram.Checked;
+        }
+
+        private void checkBoxArchivosTelegram_CheckedChanged(object sender, EventArgs e)
+        {
+            _enviarArchivosTelegram = checkBoxArchivosTelegram.Checked;
         }
 
         private void checkBoxRapida_CheckedChanged(object sender, EventArgs e)
@@ -536,9 +578,11 @@ namespace OPENGIOAI.Vistas
         /// </summary>
         private void CargarListaAgents()
         {
-            _listaApisDisponibles = JsonManager.Leer<Api>(RutasProyecto.ObtenerRutaListApis());
-            _listaAgentes = JsonManager.Leer<Modelo>(RutasProyecto.ObtenerRutaListModelos());
+            _listaApisDisponibles     = JsonManager.Leer<Api>(RutasProyecto.ObtenerRutaListApis());
+            _listaAgentes             = JsonManager.Leer<Modelo>(RutasProyecto.ObtenerRutaListModelos());
             _listaArchivosDisponibles = JsonManager.Leer<Archivo>(RutasProyecto.ObtenerRutaListArchivos());
+            _configTTS                = Utils.LeerConfig<ConfiguracionTTS>(
+                                            RutasProyecto.ObtenerRutaConfiguracionTTS());
         }
 
         // ──────────────────────────────────────────────────────────────────────
@@ -663,16 +707,53 @@ namespace OPENGIOAI.Vistas
             aria.OnReintentoGuardian += (intento, max, razon) =>
                 _panelAgentes.SetEstado(FaseAgente.Guardian, EstadoAgente.Active);
 
+            // ── Snapshot del directorio de trabajo antes del pipeline ────────
+            // Se usa para detectar qué archivos creó el Constructor.
+            var rutaTrabajo = _archivoSeleccionado?.Ruta ?? "";
+            var snapshotAntes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if ((_enviarArchivosTelegram || _enviarArchivosSlack) &&
+                !string.IsNullOrWhiteSpace(rutaTrabajo) &&
+                System.IO.Directory.Exists(rutaTrabajo))
+            {
+                foreach (var f in System.IO.Directory.GetFiles(rutaTrabajo, "*", System.IO.SearchOption.TopDirectoryOnly))
+                    snapshotAntes.Add(f);
+            }
+
             // ── Reenvío opcional del Constructor a Telegram y/o Slack ────────
             aria.OnConstructorCompletado += salidaRaw =>
             {
-                if (string.IsNullOrWhiteSpace(salidaRaw)) return;
+                if (!string.IsNullOrWhiteSpace(salidaRaw))
+                {
+                    if (_enviarConstructorTelegram && usarTelegram)
+                        _ = EnviarTelegramDesdeActivacion(FormatearConstructorParaTelegram(salidaRaw));
 
-                if (_enviarConstructorTelegram && usarTelegram)
-                    _ = EnviarTelegramDesdeActivacion(FormatearConstructorParaTelegram(salidaRaw));
+                    if (_enviarConstructorSlack && usarSlack && _slack != null)
+                        _ = _slack.EnviarCodigoAsync(FormatearConstructorParaSlack(salidaRaw));
+                }
 
-                if (_enviarConstructorSlack && usarSlack && _slack != null)
-                    _ = _slack.EnviarCodigoAsync(FormatearConstructorParaSlack(salidaRaw));
+                // ── Envío de archivos nuevos creados por el Constructor ──────
+                if ((_enviarArchivosTelegram || _enviarArchivosSlack) &&
+                    !string.IsNullOrWhiteSpace(rutaTrabajo) &&
+                    System.IO.Directory.Exists(rutaTrabajo))
+                {
+                    var archivosNuevos = System.IO.Directory.GetFiles(
+                            rutaTrabajo, "*", System.IO.SearchOption.TopDirectoryOnly)
+                        .Where(f => !snapshotAntes.Contains(f))
+                        .ToList();
+
+                    foreach (var archivo in archivosNuevos)
+                    {
+                        string nombre = System.IO.Path.GetFileName(archivo);
+
+                        if (_enviarArchivosTelegram && usarTelegram && _telegramChat != null)
+                            _ = ServiciosTelegram.TelegramSender.EnviarArchivoAsync(
+                                    _telegramChat.Apikey, _telegramChat.ChatId,
+                                    archivo, $"📎 {nombre}");
+
+                        if (_enviarArchivosSlack && usarSlack && _slack != null)
+                            _ = _slack.EnviarArchivoAsync(archivo, nombre);
+                    }
+                }
             };
 
             // ── Indicadores de "escribiendo / pensando" mientras el pipeline corre ──
@@ -1054,16 +1135,49 @@ namespace OPENGIOAI.Vistas
         /// </summary>
         private async Task EjecutarDifusionAsync(string mensaje, bool usarTelegram, bool usarSlack)
         {
-            var tareas = new List<Task>();
+            // Cuando el audio está activo, se omite el texto — solo se envía el audio
+            if (!_enviarAudio)
+            {
+                var tareas = new List<Task>();
 
-            if (usarTelegram)
-                tareas.Add(EnviarRespuestaTelegramAsync(mensaje, true));
+                if (usarTelegram)
+                    tareas.Add(EnviarRespuestaTelegramAsync(mensaje, true));
 
-            if (usarSlack && _slack != null)
-                tareas.Add(_slack.SendMessage(mensaje));
+                if (usarSlack && _slack != null)
+                    tareas.Add(_slack.SendMessage(mensaje));
 
-            if (tareas.Count > 0)
-                await Task.WhenAll(tareas);
+                if (tareas.Count > 0)
+                    await Task.WhenAll(tareas);
+            }
+
+            // ── Audio TTS — generar una sola vez y enviar a todos los canales activos ──
+            if (_enviarAudio && _configTTS.Activo)
+            {
+                var (audioBytes, ext) = await ServicioTTS.GenerarAudioAsync(mensaje, _configTTS);
+
+                if (audioBytes.Length > 0)
+                {
+                    string tmpFile = Path.Combine(Path.GetTempPath(),
+                        $"aria_audio_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}");
+
+                    await File.WriteAllBytesAsync(tmpFile, audioBytes);
+
+                    var tareasAudio = new List<Task>();
+
+                    if (usarTelegram && _telegramChat?.ChatId != 0)
+                        tareasAudio.Add(ServiciosTelegram.TelegramSender.EnviarArchivoAsync(
+                            _telegramChat!.Apikey, _telegramChat.ChatId,
+                            tmpFile, "🔊 Audio"));
+
+                    if (usarSlack && _slack != null)
+                        tareasAudio.Add(_slack.EnviarArchivoAsync(tmpFile, "Audio"));
+
+                    if (tareasAudio.Count > 0)
+                        await Task.WhenAll(tareasAudio);
+
+                    try { File.Delete(tmpFile); } catch { }
+                }
+            }
         }
 
         /// <summary>
@@ -2092,8 +2206,8 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 // Separador visual entre Telegram y Slack
                 var pnlSepNotif = new Panel
                 {
-                    Location  = new Point(268, 114),
-                    Size      = new Size(1, 16),
+                    Location  = new Point(400, 112),
+                    Size      = new Size(1, 20),
                     BackColor = Color.FromArgb(50, 65, 90)
                 };
                 pnlContenedorTxt.Controls.Add(pnlSepNotif);
@@ -2102,8 +2216,11 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 // Asegurar z-order correcto para toda la barra inferior
                 checkBoxTelegram.BringToFront();
                 checkBoxConstructorTelegram.BringToFront();
+                checkBoxArchivosTelegram.BringToFront();
                 checkBoxSlack.BringToFront();
                 checkBoxConstructorSlack.BringToFront();
+                checkBoxArchivosSlack.BringToFront();
+                checkBoxAudio.BringToFront();
                 btnLimpiar.BringToFront();
                 btnInfo.BringToFront();
 
@@ -2115,7 +2232,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                     ForeColor = Color.FromArgb(140, 165, 205),
                     BackColor = Color.Transparent,
                     Font      = new Font("Segoe UI", 7.5f),
-                    Location  = new Point(448, 114)
+                    Location  = new Point(412, 115)
                 };
 
                 _nudReintentos = new NumericUpDown
@@ -2125,7 +2242,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                     Value              = 3,
                     Width              = 42,
                     Height             = 22,
-                    Location           = new Point(524, 110),
+                    Location           = new Point(480, 111),
                     BackColor          = Color.FromArgb(30, 41, 59),
                     ForeColor          = Color.White,
                     Font               = new Font("Segoe UI", 8.5f, FontStyle.Bold),
@@ -2147,6 +2264,9 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 // ── Sub-checkboxes del Constructor: deshabilitados hasta activar el canal ──
                 checkBoxConstructorTelegram.Enabled = false;
                 checkBoxConstructorSlack.Enabled    = false;
+                checkBoxArchivosTelegram.Enabled    = false;
+                checkBoxArchivosSlack.Enabled       = false;
+                // checkBoxAudio siempre habilitado — es independiente
 
                 // ── Labels de estadísticas ocultas hasta presionar ℹ ──────
                 lblTime.Visible     = false;

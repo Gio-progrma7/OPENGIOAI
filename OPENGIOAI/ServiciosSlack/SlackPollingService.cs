@@ -189,6 +189,36 @@ namespace OPENGIOAI.ServiciosSlack
         }
 
         /// <summary>
+        /// Sube un archivo al canal de Slack usando la API files.upload.
+        /// El archivo aparece como adjunto en el canal configurado.
+        /// </summary>
+        public async Task EnviarArchivoAsync(string rutaArchivo, string title = "")
+        {
+            try
+            {
+                if (!System.IO.File.Exists(rutaArchivo)) return;
+
+                using var form = new MultipartFormDataContent();
+                form.Add(new StringContent(_channelId), "channels");
+                form.Add(new StringContent(
+                    string.IsNullOrWhiteSpace(title)
+                        ? System.IO.Path.GetFileName(rutaArchivo)
+                        : title),
+                    "title");
+                form.Add(new StringContent(System.IO.Path.GetFileName(rutaArchivo)), "filename");
+
+                var fileBytes   = await System.IO.File.ReadAllBytesAsync(rutaArchivo);
+                var fileContent = new ByteArrayContent(fileBytes);
+                fileContent.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                form.Add(fileContent, "file", System.IO.Path.GetFileName(rutaArchivo));
+
+                await _http.PostAsync("https://slack.com/api/files.upload", form);
+            }
+            catch { /* ignorar errores secundarios */ }
+        }
+
+        /// <summary>
         /// Elimina un mensaje previo usando su timestamp (ts).
         /// Requiere que el bot tenga el scope <c>chat:write</c> y <c>chat:write.public</c>.
         /// </summary>

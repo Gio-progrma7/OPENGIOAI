@@ -61,7 +61,8 @@
             txtCodigo.Multiline = true;
             txtCodigo.Name = "txtCodigo";
             txtCodigo.ScrollBars = ScrollBars.Both;
-            txtCodigo.Size = new Size(798, 268);
+            txtCodigo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            txtCodigo.Size = new Size(798, 190);
             txtCodigo.TabIndex = 1;
             // 
             // btnGuardar
@@ -69,7 +70,7 @@
             btnGuardar.FlatAppearance.BorderColor = Color.SteelBlue;
             btnGuardar.FlatStyle = FlatStyle.Flat;
             btnGuardar.ForeColor = Color.White;
-            btnGuardar.Location = new Point(47, 424);
+            btnGuardar.Location = new Point(47, 354);
             btnGuardar.Name = "btnGuardar";
             btnGuardar.Size = new Size(97, 41);
             btnGuardar.TabIndex = 2;
@@ -81,9 +82,9 @@
             // 
             pnlContenedor.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             pnlContenedor.AutoScroll = true;
-            pnlContenedor.Location = new Point(47, 470);
+            pnlContenedor.Location = new Point(47, 410);
             pnlContenedor.Name = "pnlContenedor";
-            pnlContenedor.Size = new Size(847, 309);
+            pnlContenedor.Size = new Size(847, 390);
             pnlContenedor.TabIndex = 3;
             // 
             // btnEjecutar
@@ -91,7 +92,7 @@
             btnEjecutar.FlatAppearance.BorderColor = Color.GreenYellow;
             btnEjecutar.FlatStyle = FlatStyle.Flat;
             btnEjecutar.ForeColor = Color.White;
-            btnEjecutar.Location = new Point(150, 424);
+            btnEjecutar.Location = new Point(150, 354);
             btnEjecutar.Name = "btnEjecutar";
             btnEjecutar.Size = new Size(97, 41);
             btnEjecutar.TabIndex = 4;
@@ -173,7 +174,8 @@
             panel1.Controls.Add(label3);
             panel1.Location = new Point(44, 35);
             panel1.Name = "panel1";
-            panel1.Size = new Size(812, 384);
+            panel1.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            panel1.Size = new Size(812, 308);
             panel1.TabIndex = 11;
             // 
             // Skills
@@ -181,7 +183,7 @@
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(15, 23, 42);
-            ClientSize = new Size(939, 791);
+            ClientSize = new Size(939, 830);
             Controls.Add(panel1);
             Controls.Add(btnEjecutar);
             Controls.Add(btnGuardar);

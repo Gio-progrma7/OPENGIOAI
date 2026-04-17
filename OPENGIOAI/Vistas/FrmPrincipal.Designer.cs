@@ -41,6 +41,7 @@
             btnModelos = new Button();
             btnRutas = new Button();
             btnApis = new Button();
+            btnComunicadores = new Button();
             btnMando = new Button();
             panel1 = new Panel();
             btnOcultar = new Button();
@@ -67,6 +68,7 @@
             pnlMenu.Controls.Add(btnModelos);
             pnlMenu.Controls.Add(btnRutas);
             pnlMenu.Controls.Add(btnApis);
+            pnlMenu.Controls.Add(btnComunicadores);
             pnlMenu.Controls.Add(btnMando);
             pnlMenu.Controls.Add(panel1);
             pnlMenu.Dock = DockStyle.Left;
@@ -142,7 +144,7 @@
             button1.FlatStyle = FlatStyle.Flat;
             button1.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 0);
             button1.ForeColor = Color.FromArgb(148, 163, 184);
-            button1.Location = new Point(0, 502);
+            button1.Location = new Point(0, 549);
             button1.Name = "button1";
             button1.Size = new Size(203, 41);
             button1.TabIndex = 7;
@@ -222,7 +224,7 @@
             btnRutas.FlatStyle = FlatStyle.Flat;
             btnRutas.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnRutas.ForeColor = Color.FromArgb(148, 163, 184);
-            btnRutas.Location = new Point(0, 455);
+            btnRutas.Location = new Point(0, 502);
             btnRutas.Name = "btnRutas";
             btnRutas.Size = new Size(203, 41);
             btnRutas.TabIndex = 3;
@@ -230,9 +232,9 @@
             btnRutas.TextAlign = ContentAlignment.MiddleLeft;
             btnRutas.UseVisualStyleBackColor = true;
             btnRutas.Click += btnRutas_Click;
-            // 
+            //
             // btnApis
-            // 
+            //
             btnApis.FlatAppearance.BorderColor = Color.RoyalBlue;
             btnApis.FlatAppearance.BorderSize = 0;
             btnApis.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 192, 255);
@@ -240,7 +242,7 @@
             btnApis.FlatStyle = FlatStyle.Flat;
             btnApis.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnApis.ForeColor = Color.FromArgb(148, 163, 184);
-            btnApis.Location = new Point(0, 408);
+            btnApis.Location = new Point(0, 455);
             btnApis.Name = "btnApis";
             btnApis.Size = new Size(203, 41);
             btnApis.TabIndex = 2;
@@ -248,7 +250,25 @@
             btnApis.TextAlign = ContentAlignment.MiddleLeft;
             btnApis.UseVisualStyleBackColor = true;
             btnApis.Click += btnApis_Click;
-            // 
+            //
+            // btnComunicadores
+            //
+            btnComunicadores.FlatAppearance.BorderColor = Color.RoyalBlue;
+            btnComunicadores.FlatAppearance.BorderSize = 0;
+            btnComunicadores.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 192, 255);
+            btnComunicadores.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 0, 64);
+            btnComunicadores.FlatStyle = FlatStyle.Flat;
+            btnComunicadores.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 0);
+            btnComunicadores.ForeColor = Color.FromArgb(148, 163, 184);
+            btnComunicadores.Location = new Point(0, 408);
+            btnComunicadores.Name = "btnComunicadores"; 
+            btnComunicadores.Size = new Size(203, 41);
+            btnComunicadores.TabIndex = 12;
+            btnComunicadores.Text = "📡  Comunicadores";
+            btnComunicadores.TextAlign = ContentAlignment.MiddleLeft;
+            btnComunicadores.UseVisualStyleBackColor = true;
+            btnComunicadores.Click += btnComunicadores_Click;
+            //
             // btnMando
             // 
             btnMando.FlatAppearance.BorderColor = Color.RoyalBlue;
@@ -371,5 +391,6 @@
         private Label label3;
         private Button btnOcultar;
         private Button btnAutomatizacion;
+        private Button btnComunicadores;
     }
 }

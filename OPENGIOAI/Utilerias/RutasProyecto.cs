@@ -27,8 +27,21 @@ namespace OPENGIOAI.Utilerias
         {
             return Path.Combine(rutaBase, "ListSlack.json");
         }
+
+        public static string ObtenerRutaListSlack()
+        {
+            string rutaBase = AppDomain.CurrentDomain.BaseDirectory;
+            return Path.Combine(rutaBase, "ListSlack.json");
+        }
+
         public static string ObtenerRutaListTelegram(string rutaBase)
         {
+            return Path.Combine(rutaBase, "ListTelegram.json");
+        }
+
+        public static string ObtenerRutaListTelegram()
+        {
+            string rutaBase = AppDomain.CurrentDomain.BaseDirectory;
             return Path.Combine(rutaBase, "ListTelegram.json");
         }
         public static string ObtenerRutaListSkills(string rutaBase)
@@ -97,6 +110,12 @@ namespace OPENGIOAI.Utilerias
 
             CrearRuta(rutaPromts);
             return rutaPromts;
+        }
+
+        public static string ObtenerRutaConfiguracionTTS()
+        {
+            string rutaBase = AppDomain.CurrentDomain.BaseDirectory;
+            return Path.Combine(rutaBase, "ConfiguracionTTS.json");
         }
 
         public static void CrearRuta(string rutaBs)
