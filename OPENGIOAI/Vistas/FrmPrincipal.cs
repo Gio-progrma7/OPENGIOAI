@@ -100,6 +100,12 @@ namespace OPENGIOAI.Vistas
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmComunicadores);
         }
 
+        private void btnPromts_Click(object sender, EventArgs e)
+        {
+            FrmPromts frmPromts = new FrmPromts();
+            EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmPromts);
+        }
+
 
         private void CargarDatosInicio()
         {
