@@ -19,6 +19,8 @@
 // ============================================================
 
 using OPENGIOAI.Data;
+using OPENGIOAI.Utilerias;
+using System.Threading;
 
 namespace OPENGIOAI.Agentes
 {
@@ -43,6 +45,9 @@ namespace OPENGIOAI.Agentes
             CancellationToken ct = default)
         {
             var resultado = new ResultadoPipeline();
+
+            // Telemetría de tokens: abrir bucket por instrucción completa.
+            ConsumoTokensTracker.Instancia.IniciarEjecucion(instruccion);
 
             try
             {
@@ -103,6 +108,14 @@ namespace OPENGIOAI.Agentes
                 onProgreso?.Invoke(salidaFinal);
 
                 resultado.Exitoso = true;
+
+                // ── AGENTE 5: MEMORISTA (fire-and-forget) ────────────────
+                // Corre después de que el usuario ya tiene su respuesta.
+                // No bloquea el retorno del pipeline ni suma latencia.
+                // Usa CancellationToken.None para no perder memoria si la
+                // UI cancela justo al terminar.
+                _ = AgenteMemorista.EjecutarAsync(
+                    instruccion, salidaFinal, ctx, CancellationToken.None);
             }
             catch (OperationCanceledException)
             {
@@ -114,6 +127,10 @@ namespace OPENGIOAI.Agentes
                 resultado.RegistrarEvento($"Error en pipeline: {ex.Message}");
                 resultado.SalidaFormateada = $"Error en pipeline: {ex.Message}";
                 onProgreso?.Invoke($"❌ Error: {ex.Message}");
+            }
+            finally
+            {
+                try { ConsumoTokensTracker.Instancia.FinalizarEjecucion(); } catch { }
             }
 
             return resultado;
@@ -153,7 +170,7 @@ FORMATO DE SALIDA:
 
             return await AIModelConector.ObtenerRespuestaLLMAsync(
                 instruccion,
-                ctx.ConPromptPersonalizado(sistemaPlanificador),
+                ctx.ComoFase("Planificador").ConPromptPersonalizado(sistemaPlanificador),
                 ct);
         }
 
@@ -188,7 +205,7 @@ TU RESPONSABILIDAD:
 
             return await AIModelConector.ObtenerRespuestaLLMAsync(
                 "Implementa el plan recibido del Agente Planificador.",
-                ctx.ConPromptPersonalizado(sistemaEjecutor),
+                ctx.ComoFase("Ejecutor").ConPromptPersonalizado(sistemaEjecutor),
                 ct);
         }
 
@@ -243,7 +260,7 @@ FORMATO DE SALIDA:
 
             return await AIModelConector.ObtenerRespuestaLLMAsync(
                 "Verifica el output del Agente Ejecutor.",
-                ctx.ConPromptPersonalizado(sistemaVerificador),
+                ctx.ComoFase("Verificador").ConPromptPersonalizado(sistemaVerificador),
                 ct);
         }
 
@@ -286,7 +303,7 @@ TU RESPONSABILIDAD:
 
             return await AIModelConector.ObtenerRespuestaLLMAsync(
                 "Genera la respuesta final del pipeline para el usuario.",
-                ctx.ConPromptPersonalizado(sistemaFormateador),
+                ctx.ComoFase("Formateador").ConPromptPersonalizado(sistemaFormateador),
                 ct);
         }
 

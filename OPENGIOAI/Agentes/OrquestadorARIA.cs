@@ -32,6 +32,7 @@ using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Promts;
 using OPENGIOAI.Utilerias;
+// PerfilContexto vive en OPENGIOAI.Entidades — ya incluido arriba.
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -141,12 +142,26 @@ namespace OPENGIOAI.Agentes
             log.AppendLine($"**Instrucción:** {instruccion}");
             log.AppendLine();
 
+            // ── Telemetría de tokens: abrir bucket de ejecución ──────────────
+            // Cada llamada al LLM que haga cualquier fase del pipeline
+            // quedará agrupada bajo este InstruccionId.
+            ConsumoTokensTracker.Instancia.IniciarEjecucion(instruccion);
+
+            try
+            {
+
             // ── FASE 1: ANALISTA (en paralelo con pre-carga de contexto) ──────
             OnFaseIniciada?.Invoke(FaseAgente.Analista, "Analizando tu instrucción...");
 
             var taskAnalista    = FaseAnalistaAsync(instruccion, ct);
+            // Pre-build del contexto COMPLETO para el Constructor.
+            // Se lanza en paralelo con el Analista para ocultar latencia de I/O.
+            // Pasamos la instrucción → si memoria_semantica está activa,
+            // BuildAsync usará RAG (top-K) en lugar del dump completo.
             var taskCtxPrebuild = AgentContext.BuildAsync(
-                _ruta, _modelo, _apiKey, _servicio, _soloChat, _claves, ct);
+                _ruta, _modelo, _apiKey, _servicio, _soloChat, _claves, ct,
+                perfil: PerfilContexto.Completo,
+                instruccionUsuario: instruccion);
 
             await Task.WhenAll(taskAnalista, taskCtxPrebuild);
 
@@ -251,7 +266,45 @@ namespace OPENGIOAI.Agentes
             // Guardar log async en segundo plano — no bloquea la respuesta
             _ = GuardarLogAsync(log.ToString(), _ruta);
 
+            // ── FASE 5: MEMORISTA (fire-and-forget) ──────────────────────
+            // Corre DESPUÉS de entregar la respuesta. No suma latencia.
+            // Si falla, el usuario ni se entera — best-effort por diseño.
+            _ = DispararMemoristaAsync(instruccion, respuesta);
+
             return respuesta;
+            }
+            finally
+            {
+                // Cerrar el bucket de telemetría — la UI recibe el evento
+                // OnEjecucionFinalizada con el total agregado de la instrucción.
+                try { ConsumoTokensTracker.Instancia.FinalizarEjecucion(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Lanza el Memorista en segundo plano con su propio CancellationToken.
+        /// Deliberadamente NO usa el ct del caller: el usuario ya recibió su
+        /// respuesta, así que cancelar aquí perdería memoria por ruido del UI.
+        /// </summary>
+        private async Task DispararMemoristaAsync(string instruccion, string respuesta)
+        {
+            try
+            {
+                // Memorista: perfil dedicado — no lee su propia memoria
+                // (está por escribirla) ni skills/credenciales.
+                var ctxMem = await AgentContext.BuildAsync(
+                    _ruta, _modelo, _apiKey, _servicio,
+                    soloChat: true, _claves,
+                    CancellationToken.None,
+                    perfil: PerfilContexto.Memorista);
+
+                await AgenteMemorista.EjecutarAsync(
+                    instruccion, respuesta, ctxMem, CancellationToken.None);
+            }
+            catch
+            {
+                // Fase 5 es best-effort — cualquier error queda silenciado.
+            }
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -262,9 +315,13 @@ namespace OPENGIOAI.Agentes
 
         private async Task<string> FaseAnalistaAsync(string instruccion, CancellationToken ct)
         {
+            // El Analista SOLO interpreta la instrucción: no necesita credenciales,
+            // ni skills, ni memoria, ni rutas. Perfil Mínimo → cero I/O de disco,
+            // cero tokens del PromptEfectivo (pasa "" más su propio prompt).
             var ctx = await AgentContext.BuildAsync(
                 _ruta, _modelo, _apiKey, _servicio,
-                soloChat: true, _claves, ct);
+                soloChat: true, _claves, ct,
+                perfil: PerfilContexto.Minimo);
 
             // Prompt del Analista — definido en PromptCatalogo, editable desde FrmPromts.
             string promptAnalista = PromptRegistry.Instancia.Obtener(
@@ -274,7 +331,7 @@ namespace OPENGIOAI.Agentes
                     ["instruccion"] = instruccion,
                 });
 
-            var ctxAnalista = ctx.ConPromptPersonalizado("");
+            var ctxAnalista = ctx.ComoFase("Analista").ConPromptPersonalizado("");
             string raw = await AIModelConector.ObtenerRespuestaLLMAsync(promptAnalista, ctxAnalista, ct);
 
             return ParsearPlanAnalista(raw);
@@ -336,9 +393,12 @@ namespace OPENGIOAI.Agentes
             if (string.IsNullOrWhiteSpace(salidaNorm))
                 return (false, "");
 
-            // 4. Verificación LLM rápida — prompt minimalista para latencia baja
+            // 4. Verificación LLM rápida — prompt minimalista para latencia baja.
+            //    El Analizador solo compara instrucción vs salida, no ejecuta
+            //    nada. Perfil Mínimo es suficiente.
             var ctx = await AgentContext.BuildAsync(
-                _ruta, _modelo, _apiKey, _servicio, soloChat: true, _claves, ct);
+                _ruta, _modelo, _apiKey, _servicio, soloChat: true, _claves, ct,
+                perfil: PerfilContexto.Minimo);
 
             string promptAnalisis = PromptRegistry.Instancia.Obtener(
                 PromptCatalogo.K_ANALIZADOR,
@@ -348,7 +408,7 @@ namespace OPENGIOAI.Agentes
                     ["salida"]      = Truncar(salidaNorm, 600),
                 });
 
-            var ctxAnalizador = ctx.ConPromptPersonalizado("");
+            var ctxAnalizador = ctx.ComoFase("Analizador").ConPromptPersonalizado("");
             string raw = "";
             try
             {
@@ -540,9 +600,11 @@ namespace OPENGIOAI.Agentes
             {
                 ct.ThrowIfCancellationRequested();
 
+                // Guardián: JSON-in/JSON-out de verificación. No necesita más.
                 var ctx = await AgentContext.BuildAsync(
                     _ruta, _modelo, _apiKey, _servicio,
-                    soloChat: true, _claves, ct);
+                    soloChat: true, _claves, ct,
+                    perfil: PerfilContexto.Minimo);
 
                 string promptGuardian = PromptRegistry.Instancia.Obtener(
                     PromptCatalogo.K_GUARDIAN,
@@ -556,7 +618,7 @@ namespace OPENGIOAI.Agentes
                         ["codigo"]               = TruncarCodigo(codigoGenerado, 30),
                     });
 
-                var ctxGuardian = ctx.ConPromptPersonalizado("");
+                var ctxGuardian = ctx.ComoFase("Guardián").ConPromptPersonalizado("");
                 string rawVerificacion = await AIModelConector.ObtenerRespuestaLLMAsync(
                     promptGuardian, ctxGuardian, ct);
 
@@ -645,12 +707,18 @@ namespace OPENGIOAI.Agentes
         private async Task<string> FaseComunicadorAsync(
             string instruccion, string codigo, string resultado, CancellationToken ct)
         {
+            // Comunicador: estilo/identidad + memoria (para personalización),
+            // pero SIN credenciales, SIN skills, SIN automatizaciones.
+            // Ahorra tokens durante el streaming y acelera el primer token.
+            // Le pasamos la instrucción para activar RAG si corresponde.
             var ctx = await AgentContext.BuildAsync(
-                _ruta, _modelo, _apiKey, _servicio, _soloChat, _claves, ct);
+                _ruta, _modelo, _apiKey, _servicio, _soloChat, _claves, ct,
+                perfil: PerfilContexto.Comunicador,
+                instruccionUsuario: instruccion);
 
             // El Comunicador usa el prompt de Agente2 como base de estilo
             // pero con reglas más estrictas de lenguaje amigable
-            var ctxComunicador = ctx.ConPromptPersonalizado(ConstruirPromptComunicador());
+            var ctxComunicador = ctx.ComoFase("Comunicador").ConPromptPersonalizado(ConstruirPromptComunicador());
 
             string promptFinal = $@"INSTRUCCIÓN DEL USUARIO:
 {instruccion}

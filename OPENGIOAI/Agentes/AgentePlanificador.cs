@@ -166,7 +166,7 @@ FORMATO REQUERIDO:
             string instruccionPlan = $"Descompón esta tarea en pasos concretos:\n\n{instruccion}";
             string respuesta = await AIModelConector.ObtenerRespuestaLLMAsync(
                 instruccionPlan,
-                ctx.ConPromptPersonalizado(promptPlanificador),
+                ctx.ComoFase("Planificador").ConPromptPersonalizado(promptPlanificador),
                 ct);
 
             return ParsearPlan(respuesta);
@@ -239,7 +239,7 @@ INSTRUCCIONES:
 
             return await AIModelConector.ObtenerRespuestaLLMAsync(
                 instruccionPaso,
-                ctx.ConPromptPersonalizado(promptEjecutor),
+                ctx.ComoFase("Ejecutor").ConPromptPersonalizado(promptEjecutor),
                 ct);
         }
 
@@ -265,7 +265,7 @@ REGLAS:
             {
                 string respuesta = await AIModelConector.ObtenerRespuestaLLMAsync(
                     instruccionVerificar,
-                    ctx.ConPromptPersonalizado(promptVerificador),
+                    ctx.ComoFase("Verificador").ConPromptPersonalizado(promptVerificador),
                     ct);
 
                 string json = ExtraerJson(respuesta);
@@ -317,7 +317,7 @@ FORMATO:
             {
                 string respuesta = await AIModelConector.ObtenerRespuestaLLMAsync(
                     instruccionAdaptar,
-                    ctx.ConPromptPersonalizado(promptAdaptador),
+                    ctx.ComoFase("Adaptador").ConPromptPersonalizado(promptAdaptador),
                     ct);
 
                 string json = ExtraerJson(respuesta);
@@ -359,7 +359,7 @@ PASOS COMPLETADOS: {plan.PasosCompletados}/{plan.TotalPasos}";
 
             return await AIModelConector.ObtenerRespuestaLLMAsync(
                 instruccionSintesis,
-                ctx.ConPromptPersonalizado(promptSintesis),
+                ctx.ComoFase("Sintetizador").ConPromptPersonalizado(promptSintesis),
                 ct);
         }
 

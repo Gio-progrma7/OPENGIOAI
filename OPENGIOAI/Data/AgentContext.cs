@@ -52,6 +52,25 @@ namespace OPENGIOAI.Data
             System.Array.Empty<Skill>();
         public string ManifiestoSkills { get; init; } = "";
 
+        // ── Memoria (Fase 1) ──────────────────────────────────
+        // Sección ya formateada y recortada al presupuesto de tokens.
+        // Se lee una sola vez en BuildAsync. Si la memoria está vacía,
+        // queda string vacío y la sección se omite.
+        public string MemoriaFormateada { get; init; } = "";
+
+        // ── Telemetría (Fase A) ───────────────────────────────
+        // Etiqueta de fase del pipeline. Se propaga a cada llamada al LLM
+        // para que ConsumoTokensTracker pueda agrupar el consumo por fase.
+        // Default "General" para llamadas fuera del pipeline.
+        public string NombreFase { get; init; } = "General";
+
+        // ── Perfil de contexto (Fase B) ──────────────────────────
+        // Declara qué secciones debe incluir PromptEfectivo. Default
+        // "Completo" para preservar el comportamiento histórico
+        // (Constructor, soloChat, Agente1). Otras fases usan perfiles
+        // más livianos para ahorrar tokens y I/O.
+        public PerfilContexto Perfil { get; init; } = PerfilContexto.Completo;
+
         // ── Constructor privado — usar BuildAsync() ───────────
         private AgentContext() { }
 
@@ -67,25 +86,102 @@ namespace OPENGIOAI.Data
             Servicios servicio,
             bool soloChat,
             string clavesDisponibles,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            PerfilContexto? perfil = null,
+            string instruccionUsuario = "")
         {
             ct.ThrowIfCancellationRequested();
 
+            // El default sigue siendo Completo para no romper llamadas antiguas.
+            perfil ??= PerfilContexto.Completo;
+
             // Leer prompts base del disco (única lectura por ejecución)
-            string promptMaestro = await MarkdownFileManager
-                .LeerAsync(RutasProyecto.ObtenerRutaPromtMaestro());
+            // — pero SOLO si el perfil los necesita. El Analista/Guardián
+            //   pasan "" como PromptEfectivo, así que no tiene sentido leer
+            //   el archivo maestro para descartarlo inmediatamente.
+            string promptMaestro = "";
+            string promptErr     = "";
+            if (perfil.LeerPromptMaestroDeDisco)
+            {
+                promptMaestro = await MarkdownFileManager
+                    .LeerAsync(RutasProyecto.ObtenerRutaPromtMaestro());
 
-            ct.ThrowIfCancellationRequested();
+                ct.ThrowIfCancellationRequested();
 
-            string promptErr = await MarkdownFileManager
-                .LeerAsync(RutasProyecto.ObtenerRutaPromtAgente());
+                promptErr = await MarkdownFileManager
+                    .LeerAsync(RutasProyecto.ObtenerRutaPromtAgente());
+            }
 
             // ── Cargar skills del directorio de trabajo ──────────────────────
-            var skills = SkillLoader.CargarActivas(rutaArchivo);
-            string manifiesto = SkillManifestBuilder.Construir(skills);
+            // El manifiesto suele ser la sección más gorda del prompt (crece
+            // con cada Skill). Si el perfil no necesita skills, ni siquiera
+            // los cargamos ni generamos el skill_runner.py.
+            IReadOnlyList<Skill> skills = System.Array.Empty<Skill>();
+            string manifiesto = "";
+            if (perfil.LeerSkillsDeDisco)
+            {
+                skills = SkillLoader.CargarActivas(rutaArchivo);
+                manifiesto = SkillManifestBuilder.Construir(skills);
 
-            // Generar skill_runner.py en background — no bloquea el pipeline
-            _ = SkillRunnerHelper.GenerarAsync(rutaArchivo, skills, ct);
+                // Generar skill_runner.py en background — no bloquea el pipeline
+                _ = SkillRunnerHelper.GenerarAsync(rutaArchivo, skills, ct);
+            }
+
+            // ── Cargar memoria durable de la ruta de trabajo (Fase 1) ───────
+            // Doble gate: habilidad "Memoria" ACTIVA + perfil lo pide.
+            // Así el Memorista (que escribe memoria) no lee su propia memoria,
+            // y el Analizador/Guardián (que solo verifican JSON) no la leen.
+            //
+            // Fase C (RAG): si además la habilidad "memoria_semantica" está
+            // activa Y tenemos una instrucción del usuario, usamos búsqueda
+            // semántica (top-K) en lugar del dump completo. Ahorro típico:
+            // −500 a −4000 tokens por ejecución cuando la memoria crece.
+            string memoriaFormateada = "";
+            if (perfil.LeerMemoriaDeDisco &&
+                HabilidadesRegistry.Instancia.EstaActiva(HabilidadesRegistry.HAB_MEMORIA))
+            {
+                bool ragActivo =
+                    HabilidadesRegistry.Instancia.EstaActiva(HabilidadesRegistry.HAB_MEMORIA_SEMANTICA)
+                    && !string.IsNullOrWhiteSpace(instruccionUsuario);
+
+                if (ragActivo)
+                {
+                    try
+                    {
+                        memoriaFormateada = await MemoriaSemantica.ObtenerContextoRelevanteAsync(
+                            rutaArchivo, instruccionUsuario, ct);
+                    }
+                    catch
+                    {
+                        memoriaFormateada = "";
+                    }
+
+                    // Fallback: si el RAG no devolvió nada (índice vacío, error
+                    // del proveedor, etc.) caemos al dump completo clásico para
+                    // no dejar al agente sin memoria.
+                    if (string.IsNullOrWhiteSpace(memoriaFormateada))
+                    {
+                        try
+                        {
+                            memoriaFormateada = await MemoriaManager.FormatearParaPromptAsync(rutaArchivo);
+                        }
+                        catch { memoriaFormateada = ""; }
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        memoriaFormateada = await MemoriaManager.FormatearParaPromptAsync(rutaArchivo);
+                    }
+                    catch
+                    {
+                        // La memoria es best-effort: si falla la lectura, el pipeline
+                        // debe seguir funcionando sin ella.
+                        memoriaFormateada = "";
+                    }
+                }
+            }
 
             var ctx = new AgentContext
             {
@@ -99,6 +195,8 @@ namespace OPENGIOAI.Data
                 ClavesDisponibles  = clavesDisponibles,
                 Skills             = skills,
                 ManifiestoSkills   = manifiesto,
+                MemoriaFormateada  = memoriaFormateada,
+                Perfil             = perfil,
             };
 
             // Ensamblar prompt efectivo una sola vez
@@ -109,20 +207,41 @@ namespace OPENGIOAI.Data
 
         /// <summary>
         /// Ensambla el prompt maestro + secciones dinámicas.
-        /// CLAVE: solo incluye secciones relevantes para reducir tokens.
-        /// Una tarea sin Telegram no necesita las reglas de Telegram.
+        /// Cada sección está gobernada por el <see cref="Perfil"/>:
+        /// fases pesadas (Constructor) reciben todo; fases ligeras
+        /// (Analista, Memorista…) reciben solo lo imprescindible.
         /// </summary>
         private string ConstruirPromptEfectivo()
         {
+            // Si el perfil es Mínimo (todo apagado) devolvemos "" sin
+            // construir nada — típico del Analista/Guardián que pasan
+            // su propio prompt vía ConPromptPersonalizado.
+            if (!Perfil.IncluirPromptMaestro &&
+                !Perfil.IncluirCredenciales &&
+                !Perfil.IncluirRutaTrabajo &&
+                !Perfil.IncluirSkills &&
+                !Perfil.IncluirAutomatizaciones &&
+                !Perfil.IncluirHistorial &&
+                !Perfil.IncluirMemoria &&
+                !Perfil.IncluirPromptsMaestros &&
+                !Perfil.IncluirUsuario)
+            {
+                return "";
+            }
+
             // Si no hay claves configuradas, el prompt maestro es suficiente.
-            if (string.IsNullOrWhiteSpace(ClavesDisponibles))
+            if (string.IsNullOrWhiteSpace(ClavesDisponibles) &&
+                Perfil.IncluirPromptMaestro)
                 return PromptMaestro;
 
             var sb = new System.Text.StringBuilder();
-            sb.Append(PromptMaestro);
+            if (Perfil.IncluirPromptMaestro)
+                sb.Append(PromptMaestro);
 
-            // ── Sección: credenciales (siempre si hay claves) ────
-            sb.Append($@"
+            // ── Sección: credenciales (solo si el perfil lo pide) ────
+            if (Perfil.IncluirCredenciales && !string.IsNullOrWhiteSpace(ClavesDisponibles))
+            {
+                sb.Append($@"
 ================= SISTEMA DE CREDENCIALES =================
 
 RUTA DEL JSON: {RutasProyecto.ObtenerRutaListApis()}
@@ -136,17 +255,21 @@ REGLAS:
 * Nunca inventes claves. Si no hay coincidencia → informa.
 * Si un token está vencido, usa el token Refresh para renovarlo.
 ");
+            }
 
             // ── Sección: salida y rutas base ─────────────────────
-            sb.Append($@"
+            if (Perfil.IncluirRutaTrabajo)
+            {
+                sb.Append($@"
 ================= RUTA DE TRABAJO =================
 Ruta activa: {RutaArchivo}
 Archivo de respuesta: {RutaArchivo}\respuesta.txt
 Historial: {RutaArchivo}\Historial.md
 ");
+            }
 
             // ── Sección: SOLO_CHAT (solo si aplica) ──────────────
-            if (SoloChat)
+            if (Perfil.IncluirSoloChat && SoloChat)
             {
                 sb.Append($@"
 ================= MODO SOLO CHAT =================
@@ -157,7 +280,7 @@ Tu respuesta SIEMPRE debe ser código Python válido. Sin texto plano.
             }
 
             // ── Sección: skills disponibles (manifiesto dinámico) ──
-            if (!string.IsNullOrWhiteSpace(ManifiestoSkills))
+            if (Perfil.IncluirSkills && !string.IsNullOrWhiteSpace(ManifiestoSkills))
             {
                 sb.Append($@"
 ================= SKILLS DISPONIBLES =================
@@ -167,38 +290,49 @@ Importar en Python: from skill_runner import skill_run, skill_run_json
             }
 
             // ── Sección: automatizaciones ────────────────────────
-            sb.Append($@"
+            if (Perfil.IncluirAutomatizaciones)
+            {
+                sb.Append($@"
 ================= AUTOMATIZACIONES =================
 Carpeta: {RutaArchivo}\Automatizaciones\
 Lista:   {RutaArchivo}\ListAutomatizacion.json
 ");
+            }
 
             // ── Sección: historial ───────────────────────────────
-            sb.Append($@"
+            if (Perfil.IncluirHistorial)
+            {
+                sb.Append($@"
 ================= HISTORIAL =================
 Registra cada ejecución en {RutaArchivo}\Historial.md
 Formato: #[FECHA] Descripción breve: [TIPO_ACCION]
 ");
-            /*
-            // ── Sección: arquitectura ────────────────────────────
-            sb.Append($@"
-================= ARQUITECTURA =================
-Si el usuario pregunta cómo estás hecho, lee: {RutasProyecto.ObtenerArquitectura()}
-Escribe la respuesta en respuesta.txt.
-");
-*/
+            }
+
             // ── Sección: prompts maestros ────────────────────────
-            sb.Append($@"
+            if (Perfil.IncluirPromptsMaestros)
+            {
+                sb.Append($@"
 ================= CONFIGURACIÓN DE PROMPTS =================
 Prompt maestro:         {RutasProyecto.ObtenerRutaPromtMaestro()}
 Prompt respuesta error: {RutasProyecto.ObtenerRutaPromtAgente()}
 ");
+            }
+
+            // ── Sección: memoria durable (Fase 1) ────────────────
+            if (Perfil.IncluirMemoria && !string.IsNullOrWhiteSpace(MemoriaFormateada))
+            {
+                sb.Append(MemoriaFormateada);
+            }
 
             // ── Sección: usuario ─────────────────────────────────
-            sb.Append(@"
+            if (Perfil.IncluirUsuario)
+            {
+                sb.Append(@"
 ================= USUARIO =================
 Nombre: Giovanni Sanchez
 ");
+            }
 
             return sb.ToString();
         }
@@ -222,6 +356,9 @@ Nombre: Giovanni Sanchez
                 ClavesDisponibles  = ClavesDisponibles,
                 Skills             = Skills,
                 ManifiestoSkills   = ManifiestoSkills,
+                MemoriaFormateada  = MemoriaFormateada,
+                NombreFase         = NombreFase,
+                Perfil             = Perfil,
                 PromptEfectivo     = PromptRespuestaErr,
             };
         }
@@ -246,6 +383,9 @@ Nombre: Giovanni Sanchez
                 ClavesDisponibles  = ClavesDisponibles,
                 Skills             = Skills,
                 ManifiestoSkills   = ManifiestoSkills,
+                MemoriaFormateada  = MemoriaFormateada,
+                NombreFase         = NombreFase,
+                Perfil             = Perfil,
                 PromptEfectivo     = promptEfectivo,
             };
         }
@@ -265,7 +405,38 @@ Nombre: Giovanni Sanchez
                 Servicio = Servicio,
                 SoloChat = SoloChat,
                 ClavesDisponibles = ClavesDisponibles,
+                MemoriaFormateada = MemoriaFormateada,
+                NombreFase        = NombreFase,
+                Perfil            = Perfil,
                 PromptEfectivo = PromtsBase.PromtInicioUsuario(RutaArchivo),
+            };
+        }
+
+        /// <summary>
+        /// Devuelve una copia del contexto etiquetada con el nombre de una fase
+        /// del pipeline. Usado por la telemetría de tokens para saber qué fase
+        /// generó cada consumo.
+        ///
+        /// No muta nada — mismo patrón que ComoAgente2/ConPromptPersonalizado.
+        /// </summary>
+        public AgentContext ComoFase(string nombreFase)
+        {
+            return new AgentContext
+            {
+                PromptMaestro      = PromptMaestro,
+                PromptRespuestaErr = PromptRespuestaErr,
+                RutaArchivo        = RutaArchivo,
+                Modelo             = Modelo,
+                ApiKey             = ApiKey,
+                Servicio           = Servicio,
+                SoloChat           = SoloChat,
+                ClavesDisponibles  = ClavesDisponibles,
+                Skills             = Skills,
+                ManifiestoSkills   = ManifiestoSkills,
+                MemoriaFormateada  = MemoriaFormateada,
+                NombreFase         = string.IsNullOrWhiteSpace(nombreFase) ? "General" : nombreFase,
+                Perfil             = Perfil,
+                PromptEfectivo     = PromptEfectivo,
             };
         }
     }
