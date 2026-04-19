@@ -387,7 +387,7 @@ namespace OPENGIOAI.Data
                     if (!resp.IsSuccessStatusCode)
                        
 
-                    await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw);
+                    await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw, ctx.NombreFase, ctx.Modelo);
 
                     return ExtraerContenido(ctx.Servicio, raw);
                 },
@@ -447,6 +447,9 @@ namespace OPENGIOAI.Data
                         catch { /* línea inválida, ignorar */ }
                     }
 
+                    // Telemetría (Fase A): Ollama reporta tokens en la última línea NDJSON.
+                    await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw, ctx.NombreFase, ctx.Modelo);
+
                     return Limpiar(sb.ToString());
                 },
                 ct: ct,
@@ -504,7 +507,7 @@ namespace OPENGIOAI.Data
                         throw new LlmErrorException(
                             $"Antigravity {(int)resp.StatusCode}: {raw}", resp.StatusCode);
 
-                    await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw);
+                    await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw, ctx.NombreFase, ctx.Modelo);
                     // Vertex AI usa el mismo formato de respuesta que Gemini
                     return ExtraerContenido(Servicios.Gemenni, raw);
                 },

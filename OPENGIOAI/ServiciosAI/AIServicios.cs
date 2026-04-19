@@ -1,6 +1,7 @@
 ﻿using Google.Apis.Auth.OAuth2;
 using Newtonsoft.Json.Linq;
 using OPENGIOAI.Entidades;
+using OPENGIOAI.Utilerias;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -683,17 +684,52 @@ namespace OPENGIOAI.ServiciosAI
 
         public static async Task MostrarConsumoTokens(Servicios servicio, string result)
         {
+            await MostrarConsumoTokens(servicio, result, fase: "General", modelo: "");
+        }
 
-            var consumo = TokenUsageReader.LeerConsumo(result, servicio);
+        /// <summary>
+        /// Registra el consumo de la última llamada tanto en el string legado
+        /// (Program.ComsumoTokens para FrmMandos) como en el nuevo tracker
+        /// (ConsumoTokensTracker para FrmConsumoTokens).
+        /// </summary>
+        public static Task MostrarConsumoTokens(
+            Servicios servicio, string result, string fase, string modelo)
+        {
+            // Ollama manda streaming NDJSON; nos interesa solo la última línea
+            // (la que trae done:true con prompt_eval_count y eval_count).
+            string jsonParaParse = servicio == Servicios.Ollama
+                ? TokenUsageReader.ExtraerUltimaLineaJson(result)
+                : result;
 
+            var consumo = TokenUsageReader.LeerConsumo(jsonParaParse, servicio);
+            consumo.Fase = string.IsNullOrWhiteSpace(fase) ? "General" : fase;
+            consumo.Modelo = modelo ?? "";
+
+            // 1) Mantener compatibilidad con el footer legado
             if (consumo.Disponible)
             {
-                Program.ComsumoTokens = $"Consumo provedor : [{consumo.Proveedor}] Tokens usados: {consumo.TotalTokens}";
+                Program.ComsumoTokens =
+                    $"Consumo provedor : [{consumo.Proveedor}] Tokens usados: {consumo.TotalTokens}";
             }
             else
             {
                 Program.ComsumoTokens = $"[{consumo.Proveedor}] No reporta tokens.";
             }
+
+            // 2) Enviar al tracker (calcula costo y dispara eventos para la UI)
+            if (consumo.Disponible)
+            {
+                try
+                {
+                    ConsumoTokensTracker.Instancia.Registrar(consumo);
+                }
+                catch
+                {
+                    // La telemetría nunca debe reventar el pipeline.
+                }
+            }
+
+            return Task.CompletedTask;
         }
     }
 }

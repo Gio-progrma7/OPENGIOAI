@@ -30,7 +30,9 @@
       "Bash(dotnet --version)",
       "Bash(dotnet --list-runtimes)",
       "Bash(dotnet --list-sdks)",
-      "Bash(dotnet restore:*)"
+      "Bash(dotnet restore:*)",
+      "Bash(ls *.sln)",
+      "Bash(ls OPENGIOAI/*.csproj)"
     ]
   }
 }

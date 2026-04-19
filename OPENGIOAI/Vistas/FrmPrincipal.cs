@@ -29,6 +29,122 @@ namespace OPENGIOAI.Vistas
             CargarDatosInicio();
             btnComunicadores.Visible = true;
            // AgregarBotonesAgentesAvanzados();
+            // pnlMenu se queda corto con los botones nuevos del Fase A/B/C.
+            // Habilitamos scroll vertical por si la ventana es chica — así
+            // los botones de abajo siguen alcanzables.
+            pnlMenu.AutoScroll = true;
+
+            AgregarBotonHabilidades();  // slot único (0, 267)
+            AgregarBotonMemoria();      // relocado a (0, 595)
+            AgregarBotonPatrones();     // relocado a (0, 640)
+            AgregarBotonTokens();       // relocado a (0, 685)
+            AgregarBotonEmbeddings();   // relocado a (0, 730)
+        }
+
+        /// <summary>
+        /// Añade el botón "🧬 Embeddings" — Fase C del sistema de tokens.
+        /// Configura proveedor (Ollama/OpenAI), parámetros de RAG e
+        /// ejecuta/limpia la indexación semántica de la memoria.
+        /// </summary>
+        private void AgregarBotonEmbeddings()
+        {
+            // Y=502 chocaba con btnRutas del Designer → relocado.
+            var btnEmb = CrearBotonMenu("🧬  Embeddings", new Point(0, 730));
+            btnEmb.Click += btnEmbeddings_Click;
+            pnlMenu.Controls.Add(btnEmb);
+            btnEmb.BringToFront();
+        }
+
+        private void btnEmbeddings_Click(object sender, EventArgs e)
+        {
+            string ruta = Miconfiguracion?.MiArchivo?.Ruta ?? "";
+            FrmEmbeddings frm = new FrmEmbeddings(ruta);
+            EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frm);
+        }
+
+        /// <summary>
+        /// Añade el botón "📊 Tokens" que abre el panel flotante de consumo
+        /// de tokens por LLM. A diferencia de los demás, este NO se abre dentro
+        /// de pnlContenedor — es un form flotante (TopMost) para que el usuario
+        /// pueda ver el consumo mientras trabaja en cualquier otra pantalla.
+        /// </summary>
+        private void AgregarBotonTokens()
+        {
+            // Y=455 chocaba con btnApis del Designer → relocado a zona libre
+            // bajo button1 (Y=549). BringToFront garantiza z-order correcto
+            // (Controls.Add append al FINAL → detrás; BringToFront → al frente).
+            var btnTokens = CrearBotonMenu("📊  Tokens", new Point(0, 685));
+            btnTokens.Click += btnTokens_Click;
+            pnlMenu.Controls.Add(btnTokens);
+            btnTokens.BringToFront();
+        }
+
+        private void btnTokens_Click(object sender, EventArgs e)
+        {
+            FrmConsumoTokens.MostrarOTraerAlFrente(this);
+        }
+
+        /// <summary>
+        /// Añade el botón "🧠 Memoria" al menú lateral sin modificar el Designer.
+        /// La memoria vive dentro de la ruta de trabajo activa
+        /// (Miconfiguracion.MiArchivo.Ruta), así que se pasa al abrir el form.
+        /// </summary>
+        private void AgregarBotonMemoria()
+        {
+            // Y=361 chocaba con btnAutomatizacion del Designer → relocado.
+            var btnMemoria = CrearBotonMenu("🧠  Memoria", new Point(0, 595));
+            btnMemoria.Click += btnMemoria_Click;
+            pnlMenu.Controls.Add(btnMemoria);
+            btnMemoria.BringToFront();
+        }
+
+        private void btnMemoria_Click(object sender, EventArgs e)
+        {
+            string ruta = Miconfiguracion?.MiArchivo?.Ruta ?? "";
+            FrmMemoria frm = new FrmMemoria(ruta);
+            EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frm);
+        }
+
+        /// <summary>
+        /// Añade el botón "⚙ Habilidades" — toggles para activar/desactivar
+        /// capacidades cognitivas del agente (memoria, patrones, sugerencias...).
+        /// Distinto de Skills.cs (plugins Python externos).
+        /// </summary>
+        private void AgregarBotonHabilidades()
+        {
+            // (0, 267) es el único slot del Designer sin botón → sin conflicto.
+            var btnHabilidades = CrearBotonMenu("⚙  Habilidades", new Point(0, 267));
+            btnHabilidades.Click += btnHabilidades_Click;
+            pnlMenu.Controls.Add(btnHabilidades);
+            btnHabilidades.BringToFront();
+        }
+
+        private void btnHabilidades_Click(object sender, EventArgs e)
+        {
+            FrmHabilidades frm = new FrmHabilidades();
+            EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frm);
+        }
+
+        /// <summary>
+        /// Añade el botón "🔎 Patrones" — Fase 3 del sistema de Memoria.
+        /// Detecta tareas recurrentes en Episodios.md y propone convertirlas
+        /// en Skills. Solo dispara el análisis cuando el usuario lo pide —
+        /// nunca en cada pipeline — para que el coste de tokens sea visible.
+        /// </summary>
+        private void AgregarBotonPatrones()
+        {
+            // Y=408 chocaba con btnPromts/btnComunicadores del Designer → relocado.
+            var btnPatrones = CrearBotonMenu("🔎  Patrones", new Point(0, 640));
+            btnPatrones.Click += btnPatrones_Click;
+            pnlMenu.Controls.Add(btnPatrones);
+            btnPatrones.BringToFront();
+        }
+
+        private void btnPatrones_Click(object sender, EventArgs e)
+        {
+            string ruta = Miconfiguracion?.MiArchivo?.Ruta ?? "";
+            FrmPatrones frm = new FrmPatrones(ruta, Miconfiguracion);
+            EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frm);
         }
 
         private void btnMando_Click(object sender, EventArgs e)

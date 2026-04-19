@@ -55,6 +55,18 @@ namespace OPENGIOAI.Utilerias
             return Path.Combine(rutaBase, "ListAutomatizaciones.json");
         }
 
+        public static string ObtenerRutaListHabilidades()
+        {
+            string rutaBase = AppDomain.CurrentDomain.BaseDirectory;
+            return Path.Combine(rutaBase, "ListHabilidades.json");
+        }
+
+        public static string ObtenerRutaListPreciosModelos()
+        {
+            string rutaBase = AppDomain.CurrentDomain.BaseDirectory;
+            return Path.Combine(rutaBase, "ListPreciosModelos.json");
+        }
+
 
         public static string ObtenerRutaListModelos()
         {
@@ -126,5 +138,73 @@ namespace OPENGIOAI.Utilerias
             }
         }
 
+        // ══════════════════ Memoria (Fase 1) ══════════════════
+        //
+        // La memoria vive dentro de la ruta de trabajo de cada agente,
+        // en una carpeta "Memoria" — coherente con el resto del proyecto
+        // (archivos legibles, editables a mano, portables).
+        //
+        //   {ruta}/Memoria/Hechos.md       → verdades durables sobre el usuario
+        //   {ruta}/Memoria/Episodios.md    → timeline append-only de ejecuciones
+
+        public static string ObtenerRutaCarpetaMemoria(string rutaBase)
+        {
+            string carpeta = Path.Combine(rutaBase, "Memoria");
+            if (!Directory.Exists(carpeta))
+                Directory.CreateDirectory(carpeta);
+            return carpeta;
+        }
+
+        public static string ObtenerRutaMemoriaHechos(string rutaBase)
+        {
+            return Path.Combine(ObtenerRutaCarpetaMemoria(rutaBase), "Hechos.md");
+        }
+
+        public static string ObtenerRutaMemoriaEpisodios(string rutaBase)
+        {
+            return Path.Combine(ObtenerRutaCarpetaMemoria(rutaBase), "Episodios.md");
+        }
+
+        // ══════════════════ Patrones (Fase 3) ══════════════════
+        //
+        // Lista de firmas de patrones que el usuario decidió ignorar
+        // (no quiere ver la propuesta de Skill para ese patrón nunca más).
+        // Vive junto a la memoria porque el contexto es del mismo workspace.
+        //
+        //   {ruta}/Memoria/PatronesIgnorados.json
+
+        public static string ObtenerRutaPatronesIgnorados(string rutaBase)
+        {
+            return Path.Combine(ObtenerRutaCarpetaMemoria(rutaBase), "PatronesIgnorados.json");
+        }
+
+        // ══════════════════ Embeddings / RAG (Fase C) ══════════════════
+        //
+        // Vector store local: JSONL con un chunk por línea. Se acompaña
+        // de un manifest JSON que registra qué archivos fueron indexados
+        // (y con qué hash) para poder hacer indexación incremental.
+        //
+        //   {ruta}/Memoria/embeddings.jsonl
+        //   {ruta}/Memoria/embeddings.manifest.json
+        //
+        // La configuración global (proveedor, modelo, endpoint, api key)
+        // es por instalación, no por workspace:
+        //   {AppDir}/EmbeddingsConfig.json
+
+        public static string ObtenerRutaEmbeddings(string rutaBase)
+        {
+            return Path.Combine(ObtenerRutaCarpetaMemoria(rutaBase), "embeddings.jsonl");
+        }
+
+        public static string ObtenerRutaEmbeddingsManifest(string rutaBase)
+        {
+            return Path.Combine(ObtenerRutaCarpetaMemoria(rutaBase), "embeddings.manifest.json");
+        }
+
+        public static string ObtenerRutaEmbeddingsConfig()
+        {
+            string appDir = AppDomain.CurrentDomain.BaseDirectory;
+            return Path.Combine(appDir, "EmbeddingsConfig.json");
+        }
     }
 }

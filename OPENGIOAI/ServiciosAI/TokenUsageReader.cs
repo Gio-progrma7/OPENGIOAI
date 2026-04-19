@@ -76,9 +76,50 @@ namespace OPENGIOAI.ServiciosAI
                         result.Disponible = true;
                         break;
                     }
+
+                // ===============================
+                // OLLAMA (local)
+                //
+                // Ollama no devuelve "usage" sino prompt_eval_count y eval_count
+                // en el JSON final de streaming ({"done":true, ...}).
+                // Estos valores son tokens reales del tokenizer del modelo.
+                // ===============================
+                case Servicios.Ollama:
+                    {
+                        // En streaming viene línea-por-línea; el caller debe pasar
+                        // el objeto final (done:true) o el response ya agregado.
+                        var pTok = root["prompt_eval_count"]?.Value<int>();
+                        var cTok = root["eval_count"]?.Value<int>();
+
+                        if (pTok == null && cTok == null) return result;
+
+                        result.PromptTokens = pTok ?? 0;
+                        result.CompletionTokens = cTok ?? 0;
+                        result.TotalTokens = result.PromptTokens + result.CompletionTokens;
+                        result.Disponible = true;
+                        break;
+                    }
             }
 
             return result;
+        }
+
+        // ============================================================
+        //  OLLAMA helper: el /api/generate devuelve múltiples líneas JSON
+        //  (streaming). La que trae los counters es la última (done:true).
+        //  Este helper extrae ese último JSON para que LeerConsumo lo parsee.
+        // ============================================================
+        public static string ExtraerUltimaLineaJson(string rawStream)
+        {
+            if (string.IsNullOrWhiteSpace(rawStream)) return "";
+
+            string? ultima = null;
+            foreach (var linea in rawStream.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string t = linea.Trim();
+                if (t.StartsWith("{") && t.EndsWith("}")) ultima = t;
+            }
+            return ultima ?? "";
         }
     }
 }

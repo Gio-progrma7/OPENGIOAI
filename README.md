@@ -1,12 +1,15 @@
 # OPENGIOAI
 
 ![C#](https://img.shields.io/badge/C%23-239120?style=for-the-badge&logo=csharp&logoColor=white)
-![.NET 9](https://img.shields.io/badge/.NET%209-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)
+![.NET 10](https://img.shields.io/badge/.NET%2010-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)
 ![Windows Forms](https://img.shields.io/badge/Windows%20Forms-0078D4?style=for-the-badge&logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python%203.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![RAG](https://img.shields.io/badge/RAG-Ollama%20%7C%20OpenAI-10b981?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
-**OPENGIOAI** es una plataforma de escritorio desarrollada en C# con .NET 9 que orquesta múltiples agentes de inteligencia artificial, ejecuta scripts Python generados dinámicamente, gestiona un sistema de Skills extensible y permite crear automatizaciones visuales con nodos. Compatible con OpenAI, Google Gemini, Anthropic Claude, DeepSeek, OpenRouter, Ollama y Google Vertex AI.
+> **Agente IA de escritorio de clase producción** — arquitectura multi-fase, memoria durable con RAG, telemetría de tokens, context slicing declarativo y ejecución aislada de código Python generado.
+
+**OPENGIOAI** es una plataforma de escritorio desarrollada en C# con .NET 10 que orquesta múltiples agentes de inteligencia artificial, ejecuta scripts Python generados dinámicamente, gestiona un sistema de Skills extensible, permite crear automatizaciones visuales con nodos **y optimiza agresivamente el consumo de tokens** mediante tres pilares: telemetría granular, context slicing por fase y recuperación semántica (RAG) de memoria. Compatible con OpenAI, Google Gemini, Anthropic Claude, DeepSeek, OpenRouter, Ollama y Google Vertex AI.
 
 ---
 
@@ -14,34 +17,50 @@
 
 1. [Arquitectura General](#arquitectura-general)
 2. [Pipeline ARIA — El Motor de Agentes](#pipeline-aria)
-3. [Sistema de Skills y Skills Hub](#sistema-de-skills-y-skills-hub)
-4. [Automatizaciones con Nodos](#automatizaciones-con-nodos)
-5. [Sistema de Credenciales Seguras](#sistema-de-credenciales-seguras)
-6. [Multi-Proveedor de LLMs](#multi-proveedor-de-llms)
-7. [Integración Multi-Canal](#integracion-multi-canal)
-8. [Cómo Empezar](#como-empezar)
-9. [Extensión y Desarrollo](#extension-y-desarrollo)
-10. [Troubleshooting](#troubleshooting)
+3. [Memoria Durable del Agente](#memoria-durable-del-agente)
+4. [Habilidades Cognitivas](#habilidades-cognitivas)
+5. [Token-Saving Architecture](#token-saving-architecture)
+   - [Fase A — Telemetría de Tokens](#fase-a--telemetría-de-tokens)
+   - [Fase B — Context Slicing](#fase-b--context-slicing)
+   - [Fase C — RAG Local (Memoria Semántica)](#fase-c--rag-local-memoria-semántica)
+6. [Sistema de Skills y Skills Hub](#sistema-de-skills-y-skills-hub)
+7. [Automatizaciones con Nodos](#automatizaciones-con-nodos)
+8. [Sistema de Credenciales Seguras](#sistema-de-credenciales-seguras)
+9. [Multi-Proveedor de LLMs](#multi-proveedor-de-llms)
+10. [Integración Multi-Canal](#integracion-multi-canal)
+11. [Cómo Empezar](#como-empezar)
+12. [Extensión y Desarrollo](#extension-y-desarrollo)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Arquitectura General
 
-OPENGIOAI se organiza en capas bien definidas. El punto de entrada es siempre `AIModelConector.cs`, el orquestador central que coordina todos los agentes, providers y herramientas.
+OPENGIOAI se organiza en capas bien definidas. El punto de entrada es siempre `AIModelConector.cs`, el orquestador central que coordina todos los agentes, providers y herramientas. Por encima vive el **OrquestadorARIA** (pipeline de 5 fases) y alrededor un stack de subsistemas (Memoria, Habilidades, Embeddings, Telemetría) que colaboran para que cada token enviado al LLM esté justificado.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     CAPA DE INTERFAZ                            │
 │  FrmMandos (chat)  •  FrmAutomatizaciones  •  FrmPipelineAgente │
+│  FrmMemoria  •  FrmHabilidades  •  FrmPatrones                  │
+│  FrmEmbeddings  •  FrmConsumoTokens (flotante)                  │
 │  Telegram Bot      •  Slack Bot                                 │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │               CAPA DE ORQUESTACIÓN DE AGENTES                   │
-│  OrquestadorARIA (pipeline 4 fases)                             │
+│  OrquestadorARIA (pipeline 5 fases + Memorista async)           │
 │  PipelineMultiAgente (Planificador → Ejecutor → Verificador)    │
 │  AgentePlanificador (ReAct / Chain-of-Thought)                  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│        SUBSISTEMAS TRANSVERSALES (context & savings)            │
+│  AgentContext (inmutable) · PerfilContexto (slicing)            │
+│  ConsumoTokensTracker · PreciosModelos · HabilidadesRegistry    │
+│  MemoriaManager · MemoriaSemantica · VectorStore · EmbeddingsSvc│
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
@@ -51,14 +70,14 @@ OPENGIOAI se organiza en capas bien definidas. El punto de entrada es siempre `A
 │  Enrutamiento por proveedor  •  Ejecución Python                │
 └──────────────┬──────────────────────────┬───────────────────────┘
                │                          │
-       ┌───────▼───────┐          ┌───────▼───────┐
-       │  LLM EXTERNOS │          │ EJECUCIÓN LOCAL│
-       │  OpenAI       │          │  Ollama        │
-       │  Claude       │          │  Python proc   │
-       │  Gemini       │          │  File I/O      │
-       │  DeepSeek     │          │  Skills runner │
-       │  Vertex AI    │          │  Herramientas  │
-       └───────────────┘          └───────────────┘
+       ┌───────▼───────┐          ┌───────▼─────────┐
+       │  LLM EXTERNOS │          │ EJECUCIÓN LOCAL │
+       │  OpenAI       │          │  Ollama         │
+       │  Claude       │          │  Python proc    │
+       │  Gemini       │          │  File I/O       │
+       │  DeepSeek     │          │  Skills runner  │
+       │  Vertex AI    │          │  Herramientas   │
+       └───────────────┘          └─────────────────┘
 ```
 
 ### Estructura de carpetas
@@ -66,7 +85,8 @@ OPENGIOAI se organiza en capas bien definidas. El punto de entrada es siempre `A
 ```
 OPENGIOAI/
 ├── Agentes/                    # Motores de orquestación
-│   ├── OrquestadorARIA.cs      # Pipeline ARIA de 4 fases
+│   ├── OrquestadorARIA.cs      # Pipeline ARIA de 5 fases
+│   ├── AgenteMemorista.cs      # Memorista: escribe memoria al final
 │   ├── PipelineMultiAgente.cs  # Pipeline paralelo / verificador
 │   ├── AgentePlanificador.cs   # Planificación ReAct/CoT
 │   └── PasoDelPlan.cs          # Modelo de paso de plan
@@ -76,6 +96,11 @@ OPENGIOAI/
 │   ├── AgentContext.cs         # Contexto inmutable de ejecución
 │   ├── RetryPolicy.cs          # Backoff exponencial con jitter
 │   └── ConversationWindow.cs   # Ventana deslizante de historial
+│
+├── ServiciosAI/                # Servicios transversales de IA
+│   ├── AIServicios.cs          # Entrypoints genéricos
+│   ├── TokenUsageReader.cs     # Extractor multi-proveedor de usage
+│   └── EmbeddingsService.cs    # Embeddings Ollama / OpenAI (Fase C)
 │
 ├── Skills/                     # Motor de Skills
 │   ├── SkillHubManager.cs      # Instalación/actualización remota
@@ -103,7 +128,13 @@ OPENGIOAI/
 │   ├── Skill.cs                # Entidad skill con metadata Hub
 │   ├── Automatizacion.cs       # Definición de automatización
 │   ├── NodoAutomatizacion.cs   # Nodo (Trigger/Condición/Acción/Fin)
-│   └── [Modelo, Api, ChatMessage, ConsumoTokens…]
+│   ├── Habilidad.cs            # Capacidad cognitiva (toggle interno)
+│   ├── ConsumoTokens.cs        # Registro de consumo por llamada
+│   ├── PrecioModelo.cs         # Tarifa USD por 1M tokens
+│   ├── PerfilContexto.cs       # Flags de slicing de contexto (Fase B)
+│   ├── ProveedorEmbedding.cs   # Enum Ollama | OpenAI
+│   ├── EmbeddingConfig.cs      # Config global de embeddings
+│   └── ChunkMemoria.cs         # Chunk + resultado + manifest (RAG)
 │
 ├── Vistas/                     # UI Windows Forms
 │   ├── FrmPrincipal.cs         # Ventana principal
@@ -111,11 +142,27 @@ OPENGIOAI/
 │   ├── FrmAutomatizaciones.cs  # Editor visual de nodos
 │   ├── FrmApis.cs              # Gestión de API keys
 │   ├── FrmModelos.cs           # Selección de modelos
-│   └── FrmPipelineAgente.cs    # Pipeline multi-agente UI
+│   ├── FrmPipelineAgente.cs    # Pipeline multi-agente UI
+│   ├── FrmMemoria.cs           # Editor de Hechos.md / Episodios.md
+│   ├── FrmHabilidades.cs       # Toggles de capacidades cognitivas
+│   ├── FrmPatrones.cs          # Detección de patrones → Skills
+│   ├── FrmConsumoTokens.cs     # Panel flotante de tokens (Fase A)
+│   └── FrmEmbeddings.cs        # Config y operación RAG (Fase C)
 │
 ├── ServiciosTelegram/          # Bot Telegram
 ├── ServiciosSlack/             # Bot Slack
-├── Utilerias/                  # RutasProyecto, MarkdownFileManager…
+├── Utilerias/                  # Subsistemas de soporte
+│   ├── RutasProyecto.cs        # Rutas canónicas (AppDir / Workspace)
+│   ├── MarkdownFileManager.cs  # Lector async de Markdown
+│   ├── JsonManager.cs          # Persistencia genérica List<T>
+│   ├── HabilidadesRegistry.cs  # Singleton de habilidades
+│   ├── PreciosModelos.cs       # Registry de tarifas LLM
+│   ├── ConsumoTokensTracker.cs # Telemetría correlacionada (Fase A)
+│   ├── MemoriaManager.cs       # Hechos.md / Episodios.md
+│   ├── MemoriaChunker.cs       # Chunking + SHA1 IDs estables (Fase C)
+│   ├── MemoriaIndexer.cs       # Indexación incremental (Fase C)
+│   ├── MemoriaSemantica.cs     # API alto nivel RAG (Fase C)
+│   └── VectorStore.cs          # JSONL vector store + cosine (Fase C)
 └── Themas/                     # EmeraldTheme, BurbujaChat…
 ```
 
@@ -123,7 +170,7 @@ OPENGIOAI/
 
 ## Pipeline ARIA
 
-ARIA (Analista · Reconstructor · Inteligencia · Agente) es el corazón de OPENGIOAI. Cada instrucción del usuario pasa por cuatro fases ejecutadas en secuencia, con autocorrección automática integrada.
+ARIA (**A**nalista · Constructor · Guardián · Comunicador · Memor**i**st**a**) es el corazón de OPENGIOAI. Cada instrucción del usuario pasa por cinco fases ejecutadas en secuencia (salvo el Memorista, que corre en background al finalizar), con autocorrección automática integrada y telemetría por fase.
 
 ### Diagrama de flujo
 
@@ -134,51 +181,67 @@ Instrucción del usuario
 ┌───────────────┐
 │   ANALISTA    │  Interpreta la instrucción. Genera un plan amigable
 │               │  y lo muestra al usuario en tiempo real.
+│  Perfil:      │  [Mínimo] — sin disco, prompt propio
 └───────┬───────┘
-        │
+        │         (en paralelo se pre-build el contexto Completo)
         ▼
 ┌───────────────┐
 │  CONSTRUCTOR  │  Llama a AIModelConector para que el LLM genere
 │               │  un script Python. Lo guarda y lo ejecuta.
-│               │  La salida queda en respuesta.txt
+│  Perfil:      │  [Completo] — incluye skills + memoria (o RAG top-K)
 └───────┬───────┘
         │
         ▼
 ┌───────────────────────┐
-│  ANALIZADOR RÁPIDO   │  Lee respuesta.txt. Pregunta al LLM:
+│  ANALIZADOR RÁPIDO    │  Lee respuesta.txt. Pregunta al LLM:
 │  (0.5 s aprox.)       │  "¿La tarea está completa?"
+│  Perfil: [Mínimo]     │
 └──────┬───────┬────────┘
        │ SÍ   │ NO
        │       ▼
        │  ┌───────────────┐
        │  │   GUARDIÁN    │  Lee el código generado + la salida
-       │  │  (0–3 reintentos) con errores. Pide al LLM una corrección.
-       │  │               │  Re-ejecuta el Constructor con el fix.
+       │  │ (0–3 intentos)│  con errores. Pide al LLM una corrección.
+       │  │  Perfil:      │  Re-ejecuta el Constructor con el fix.
+       │  │  [Mínimo]     │
        │  └───────┬───────┘
        │          │ éxito / max reintentos
        ▼          ▼
 ┌───────────────┐
 │ COMUNICADOR   │  Convierte el resultado técnico a lenguaje natural.
 │               │  Hace streaming token-a-token al usuario.
+│  Perfil:      │  [Comunicador] — identidad + memoria, sin skills
+└───────┬───────┘
+        │
+        ▼  (respuesta visible para el usuario)
+        │
+        ▼  (fire-and-forget, no bloquea)
+┌───────────────┐
+│   MEMORISTA   │  Lee instrucción + respuesta final + memoria actual.
+│  (async)      │  Extrae hechos nuevos y actualiza Hechos.md/Episodios.md.
+│  Perfil:      │  [Memorista] — solo identidad, sin credenciales
 └───────────────┘
         │
         ▼
-  Respuesta final + log en ARIALog.md
+  Log completo en ARIALog.md
 ```
 
 ### Fases en detalle
 
 **Analista**
-Recibe la instrucción completa. Usa el LLM para generar una explicación en lenguaje natural de lo que se va a hacer. El texto se muestra inmediatamente en la UI mientras el Constructor trabaja en paralelo.
+Recibe la instrucción completa. Usa el LLM para generar una explicación en lenguaje natural de lo que se va a hacer. El texto se muestra inmediatamente en la UI mientras el Constructor trabaja en paralelo. Usa `PerfilContexto.Minimo` — no carga skills, ni credenciales, ni memoria (no los necesita).
 
 **Constructor**
-Invoca `AIModelConector.EjecutarInstruccionIAAsync()`. El LLM genera el script Python necesario, se guarda como `script_ia.py` en el directorio de trabajo y se ejecuta en un proceso aislado. `stdout` y `stderr` se capturan y se guardan en `respuesta.txt`.
+Invoca `AIModelConector.EjecutarInstruccionIAAsync()`. El LLM genera el script Python necesario, se guarda como `script_ia.py` en el directorio de trabajo y se ejecuta en un proceso aislado. `stdout` y `stderr` se capturan y se guardan en `respuesta.txt`. Es la fase con contexto más gordo (perfil `Completo`): prompt maestro + skills + credenciales + memoria (completa o RAG según habilidades).
 
 **Guardián (agente de corrección)**
-Si el Analizador Rápido detecta que la respuesta tiene errores o está incompleta, el Guardián entra en acción. Lee el script generado y la salida con errores y construye un prompt de corrección contextualizado. Reintenta el ciclo Constructor hasta 3 veces con contexto acumulado. Cada reintento dispara el evento `OnReintentoGuardian` para que la UI lo muestre al usuario.
+Si el Analizador Rápido detecta que la respuesta tiene errores o está incompleta, el Guardián entra en acción. Lee el script generado y la salida con errores y construye un prompt de corrección contextualizado. Reintenta el ciclo Constructor hasta 3 veces con contexto acumulado. Cada reintento dispara el evento `OnReintentoGuardian` para que la UI lo muestre al usuario. Perfil `Minimo` porque recibe su propio prompt especializado.
 
 **Comunicador**
-Toma el resultado final (sea éxito o el mejor intento del Guardián) y lo transforma en una respuesta conversacional, amigable y sin jerga técnica. Hace streaming token-a-token vía callback `OnToken` para que la UI renderice en tiempo real.
+Toma el resultado final (sea éxito o el mejor intento del Guardián) y lo transforma en una respuesta conversacional, amigable y sin jerga técnica. Hace streaming token-a-token vía callback `OnToken` para que la UI renderice en tiempo real. Perfil `Comunicador`: lleva identidad + memoria (para personalizar) pero nunca expone credenciales ni skills — el streaming arranca más rápido por menos tokens a procesar.
+
+**Memorista (asíncrono)**
+Corre en background cuando el usuario ya tiene su respuesta. Su trabajo: leer la conversación completa y decidir qué hechos/episodios merece la pena guardar para el futuro. Actualiza `Hechos.md` y `Episodios.md` en la ruta de trabajo. Si falla, se traga el error silenciosamente — el usuario ni se entera. Perfil `Memorista`: no lee la propia memoria (evita bucles), no lee credenciales (no las necesita), no lee skills.
 
 ### Eventos de la UI
 
@@ -190,6 +253,382 @@ orquestador.OnReintentoGuardian+= (n)    => MostrarReintentoN(n);
 orquestador.OnInicioScript     += ()     => MostrarIconoEjecucion();
 orquestador.OnLineaScript      += (line) => AgregarLineaConsola(line);
 ```
+
+---
+
+## Memoria Durable del Agente
+
+La memoria de OPENGIOAI vive en **archivos Markdown editables a mano**, asociados al directorio de trabajo activo. Cero BD, cero servicios externos, cero dependencias: la memoria "viaja" con la carpeta del proyecto y se versiona en git si tú lo decides.
+
+### Dos fuentes de memoria
+
+| Archivo | Propósito | Estructura |
+|---------|-----------|------------|
+| `Memoria/Hechos.md` | Verdades durables sobre el usuario / su entorno. | Lista de bullets — un hecho por línea. |
+| `Memoria/Episodios.md` | Timeline append-only de ejecuciones relevantes. | Bloques con timestamp ISO + descripción. |
+
+### Ciclo completo
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  INICIO PIPELINE│      │ FIN DE PIPELINE │      │ LECTURA MANUAL  │
+│                 │      │                 │      │                 │
+│ AgentContext    │      │  MEMORISTA      │      │  FrmMemoria     │
+│ .BuildAsync()   │      │  (async, BG)    │      │  (editor)       │
+│                 │      │                 │      │                 │
+│ Lee Hechos.md   │      │ Lee convers.    │      │ Edición directa │
+│ + Episodios.md  │      │ Extrae hechos   │      │ con autosave    │
+│ Formatea como   │      │ Escribe nuevos  │      │ El usuario      │
+│ sección del     │      │ bullets/episo   │      │ corrige o       │
+│ prompt          │      │ dios al final   │      │ amplia a mano   │
+└────────┬────────┘      └────────┬────────┘      └────────┬────────┘
+         │                        │                        │
+         └───────────┬────────────┴────────────────────────┘
+                     ▼
+           Memoria/Hechos.md   ← fuente de verdad editable
+           Memoria/Episodios.md
+```
+
+### Presupuesto de tokens
+
+`MemoriaManager.FormatearParaPromptAsync()` recorta la memoria al presupuesto configurado (por defecto ~800 tokens ≈ 3200 caracteres). Los hechos se conservan enteros; los episodios se truncan desde los más viejos. Con la **Fase C** activa, esta lógica se reemplaza por recuperación semántica top-K (ver [Fase C — RAG Local](#fase-c--rag-local-memoria-semántica)).
+
+### Patrones → Skills (Fase 3)
+
+El módulo `FrmPatrones` analiza `Episodios.md` en busca de tareas recurrentes (≥3 ocurrencias similares) y propone convertirlas en **Skills ejecutables**. El análisis solo se dispara cuando el usuario entra al módulo — nunca en cada pipeline — para que el coste de tokens sea visible y controlado.
+
+---
+
+## Habilidades Cognitivas
+
+Las **Habilidades** son toggles internos que controlan cómo procesa el agente (a diferencia de los *Skills*, que controlan qué hace). Cada habilidad impacta en tokens, latencia o comportamiento — el usuario decide qué activar desde `FrmHabilidades`.
+
+| Clave | Icono | Nombre | Impacto estimado |
+|-------|-------|--------|------------------|
+| `memoria` | 🧠 | Memoria del agente | +200–800 tokens por ejecución |
+| `patrones` | 🔎 | Detección de patrones | +400–1200 tokens por análisis (solo en módulo) |
+| `memoria_semantica` | 🧬 | Memoria semántica (RAG) | **Ahorro neto: −500 a −4000 tokens por instrucción** |
+
+### Registry y persistencia
+
+`HabilidadesRegistry` es un singleton con caché en memoria que invalida al guardar. La consulta `EstaActiva("clave")` es O(1) y se llama en hot-path sin leer disco. Los defaults se mezclan con lo que hay en `{AppDir}/ListHabilidades.json`:
+
+```csharp
+if (HabilidadesRegistry.Instancia.EstaActiva(HabilidadesRegistry.HAB_MEMORIA))
+{
+    memoriaFormateada = await MemoriaManager.FormatearParaPromptAsync(rutaArchivo);
+}
+```
+
+### Opt-in por defecto
+
+**Todas las habilidades nacen desactivadas**. La idea es que cada funcionalidad que consume tokens extra sea una decisión consciente del usuario. Nadie paga por features que no usa.
+
+---
+
+## Token-Saving Architecture
+
+OPENGIOAI ataca el coste del agente por tres frentes complementarios. Las tres fases son **independientes pero componibles** — puedes usar solo telemetría, o solo slicing, o todo junto. Objetivo: que cada token enviado al LLM esté justificado.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                  PROBLEMA: un agente ingenuo                     │
+│  ─ manda prompt maestro enorme en cada fase                      │
+│  ─ inyecta memoria completa aunque sea irrelevante               │
+│  ─ inyecta TODOS los skills aunque solo use uno                  │
+│  ─ el usuario no sabe cuánto gasta ni en qué                     │
+└──────────────────────────────────────────────────────────────────┘
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│   FASE A — TELEMETRÍA       │  Ver cuánto gasta por fase y por  │
+│   📊 Tokens (flotante)       │  instrucción. Costo USD en vivo.   │
+├──────────────────────────────────────────────────────────────────┤
+│   FASE B — CONTEXT SLICING  │  Cada fase declara qué secciones  │
+│   PerfilContexto             │  necesita. El resto NO se lee NI   │
+│                              │  se envía.                         │
+├──────────────────────────────────────────────────────────────────┤
+│   FASE C — RAG LOCAL        │  Memoria recuperada por similitud │
+│   🧬 Embeddings              │  semántica (top-K) en lugar del    │
+│                              │  dump completo.                    │
+└──────────────────────────────────────────────────────────────────┘
+                               ▼
+              Ahorro típico combinado: 40–70 % de tokens
+              Ahorro adicional en latencia del Comunicador
+```
+
+---
+
+### Fase A — Telemetría de Tokens
+
+Panel flotante `📊 Tokens` (always-on-top, arrastrable) que muestra en tiempo real el consumo de **cada llamada** al LLM, con desglose por fase, por instrucción y por proveedor + **costo estimado en USD**.
+
+#### Arquitectura
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│               ConsumoTokensTracker  (singleton)                  │
+│                                                                  │
+│  IniciarEjecucion(instruccion) ─▶ asigna correlation ID          │
+│  Registrar(consumo)            ─▶ agrupa por ID y fase           │
+│  FinalizarEjecucion(id)        ─▶ emite evento final             │
+│                                                                  │
+│  Eventos (lock-free hacia UI):                                   │
+│    OnEjecucionIniciada / OnConsumoRegistrado                     │
+│    OnEjecucionFinalizada                                         │
+└───────────────────────┬──────────────────────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   PreciosModelos                                 │
+│                                                                  │
+│  Estimar(modelo, tokensIn, tokensOut) → USD                      │
+│  Defaults embebidos + override desde ListPreciosModelos.json     │
+│  Tarifas de OpenAI · Claude · Gemini · DeepSeek · Embeddings     │
+└──────────────────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                FrmConsumoTokens  (flotante, TopMost)             │
+│                                                                  │
+│  Pestaña [En vivo]      Ejecución actual, desglose por fase      │
+│  Pestaña [Historial]    Últimas 100 ejecuciones con totales      │
+│  Footer                 Tokens totales + USD acumulado           │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Qué se registra
+
+Cada llamada al LLM se etiqueta automáticamente vía `AgentContext.ComoFase(nombre)` antes de enviarse:
+
+```csharp
+var ctxAnalista = ctx.ComoFase("Analista")
+                     .ConPromptPersonalizado(PromptAnalista);
+await AIModelConector.ObtenerRespuestaAsync(..., ctxAnalista);
+// ← el tracker ya sabe qué fase generó este consumo
+```
+
+Soporta **todos los proveedores**: OpenAI/Claude/Gemini/DeepSeek parsean el campo `usage` del JSON; Ollama parsea los campos `prompt_eval_count`/`eval_count` de la última línea NDJSON del stream.
+
+#### Ejemplo de vista
+
+```
+📊 Consumo de Tokens — EN VIVO
+┌──────────────────────────────────────────────────────────┐
+│ Instrucción: "dame el clima de Madrid y envíamelo a TG"  │
+├──────────────────────────────────────────────────────────┤
+│ Analista     │  1 204 in  │    318 out  │  $0.0013  ✓    │
+│ Constructor  │  4 872 in  │  1 103 out  │  $0.0239  ✓    │
+│ Guardián     │      0     │      0     │   –       —    │
+│ Comunicador  │  2 108 in  │    412 out  │  $0.0073  ✓    │
+│ Memorista    │  1 640 in  │    203 out  │  $0.0057  ⏳   │
+├──────────────────────────────────────────────────────────┤
+│ TOTAL        │  9 824 in  │  2 036 out  │  $0.0382       │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Fase B — Context Slicing
+
+Cada fase del pipeline declara **qué secciones del prompt necesita** mediante un `PerfilContexto`. Las secciones no declaradas ni se leen del disco ni se envían al LLM.
+
+#### El problema que resuelve
+
+Sin slicing, cada fase recibía el prompt maestro completo + skills + credenciales + memoria + automatizaciones + historial — aunque el Analista solo necesita entender la instrucción y el Guardián solo necesita ver un error. Con 20 skills y memoria mediana, esto puede suponer **5k–10k tokens inútiles por fase**.
+
+#### Flags de PerfilContexto
+
+```csharp
+public sealed class PerfilContexto
+{
+    // Grupo 1: I/O de disco — si está en false, ni se lee el archivo
+    public bool LeerPromptMaestroDeDisco { get; init; }
+    public bool LeerSkillsDeDisco         { get; init; }
+    public bool LeerMemoriaDeDisco        { get; init; }
+
+    // Grupo 2: qué secciones ensambla ConstruirPromptEfectivo()
+    public bool IncluirPromptMaestro      { get; init; }
+    public bool IncluirCredenciales       { get; init; }
+    public bool IncluirRutaTrabajo        { get; init; }
+    public bool IncluirSoloChat           { get; init; }
+    public bool IncluirSkills             { get; init; }
+    public bool IncluirAutomatizaciones   { get; init; }
+    public bool IncluirHistorial          { get; init; }
+    public bool IncluirMemoria            { get; init; }
+    public bool IncluirPromptsMaestros    { get; init; }
+    public bool IncluirUsuario            { get; init; }
+}
+```
+
+#### Presets disponibles
+
+| Preset | Para quién | Qué incluye |
+|--------|-----------|------------|
+| `Completo` | Constructor, SoloChat, Agente1 legacy | Todo — prompt maestro + skills + credenciales + memoria + automatizaciones |
+| `SoloIdentidad` | ComoInicio | Prompt maestro + usuario |
+| `Minimo` | Analista, Guardián, Analizador Rápido | Nada — se inyecta prompt propio vía `ConPromptPersonalizado` |
+| `Memorista` | Memorista async | Prompt maestro + ruta + usuario (sin credenciales, sin skills) |
+| `Comunicador` | Comunicador streaming | Prompt maestro + memoria + usuario (sin credenciales, sin skills, sin automatizaciones) |
+
+#### Uso
+
+```csharp
+// Analista: no necesita NADA del contexto — usa prompt propio
+var ctx = await AgentContext.BuildAsync(
+    ruta, modelo, apiKey, servicio, soloChat, claves,
+    ct, perfil: PerfilContexto.Minimo);
+
+// Constructor: lo quiere todo
+var ctx = await AgentContext.BuildAsync(
+    ruta, modelo, apiKey, servicio, soloChat, claves,
+    ct, perfil: PerfilContexto.Completo,
+    instruccionUsuario: instruccion);  // ← activa RAG si hab está ON
+```
+
+#### Ahorro medido
+
+- **1 700 – 10 500 tokens por instrucción** (depende del tamaño del prompt maestro y de la memoria).
+- **3–4 lecturas de disco evitadas** por ejecución (promt maestro, skills, memoria).
+- **Latencia del primer token** del Comunicador reducida ~15-30 % al no procesar secciones irrelevantes.
+
+---
+
+### Fase C — RAG Local (Memoria Semántica)
+
+Cuando la memoria crece (cientos de hechos, timeline de meses de episodios) inyectarla completa en cada instrucción se vuelve carísimo — y el 90 % no es relevante para la instrucción actual. La **Fase C** sustituye el dump completo por **recuperación semántica top-K**: embeber la instrucción del usuario, buscar los chunks más similares de Hechos/Episodios y inyectar solo esos.
+
+#### Arquitectura
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  EmbeddingConfig         {AppDir}/EmbeddingsConfig.json          │
+│                                                                  │
+│  · Proveedor: Ollama | OpenAI                                    │
+│  · Modelo: nomic-embed-text (768d) | text-embedding-3-small (1536d)│
+│  · TopK / ChunkSize / ChunkOverlap                               │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    EmbeddingsService                             │
+│                                                                  │
+│  EmbedAsync(texto)           → float[]                           │
+│  EmbedManyAsync(textos)      → List<float[]>  (batch 128 OpenAI) │
+│  ProbarConexionAsync(cfg)    → (ok, mensaje, dim)                │
+│                                                                  │
+│  HttpClient singletons por proveedor (sin socket exhaustion)     │
+│  Las llamadas a OpenAI se registran en ConsumoTokensTracker      │
+│  con Fase="Embedding" → aparecen en el panel 📊                  │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│   MemoriaChunker               MemoriaIndexer                    │
+│                                                                  │
+│   ChunkearHechos(contenido)    IndexarAsync(ruta):               │
+│   ChunkearEpisodios(contenido)    1. Hash SHA1 por fuente        │
+│   ChunkearTextoLibre(...)         2. Skip si sin cambios         │
+│   ComputarId(fuente,ofs,txt)      3. Batch embed + Upsert        │
+│   → SHA1 10-char hex              4. Update manifest             │
+│                                                                  │
+│   IDs estables → re-indexación idempotente                       │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                        VectorStore                               │
+│                                                                  │
+│  Persistencia: JSONL  {ruta}/Memoria/embeddings.jsonl            │
+│    · Grep-able, append-friendly, inspeccionable a mano           │
+│    · Atomic write via tmp + rename                               │
+│  Búsqueda: brute-force cosine normalizado a [0, 1]               │
+│    · Típicamente 2–3k chunks por workspace → < 50 ms             │
+│  Thread-safe (lock)                                              │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    MemoriaSemantica                              │
+│                                                                  │
+│  ObtenerContextoRelevanteAsync(ruta, instruccion):               │
+│    1. Gate: HAB_MEMORIA ∧ HAB_MEMORIA_SEMANTICA                  │
+│    2. IndexarAsync (incremental, silencioso)                     │
+│    3. Embed instrucción + Buscar top-K                           │
+│    4. Formatear "================= MEMORIA RELEVANTE (RAG) ==="  │
+│    5. Si falla algo → "" → fallback a dump completo              │
+│                                                                  │
+│  Tolerante a fallos: Ollama apagado / API key mala / disco lleno │
+│  NO rompen el pipeline — el agente sigue funcionando.            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Proveedores soportados
+
+| Proveedor | Modelo | Dim | Costo | Setup |
+|-----------|--------|-----|-------|-------|
+| **Ollama** | `nomic-embed-text` | 768 | **$0** (local) | `ollama pull nomic-embed-text` |
+| **OpenAI** | `text-embedding-3-small` | 1536 | $0.02 / 1M tokens | API key con permiso de embeddings |
+| **OpenAI** | `text-embedding-3-large` | 3072 | $0.13 / 1M tokens | Igual, mayor calidad |
+
+Cambiar de proveedor/modelo **invalida el índice entero** (espacios vectoriales incompatibles). El `MemoriaIndexer` lo detecta por el `ManifestEmbeddings` y hace rebuild automático.
+
+#### Indexación incremental
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│   ManifestEmbeddings   {ruta}/Memoria/embeddings.manifest.json   │
+│                                                                  │
+│   {                                                              │
+│     "Proveedor": "Ollama",                                       │
+│     "Modelo":    "nomic-embed-text",                             │
+│     "Dimension": 768,                                            │
+│     "HashPorFuente": {                                           │
+│        "Hechos":    "a3f5c9...",                                 │
+│        "Episodios": "d7e8b1..."                                  │
+│     },                                                           │
+│     "UltimaIndexacion": "2026-04-19T12:34:56Z"                   │
+│   }                                                              │
+└──────────────────────────────────────────────────────────────────┘
+
+   SHA1 del archivo vs SHA1 del manifest
+         │
+   ┌─────┴─────┐
+   │ igual?    │
+   └─┬───────┬─┘
+  SÍ │       │ NO
+     ▼       ▼
+   skip    borra chunks de esa fuente
+           chunkea + batch embed + upsert
+           actualiza manifest
+```
+
+#### UI de control — `FrmEmbeddings`
+
+Botón 🧬 en el menú lateral. Cuatro tarjetas:
+
+1. **Proveedor y modelo** — radios Ollama/OpenAI, endpoint, API key (masked).
+2. **Parámetros de recuperación** — TopK, ChunkSize, ChunkOverlap.
+3. **Acciones** — Probar conexión · Guardar · Re-indexar · Limpiar índice.
+4. **Estado del índice** — chunks totales, por fuente, proveedor/modelo/dim, última indexación.
+
+#### Activación paso a paso
+
+```
+1. ⚙ Habilidades  → activar 🧠 memoria
+                  → activar 🧬 memoria_semantica
+2. 🧬 Embeddings  → elegir proveedor → Probar conexión → Guardar
+                  → Re-indexar
+3. 📊 Tokens      → ejecutar una instrucción
+                  → observar ahorro en la fase Constructor
+```
+
+Si apagas `memoria_semantica`, el agente vuelve automáticamente al dump completo sin necesidad de reiniciar.
+
+#### Ahorro medido
+
+- Memoria de 50 hechos + 200 episodios: dump ≈ 4 200 tokens → RAG (top-5) ≈ 400 tokens. **Ahorro: ~90 %**.
+- Costo de los embeddings con OpenAI: ~$0.00002 por instrucción (despreciable vs. el ahorro del Constructor).
+- Con Ollama: **costo cero** y latencia de 50-150 ms adicionales.
 
 ---
 
@@ -464,21 +903,23 @@ Los scripts Python se ejecutan en un proceso separado (`Process.Start`). El proc
 ListApis.json
 Configuracion.json
 *.env
+# Embeddings (puede contener datos sensibles de la memoria)
+Memoria/embeddings.jsonl
 ```
 
 ---
 
 ## Multi-Proveedor de LLMs
 
-| Proveedor | Modelos | Autenticación |
-|-----------|---------|---------------|
-| **OpenAI** | GPT-3.5 Turbo, GPT-4, GPT-4 Turbo | API Key (Bearer) |
-| **Anthropic Claude** | Claude 3 Haiku / Sonnet / Opus | API Key (x-api-key) |
-| **Google Gemini** | Gemini 1.5 Flash, Gemini Pro | API Key (querystring) |
-| **DeepSeek** | DeepSeek Chat, DeepSeek Code | API Key (Bearer) |
-| **OpenRouter** | Todos los modelos disponibles | API Key (Bearer) |
-| **Ollama** | Llama, Mistral, Phi, Gemma… | Sin clave (local) |
-| **Google Vertex AI** | Gemini en Vertex | gcloud ADC (`Antigravity`) |
+| Proveedor | Modelos | Autenticación | Embeddings |
+|-----------|---------|---------------|------------|
+| **OpenAI** | GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o / 4o-mini | API Key (Bearer) | text-embedding-3-small/large |
+| **Anthropic Claude** | Claude 3 Haiku / Sonnet / Opus, Claude Sonnet/Opus 4.5 | API Key (x-api-key) | — |
+| **Google Gemini** | Gemini 1.5 Flash/Pro, Gemini 2.0 Flash | API Key (querystring) | — |
+| **DeepSeek** | DeepSeek Chat, DeepSeek Reasoner | API Key (Bearer) | — |
+| **OpenRouter** | Todos los modelos disponibles | API Key (Bearer) | — |
+| **Ollama** | Llama, Mistral, Phi, Gemma… | Sin clave (local) | nomic-embed-text, mxbai-embed-large |
+| **Google Vertex AI** | Gemini en Vertex | gcloud ADC (`Antigravity`) | — |
 
 ### Resiliencia — RetryPolicy
 
@@ -508,6 +949,10 @@ await AIModelConector.ObtenerRespuestaStreamingAsync(
 );
 ```
 
+### HttpClient singletons
+
+Para evitar socket exhaustion en cargas altas (típico de polling de Telegram + UI + automatizaciones concurrentes), cada proveedor tiene su `HttpClient` singleton reutilizado. Lo mismo aplica al `EmbeddingsService`.
+
 ---
 
 ## Integracion Multi-Canal
@@ -533,6 +978,11 @@ await AIModelConector.ObtenerRespuestaStreamingAsync(
 - `FrmApis` — gestión de API keys por proveedor
 - `FrmModelos` — selección de modelo por proveedor
 - `FrmPipelineAgente` — ejecución del pipeline multi-agente con resultados por fase
+- `FrmMemoria` — editor directo de `Hechos.md` / `Episodios.md`
+- `FrmHabilidades` — toggles de capacidades cognitivas
+- `FrmPatrones` — detección de patrones recurrentes → skills propuestas
+- `FrmConsumoTokens` — panel flotante de telemetría (siempre visible sobre otros forms)
+- `FrmEmbeddings` — configuración y operación del RAG local
 
 ---
 
@@ -540,10 +990,11 @@ await AIModelConector.ObtenerRespuestaStreamingAsync(
 
 ### Requisitos
 
-- **.NET 9 Runtime** — [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/9.0)
+- **.NET 10 Runtime** — [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0)
 - **Windows 10+**
 - **Python 3.8+** en el PATH del sistema
 - **API Key** de al menos un proveedor LLM
+- (Opcional) **Ollama** local para embeddings gratis: `ollama pull nomic-embed-text`
 
 ### Instalación
 
@@ -562,6 +1013,9 @@ dotnet run --project OPENGIOAI
 3. Ir a **Modelos** → Seleccionar el modelo por defecto
 4. Ir a **Rutas** → Establecer el directorio de trabajo donde se guardarán scripts y logs
 5. (Opcional) Ir a **Skills** → Activar o instalar skills desde el Hub
+6. (Opcional) Abrir **📊 Tokens** → panel flotante que muestra consumo en vivo
+7. (Opcional) Ir a **⚙ Habilidades** → activar `memoria` y/o `memoria_semantica`
+8. (Opcional) Ir a **🧬 Embeddings** → configurar proveedor (Ollama/OpenAI) → Re-indexar
 
 ### Archivos de configuración en tiempo de ejecución
 
@@ -576,6 +1030,11 @@ dotnet run --project OPENGIOAI
 ├── Skills/
 │   ├── clima_ciudad.md       ← Definición de skill
 │   └── clima_ciudad.py       ← Python extraído (autogenerado)
+├── Memoria/                  ← Fase 1 — memoria durable
+│   ├── Hechos.md             ← Verdades sobre el usuario (editable)
+│   ├── Episodios.md          ← Timeline append-only
+│   ├── embeddings.jsonl      ← VectorStore (Fase C — autogenerado)
+│   └── embeddings.manifest.json  ← Hashes SHA1 por fuente
 └── Automatizaciones/
     └── {GUID}/
         ├── nodo_01_*.py
@@ -585,7 +1044,10 @@ dotnet run --project OPENGIOAI
 ├── ListApis.json             ← API keys (NO subir a git)
 ├── Configuracion.json        ← Configuración general
 ├── ListModelos.json          ← Modelos por proveedor
-└── ListAutomatizaciones.json ← Automatizaciones guardadas
+├── ListAutomatizaciones.json ← Automatizaciones guardadas
+├── ListHabilidades.json      ← Estado de habilidades (Fase B)
+├── ListPreciosModelos.json   ← Tarifas USD por modelo (Fase A)
+└── EmbeddingsConfig.json     ← Config RAG (Fase C)
 ```
 
 ---
@@ -598,7 +1060,9 @@ dotnet run --project OPENGIOAI
 2. Extender `ConstruirRequest()` en `AIModelConector.cs` con endpoint y body
 3. Extender `AgregarHeaders()` con la autenticación del provider
 4. Extender `ExtraerContenido()` con el path JSON de la respuesta
-5. (Opcional) Extender `ObtenerRespuestaStreamingAsync()` si soporta SSE
+5. Extender `TokenUsageReader` si el proveedor expone `usage` de forma distinta
+6. (Opcional) Extender `ObtenerRespuestaStreamingAsync()` si soporta SSE
+7. Añadir tarifas en `PreciosModelos.Defaults()` para que aparezca en 📊 Tokens
 
 ### Crear una Skill personalizada
 
@@ -609,6 +1073,28 @@ Crear un archivo `.md` en el directorio `Skills/` del directorio de trabajo sigu
 1. Añadir valor al enum `TipoNodo` en `NodoAutomatizacion.cs`
 2. Implementar la lógica de evaluación en `FrmAutomatizaciones.cs`
 3. Agregar el ícono y propiedades en el panel de configuración del nodo
+
+### Agregar una nueva Habilidad cognitiva
+
+1. Añadir constante `HAB_XXX` en `HabilidadesRegistry.cs`
+2. Añadir entrada a `Defaults()` con icono + descripción + impacto estimado
+3. Consultar con `HabilidadesRegistry.Instancia.EstaActiva(HAB_XXX)` en el hot-path
+
+### Crear un nuevo preset de PerfilContexto
+
+En `Entidades/PerfilContexto.cs` añadir una propiedad estática:
+
+```csharp
+public static PerfilContexto MiPreset => new()
+{
+    LeerPromptMaestroDeDisco = true,
+    IncluirPromptMaestro     = true,
+    IncluirMemoria           = true,
+    // resto en false por defecto
+};
+```
+
+Luego pasarlo a `AgentContext.BuildAsync(..., perfil: PerfilContexto.MiPreset)`.
 
 ---
 
@@ -624,6 +1110,11 @@ Crear un archivo `.md` en el directorio `Skills/` del directorio de trabajo sigu
 | Telegram no responde | Token inválido o bot no iniciado | Verificar token en `Configuracion.json`; comprobar que el bot está activo en BotFather |
 | Contexto perdido entre turnos | Ventana de contexto llena | Aumentar `MaxTurnosContexto` o `MaxTokensContexto` en la configuración |
 | Socket exhaustion | HttpClient mal instanciado | Ya resuelto — AIModelConector usa singleton por proveedor |
+| 📊 Tokens no muestra nada | Tracker no correlacionó | Verificar que la fase llama a `ctx.ComoFase("Nombre")` antes de enviar al LLM |
+| RAG no devuelve nada relevante | Índice vacío o stale | Abrir 🧬 Embeddings → Re-indexar; verificar que Hechos/Episodios tienen contenido |
+| RAG rompe sin Ollama | Habilidad ON pero servicio caído | MemoriaSemantica hace fallback a dump completo automáticamente — revisar panel `📊` para confirmar |
+| Cambié de embedding y todo falla | Espacio vectorial incompatible | El MemoriaIndexer detecta el cambio y rebuildea automáticamente; si no, 🧬 → Limpiar índice → Re-indexar |
+| Costo USD reportado = $0 | Modelo no registrado en PreciosModelos | Editar `ListPreciosModelos.json` o añadir al `Defaults()` del código |
 
 ---
 
@@ -638,14 +1129,32 @@ Crear un archivo `.md` en el directorio `Skills/` del directorio de trabajo sigu
 
 ---
 
-## Mejoras Futuras
+## Roadmap — lo entregado y lo que viene
 
+### ✅ Entregado
+
+- [x] Pipeline ARIA de 5 fases con Memorista asíncrono
+- [x] Sistema de memoria durable en Markdown (`Hechos.md` + `Episodios.md`)
+- [x] Detección de patrones recurrentes con propuesta de skills
+- [x] Habilidades cognitivas opt-in con registry persistente
+- [x] **Fase A — Telemetría de tokens** con desglose por fase y costo USD
+- [x] **Fase B — Context slicing** declarativo por fase (PerfilContexto)
+- [x] **Fase C — RAG local** con Ollama / OpenAI, indexación incremental y fallback
+- [x] Multi-proveedor LLM (OpenAI · Claude · Gemini · DeepSeek · OpenRouter · Ollama · Vertex)
+- [x] Aislamiento de proceso Python + credenciales nunca expuestas al agente
+- [x] Streaming SSE con cancelación del usuario
+- [x] Automatizaciones visuales con nodos conectables
+- [x] Telegram + Slack multi-canal
+
+### 🚧 En progreso / próximas fases
+
+- [ ] **Fase D.1** — RAG para Skills (top-K skills relevantes en vez del manifiesto completo)
+- [ ] **Fase D.2** — Provider prompt caching (OpenAI automático + Anthropic `cache_control`)
+- [ ] Dashboard histórico de tokens con gráficas y comparativas por modelo
 - [ ] Cifrado AES-256 para `ListApis.json`
-- [ ] Historial persistente de conversaciones con búsqueda
-- [ ] Dashboard de analytics de tokens y coste por proveedor
+- [ ] Historial persistente de conversaciones con búsqueda semántica (reutiliza VectorStore)
 - [ ] Integración con Discord
 - [ ] Fine-tuning de modelos locales (Ollama)
-- [ ] Caché inteligente de respuestas para reducir coste
 - [ ] Exportación/importación de automatizaciones en formato portátil
 - [ ] Skills Hub con búsqueda y categorías en la UI
 
@@ -671,6 +1180,12 @@ MIT — ver archivo `LICENSE` para detalles.
 4. Push: `git push origin feature/mi-feature`
 5. Abre un Pull Request
 
+Cualquier PR que toque el **pipeline ARIA**, el **sistema de memoria** o los **subsistemas de telemetría/slicing/RAG** debe incluir:
+
+- Actualización del README en la sección correspondiente
+- Prueba manual documentada (instrucción de ejemplo + resultado esperado)
+- Compilación limpia (`0 Errores` — las 170+ advertencias heredadas están bajo tracking)
+
 ---
 
 ## Disclaimer
@@ -680,7 +1195,8 @@ OPENGIOAI ejecuta código Python generado dinámicamente por LLMs. El proceso de
 - Revisar `script_ia.py` antes de ejecutar en sistemas críticos
 - No ejecutar scripts en entornos de producción sin validación previa
 - Mantener `ListApis.json` fuera del control de versiones
+- Considerar que `Memoria/embeddings.jsonl` contiene fragmentos literales de tu memoria — trátalo como datos sensibles
 
 ---
 
-**Hecho en C# y .NET 9**
+**Hecho en C# y .NET 10 · Arquitectura token-aware · RAG local · Memoria durable**
