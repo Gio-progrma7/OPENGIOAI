@@ -12,6 +12,7 @@ namespace OPENGIOAI.Entidades
         public Api Miapi { get; set; }
         public Modelo Mimodelo{  get; set; }
         public Archivo MiArchivo {  get; set; }
+        public PreferenciasMandos Preferencias { get; set; }
 
 
     }

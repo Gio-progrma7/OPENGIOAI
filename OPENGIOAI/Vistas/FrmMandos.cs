@@ -122,11 +122,12 @@ namespace OPENGIOAI.Vistas
         private Point _mouseDownLocation;
 
         // ── Servicios externos ────────────────────────────────────────────────
-        private SlackPollingService _slack;
+        private readonly SlackChannelService _slackService = new();
         // [C1] _ctsIA: se hace Dispose del token anterior antes de crear uno nuevo.
         private CancellationTokenSource _ctsIA;
-        private readonly SemaphoreSlim _telegramSemaphore = new(1, 1);
-        private TelegramListener _telegramListener;
+        private readonly TelegramService _telegramService = new();
+        private readonly BroadcastService _broadcast;
+        private readonly CommandRouter _router = new();
 
         // ── ARIA: panel de estado de agentes y tracking de fase ───────────────
         private PanelAgentes _panelAgentes = null!;
@@ -148,9 +149,7 @@ namespace OPENGIOAI.Vistas
 
         // ── Modelos de datos ──────────────────────────────────────────────────
         private ConfiguracionClient _configuracionClient;
-        private ConfiguracionTTS _configTTS = new();
-        private SlackChat _slackChat = new();
-        private TelegramChat _telegramChat = new();
+        private readonly AudioTTSService _audioService = new();
         private Modelo _modeloSeleccionado = new();
         private Archivo _archivoSeleccionado = new();
         private List<Api> _listaApisDisponibles = new();
@@ -165,6 +164,8 @@ namespace OPENGIOAI.Vistas
         {
             InitializeComponent();
             _configuracionClient = config ?? throw new ArgumentNullException(nameof(config));
+            _broadcast = new BroadcastService(_telegramService, _slackService);
+            ConfigurarCommandRouter();
 
             // Timer de throttle: actualiza la burbuja de streaming a ~8 fps.
             _timerStreaming.Tick += (_, _) =>
@@ -234,8 +235,8 @@ namespace OPENGIOAI.Vistas
             _timerStreaming.Stop();
             _timerStreaming.Dispose();
             CancelarInstruccion();
-            _telegramListener?.Stop();
-            _slack?.Stop();
+            _telegramService.Detener();
+            _slackService.Detener();
             _ctsIA?.Dispose();
         }
 
@@ -357,8 +358,8 @@ namespace OPENGIOAI.Vistas
             if (!checkBoxAudio.Checked) { _enviarAudio = false; return; }
 
             // Verificar que TTS esté configurado antes de activar
-            _configTTS = Utils.LeerConfig<ConfiguracionTTS>(RutasProyecto.ObtenerRutaConfiguracionTTS());
-            if (!_configTTS.Activo)
+            _audioService.RecargarConfig();
+            if (!_audioService.Activo)
             {
                 checkBoxAudio.Checked = false;
                 _toolTipArchivos.Show(
@@ -581,8 +582,7 @@ namespace OPENGIOAI.Vistas
             _listaApisDisponibles     = JsonManager.Leer<Api>(RutasProyecto.ObtenerRutaListApis());
             _listaAgentes             = JsonManager.Leer<Modelo>(RutasProyecto.ObtenerRutaListModelos());
             _listaArchivosDisponibles = JsonManager.Leer<Archivo>(RutasProyecto.ObtenerRutaListArchivos());
-            _configTTS                = Utils.LeerConfig<ConfiguracionTTS>(
-                                            RutasProyecto.ObtenerRutaConfiguracionTTS());
+            _audioService.RecargarConfig();
         }
 
         // ──────────────────────────────────────────────────────────────────────
@@ -725,10 +725,10 @@ namespace OPENGIOAI.Vistas
                 if (!string.IsNullOrWhiteSpace(salidaRaw))
                 {
                     if (_enviarConstructorTelegram && usarTelegram)
-                        _ = EnviarTelegramDesdeActivacion(FormatearConstructorParaTelegram(salidaRaw));
+                        _ = _telegramService.EnviarMensajeAsync(FormatearConstructorParaTelegram(salidaRaw));
 
-                    if (_enviarConstructorSlack && usarSlack && _slack != null)
-                        _ = _slack.EnviarCodigoAsync(FormatearConstructorParaSlack(salidaRaw));
+                    if (_enviarConstructorSlack && usarSlack && _slackService.IsConfigured)
+                        _ = _slackService.EnviarCodigoAsync(FormatearConstructorParaSlack(salidaRaw));
                 }
 
                 // ── Envío de archivos nuevos creados por el Constructor ──────
@@ -745,13 +745,11 @@ namespace OPENGIOAI.Vistas
                     {
                         string nombre = System.IO.Path.GetFileName(archivo);
 
-                        if (_enviarArchivosTelegram && usarTelegram && _telegramChat != null)
-                            _ = ServiciosTelegram.TelegramSender.EnviarArchivoAsync(
-                                    _telegramChat.Apikey, _telegramChat.ChatId,
-                                    archivo, $"📎 {nombre}");
+                        if (_enviarArchivosTelegram && usarTelegram)
+                            _ = _telegramService.EnviarArchivoAsync(archivo, $"📎 {nombre}");
 
-                        if (_enviarArchivosSlack && usarSlack && _slack != null)
-                            _ = _slack.EnviarArchivoAsync(archivo, nombre);
+                        if (_enviarArchivosSlack && usarSlack && _slackService.IsConfigured)
+                            _ = _slackService.EnviarArchivoAsync(archivo, nombre);
                     }
                 }
             };
@@ -760,7 +758,7 @@ namespace OPENGIOAI.Vistas
 
             // Telegram: enviar acción "typing" cada 4 s (solo durante Analista y Comunicador)
             using var ctsTyping = new CancellationTokenSource();
-            if (usarTelegram && _telegramChat?.ChatId != 0)
+            if (usarTelegram && _telegramService.IsConfigured)
             {
                 _ = Task.Run(async () =>
                 {
@@ -770,10 +768,8 @@ namespace OPENGIOAI.Vistas
                         {
                             // Solo enviar el indicador si la fase actual lo requiere
                             if (typingEnabled[0])
-                            {
-                                await ServiciosTelegram.TelegramSender.EnviarAccionEscribiendoAsync(
-                                    _telegramChat!.Apikey, _telegramChat.ChatId);
-                            }
+                                await _telegramService.EnviarTypingAsync();
+
                             await Task.Delay(4_000, ctsTyping.Token);
                         }
                         catch { break; }
@@ -783,8 +779,8 @@ namespace OPENGIOAI.Vistas
 
             // Slack: mensaje "pensando..." que se elimina al finalizar
             string? slackTsPensando = null;
-            if (usarSlack && _slack != null)
-                slackTsPensando = await _slack.EnviarPensandoAsync();
+            if (usarSlack && _slackService.IsConfigured)
+                slackTsPensando = await _slackService.EnviarPensandoAsync();
 
             // ── Ejecutar pipeline ─────────────────────────────────────────────
             string respuestaFinal;
@@ -810,8 +806,8 @@ namespace OPENGIOAI.Vistas
 
                 // Detener indicadores en cuanto termina el pipeline
                 ctsTyping.Cancel();
-                if (slackTsPensando != null && _slack != null)
-                    _ = _slack.EliminarMensajeAsync(slackTsPensando);
+                if (slackTsPensando != null && _slackService.IsConfigured)
+                    _ = _slackService.EliminarMensajeAsync(slackTsPensando);
             }
 
             // Flush final del Comunicador — pasar el buffer acumulado para garantizar
@@ -1141,36 +1137,29 @@ namespace OPENGIOAI.Vistas
                 var tareas = new List<Task>();
 
                 if (usarTelegram)
-                    tareas.Add(EnviarRespuestaTelegramAsync(mensaje, true));
+                    tareas.Add(_telegramService.EnviarRespuestaParticionadaAsync(mensaje));
 
-                if (usarSlack && _slack != null)
-                    tareas.Add(_slack.SendMessage(mensaje));
+                if (usarSlack && _slackService.IsConfigured)
+                    tareas.Add(_slackService.EnviarMensajeAsync(mensaje));
 
                 if (tareas.Count > 0)
                     await Task.WhenAll(tareas);
             }
 
             // ── Audio TTS — generar una sola vez y enviar a todos los canales activos ──
-            if (_enviarAudio && _configTTS.Activo)
+            if (_enviarAudio)
             {
-                var (audioBytes, ext) = await ServicioTTS.GenerarAudioAsync(mensaje, _configTTS);
+                string? tmpFile = await _audioService.GenerarArchivoTemporalAsync(mensaje);
 
-                if (audioBytes.Length > 0)
+                if (tmpFile != null)
                 {
-                    string tmpFile = Path.Combine(Path.GetTempPath(),
-                        $"aria_audio_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}");
-
-                    await File.WriteAllBytesAsync(tmpFile, audioBytes);
-
                     var tareasAudio = new List<Task>();
 
-                    if (usarTelegram && _telegramChat?.ChatId != 0)
-                        tareasAudio.Add(ServiciosTelegram.TelegramSender.EnviarArchivoAsync(
-                            _telegramChat!.Apikey, _telegramChat.ChatId,
-                            tmpFile, "🔊 Audio"));
+                    if (usarTelegram && _telegramService.IsConfigured)
+                        tareasAudio.Add(_telegramService.EnviarArchivoAsync(tmpFile, "🔊 Audio"));
 
-                    if (usarSlack && _slack != null)
-                        tareasAudio.Add(_slack.EnviarArchivoAsync(tmpFile, "Audio"));
+                    if (usarSlack && _slackService.IsConfigured)
+                        tareasAudio.Add(_slackService.EnviarArchivoAsync(tmpFile, "Audio"));
 
                     if (tareasAudio.Count > 0)
                         await Task.WhenAll(tareasAudio);
@@ -1583,97 +1572,76 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         #region Manejo de Telegram
 
         /// <summary>
-        /// Envía una respuesta al chat de Telegram particionándola si es necesario.
-        /// [C2] Las partes intermedias y la última se envían en loop; la última
-        ///      incluye el teclado inline si aplica.
-        /// </summary>
-        public async Task EnviarRespuestaTelegramAsync(string respuesta, bool usarTelegram)
-        {
-            if (!usarTelegram) return;
-
-            try
-            {
-                var keyboard = Utils.CrearKeyboardDesdeTexto(respuesta);
-                string codificada = System.Net.WebUtility.HtmlEncode(respuesta);
-                var partes = Utils.DividirMensajeTelegram(codificada);
-
-                for (int i = 0; i < partes.Count; i++)
-                {
-                    bool esUltima = i == partes.Count - 1;
-                    await EnviarTelegramDesdeActivacion(partes[i], esUltima ? keyboard : null);
-                }
-            }
-            catch (Exception ex)
-            {
-                MostrarMensaje(ex.ToString(), false);
-            }
-        }
-
-        private Task EnviarTelegramDesdeActivacion(string respuesta, object btns = null) =>
-            EnviarTelegramAsync(_telegramChat.Apikey, _telegramChat.ChatId, respuesta, btns, true);
-
-        /// <summary>
         /// Inicia o reinicia el listener de Telegram con la configuración actual.
         /// [C1] El listener previo se detiene explícitamente antes de crear uno nuevo
         ///      para evitar tener dos goroutines escuchando el mismo bot token.
         /// </summary>
-        private async Task IniciarConversasionTelegram()
+        private Task IniciarConversasionTelegram()
         {
-            LeerConfiguracionTelegram();
+            _telegramService.CargarConfiguracion(_archivoSeleccionado?.Ruta ?? "");
 
-            if (_telegramChat.ChatId == 0 || string.IsNullOrEmpty(_telegramChat.Apikey))
+            if (!_telegramService.IsConfigured)
             {
                 MostrarMensaje(
                     "Telegram aún no está configurado.\r\n" +
                     "Proporciona tu API Key y tu ID de usuario y escribe #CONFIGURA TELEGRAM",
                     false);
-                return;
+                return Task.CompletedTask;
             }
 
-            _telegramListener?.Stop();
-            _telegramListener = null;
+            // Resuscribir eventos al reiniciar el listener evita acumulación
+            // de handlers si el usuario activa/desactiva Telegram varias veces.
+            _telegramService.OnMessageReceived  -= TelegramService_OnMessageReceived;
+            _telegramService.OnCallbackReceived -= TelegramService_OnCallbackReceived;
+            _telegramService.OnFileReceived     -= TelegramService_OnFileReceived;
+            _telegramService.OnError            -= TelegramService_OnError;
 
-            _telegramListener = new TelegramListener(
-                _telegramChat.Apikey,
-                _archivoSeleccionado.Ruta,
-                _telegramChat.ChatId);
+            _telegramService.OnMessageReceived  += TelegramService_OnMessageReceived;
+            _telegramService.OnCallbackReceived += TelegramService_OnCallbackReceived;
+            _telegramService.OnFileReceived     += TelegramService_OnFileReceived;
+            _telegramService.OnError            += TelegramService_OnError;
 
-            _telegramListener.OnMessageReceived += (chatId, texto) =>
+            _telegramService.Iniciar(_archivoSeleccionado?.Ruta ?? "");
+            return Task.CompletedTask;
+        }
+
+        private void TelegramService_OnMessageReceived(long chatId, string texto)
+        {
+            if (!IsHandleCreated) return;
+            BeginInvoke(async () => await ProcesarMensajeTelegramAsync(chatId, texto));
+        }
+
+        private void TelegramService_OnCallbackReceived(long chatId, string data)
+        {
+            if (!IsHandleCreated) return;
+            BeginInvoke(async () =>
             {
-                if (!IsHandleCreated) return;
-                BeginInvoke(async () =>
-                    await ProcesarMensajeTelegramAsync(_telegramChat.Apikey, chatId, texto));
-            };
+                await _telegramService.EnviarMensajeAsync(chatId,
+                    "Tu mensaje ha sido recibido y se está procesando... Por favor espera.",
+                    TelegramSender.CancelarConfig());
+                await ProcesarMensajeTelegramAsync(chatId, data);
+            });
+        }
 
-            _telegramListener.OnCallbackReceived += (chatId, data) =>
-            {
-                if (!IsHandleCreated) return;
-                BeginInvoke(async () =>
-                {
-                    var opc = TelegramSender.CancelarConfig();
-                    await EnviarTelegramAsync(_telegramChat.Apikey, chatId,
-                        "Tu mensaje ha sido recibido y se está procesando... Por favor espera.",
-                        opc, true);
-                    await ProcesarMensajeTelegramAsync(_telegramChat.Apikey, chatId, data);
-                });
-            };
+        private void TelegramService_OnFileReceived(long chatId, string fileId, string fileName, long fileSize, string fileType)
+        {
+            if (!IsHandleCreated) return;
+            BeginInvoke(() => MostrarMensaje($"Archivo recibido: {fileName}", false));
+        }
 
-            _telegramListener.OnFileReceived += (chatId, fileId, fileName, fileSize, fileType) =>
-            {
-                BeginInvoke(() => MostrarMensaje($"Archivo recibido: {fileName}", false));
-                return Task.CompletedTask;
-            };
-
-            _telegramListener.Start();
+        private void TelegramService_OnError(string mensaje)
+        {
+            if (!IsHandleCreated) { MostrarMensaje(mensaje, false); return; }
+            BeginInvoke(() => MostrarMensaje(mensaje, false));
         }
 
         /// <summary>
         /// Procesa un mensaje entrante de Telegram con exclusión mutua (semáforo)
         /// para evitar procesamiento concurrente de dos mensajes del mismo usuario.
         /// </summary>
-        private async Task ProcesarMensajeTelegramAsync(string token, long chatId, string texto)
+        private async Task ProcesarMensajeTelegramAsync(long chatId, string texto)
         {
-            await _telegramSemaphore.WaitAsync();
+            await _telegramService.Semaphore.WaitAsync();
             try
             {
                 MostrarMensaje(texto, true);
@@ -1683,22 +1651,22 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
 
                 if (!esComando)
                 {
-                    await EnviarTelegramAsync(token, chatId,
+                    await _telegramService.EnviarMensajeAsync(chatId,
                         "Tu mensaje ha sido recibido y se está procesando... Por favor espera.",
-                        TelegramSender.CancelarConfig(), true);
+                        TelegramSender.CancelarConfig());
                 }
 
-                await EjecutarComandoOConsultaAsync(token, chatId, textoNorm, texto, true, false);
+                await EjecutarComandoOConsultaAsync(textoNorm, texto, true, false);
             }
             catch (Exception ex)
             {
                 MostrarMensaje($"Error procesando mensaje de Telegram: {ex.Message}", false);
-                await EnviarTelegramAsync(token, chatId,
-                    "Ocurrió un error procesando tu mensaje. Intenta de nuevo.", null, true);
+                await _telegramService.EnviarMensajeAsync(chatId,
+                    "Ocurrió un error procesando tu mensaje. Intenta de nuevo.");
             }
             finally
             {
-                _telegramSemaphore.Release();
+                _telegramService.Semaphore.Release();
             }
         }
 
@@ -1708,181 +1676,134 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         private object CambiarRuta_Telegram() => TelegramSender.CrearKeyboardDesdeListaRutas(_listaArchivosDisponibles);
 
         /// <summary>
-        /// Enrutador de comandos Telegram / Slack. Interpreta el texto recibido
-        /// y ejecuta la acción correspondiente, o deriva al motor IA si no es un comando.
+        /// Enrutador de comandos Telegram / Slack. Delega en el CommandRouter
+        /// con los handlers registrados en ConfigurarCommandRouter().
         /// </summary>
-        private async Task EjecutarComandoOConsultaAsync(
-            string token, long chatIdTelegram,
+        private Task EjecutarComandoOConsultaAsync(
             string textoCmd, string textoOriginal,
             bool usarTelegram = false, bool usarSlack = false)
         {
-            chatIdTelegram = _telegramChat.ChatId;
-            textoCmd = textoCmd.Trim().ToUpperInvariant();
-
-            string valor = "";
-            if (textoCmd.StartsWith('#'))
-            {
-                var (comando, val) = TelegramSender.ExtraerComandoYValor(textoCmd);
-                textoCmd = comando;
-                valor = val;
-            }
-
-            switch (textoCmd)
-            {
-                case "#CANCELAR":
-                    CancelarInstruccion();
-                    break;
-
-                case "#AGENTE":
-                    int svc = Utils.ObtenerServicio_Nombre(valor);
-                    var agente = _listaAgentes.FirstOrDefault(e => (int)e.Agente == svc);
-                    if (agente != null) comboBoxAgentes.SelectedValue = agente.ApiKey;
-                    break;
-
-                case "#MODELO":
-                    comboBoxModeloIA.Text = valor;
-                    break;
-
-                case "#RUTA":
-                    comboBoxRuta.Text = valor;
-                    break;
-
-                case "#CAMBIARAGENTE":
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        "Elije una opcion :", CambiarAgente_Telegram(), usarTelegram, usarSlack);
-                    break;
-
-                case "#CAMBIARMODELO":
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        "Elije una opcion :", CambiarModelo_Telegram(), usarTelegram, usarSlack);
-                    break;
-
-                case "#CAMBIARRUTA":
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        "Elije una opcion :", CambiarRuta_Telegram(), usarTelegram, usarSlack);
-                    break;
-
-                case "#CONFIGURACIONES":
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        "Elije una opcion :", TelegramSender.Configuraciones_Menu(), usarTelegram, usarSlack);
-                    break;
-
-                case "#ACTIVATELEGRAM":
-                    _telegramActivo = true;
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        "Se activaron los mensajes de Telegram.", null, usarTelegram, usarSlack);
-                    break;
-
-                case "#DESACTIVATELEGRAM":
-                    _telegramActivo = false;
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        "Se desactivaron los mensajes de Telegram.", null, usarTelegram, usarSlack);
-                    break;
-
-                case "#RECORDAR":
-                    _recordarTema = !_recordarTema;
-                    checkBoxRecordar.Checked = _recordarTema;
-                    string estadoRec = _recordarTema ? "activada" : "desactivada";
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        $"Opción RECORDAR TEMA {estadoRec}.", null, usarTelegram, usarSlack);
-                    break;
-
-                case "#SOLOCHAT":
-                    _soloChat = !_soloChat;
-                    checkBoxSoloChat.Checked = _soloChat;
-                    string estadoSC = _soloChat ? "activado" : "desactivado";
-                    MostrarMensaje("SE ACTIVÓ LA OPCIÓN SOLO CHAT", false);
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        $"Opción SOLO CHAT {estadoSC}.", null, usarTelegram, usarSlack);
-                    break;
-
-                case "#APIS":
-                    // [C4] CargarListaAgents solo se llama bajo demanda explícita.
-                    CargarListaAgents();
-                    string apis = string.Join("\n", _listaApisDisponibles.Select(a => $"- {a.Nombre}"));
-                    await EnvioComandoTelegramSlackAsync(token, chatIdTelegram,
-                        $"APIs disponibles:\n{apis}", null, usarTelegram, usarSlack);
-                    break;
-
-                default:
-                    if (!usarSlack)
-                    {
-                        textBoxInstrucion.Text = textoOriginal;
-                       // pictureBoxCarga.Visible = true;
-                        try
-                        {
-                            if (string.IsNullOrEmpty(textoOriginal)) return;
-                            // EjecutarMotorIAAsync ya muestra las burbujas de streaming
-                            // internamente — no hace falta llamar MostrarMensaje aquí.
-                            await EjecutarMotorIAAsync(textoOriginal, usarTelegram);
-                        }
-                        finally
-                        {
-                            //pictureBoxCarga.Visible = false;
-                            textBoxInstrucion.Text = "";
-                        }
-                    }
-                    break;
-            }
+            return _router.DespacharAsync(
+                textoCmd, textoOriginal,
+                _telegramService.Chat.ChatId,
+                usarTelegram, usarSlack);
         }
 
         /// <summary>
-        /// [C2] Helper que evita repetir el par EnviarTelegram + EnviarSlack
-        ///      en cada case del switch de comandos. Lanza ambos en paralelo
-        ///      cuando están activos.
+        /// Registra todos los handlers de comandos en el router. Cada handler
+        /// captura el estado de form / servicios que necesita vía closure.
         /// </summary>
-        private async Task EnvioComandoTelegramSlackAsync(
-            string token, long chatId,
-            string mensaje, object btns,
-            bool usarTelegram, bool usarSlack)
+        private void ConfigurarCommandRouter()
         {
-            var tareas = new List<Task>();
-
-            if (usarTelegram)
-                tareas.Add(EnviarTelegramAsync(token, chatId, mensaje, btns, true));
-
-            if (usarSlack && _slack != null)
-                tareas.Add(_slack.SendMessage(mensaje));
-
-            if (tareas.Count > 0)
-                await Task.WhenAll(tareas);
-        }
-
-        /// <summary>
-        /// Envía un mensaje al bot de Telegram. No lanza excepciones al caller;
-        /// los errores se notifican como burbuja en el chat local.
-        /// </summary>
-        private async Task EnviarTelegramAsync(
-            string token, long chatId, string mensaje,
-            object btns = null, bool usarTelegram = false)
-        {
-            if (!usarTelegram) return;
-
-            try
+            _router.Registrar("#CANCELAR", _ =>
             {
-                await TelegramSender.EnviarMensajeAsync(token, chatId, mensaje, btns);
-            }
-            catch (Exception ex)
+                CancelarInstruccion();
+                return Task.CompletedTask;
+            });
+
+            _router.Registrar("#AGENTE", ctx =>
             {
-                MostrarMensaje($"Error enviando mensaje a Telegram: {ex.Message}", false);
-            }
-        }
+                int svc = Utils.ObtenerServicio_Nombre(ctx.Valor);
+                var agente = _listaAgentes.FirstOrDefault(e => (int)e.Agente == svc);
+                if (agente != null) comboBoxAgentes.SelectedValue = agente.ApiKey;
+                return Task.CompletedTask;
+            });
 
-        private void LeerConfiguracionTelegram()
-        {
-            if (_archivoSeleccionado == null) return;
+            _router.Registrar("#MODELO", ctx =>
+            {
+                comboBoxModeloIA.Text = ctx.Valor;
+                return Task.CompletedTask;
+            });
 
-            if (string.IsNullOrEmpty(_archivoSeleccionado.Ruta))
-                _archivoSeleccionado.Ruta = RutasProyecto.ObtenerRutaScripts();
+            _router.Registrar("#RUTA", ctx =>
+            {
+                comboBoxRuta.Text = ctx.Valor;
+                return Task.CompletedTask;
+            });
 
-            if (!Directory.Exists(_archivoSeleccionado.Ruta)) return;
+            _router.Registrar("#CAMBIARAGENTE", ctx =>
+                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    "Elije una opcion :", CambiarAgente_Telegram(),
+                    ctx.UsarTelegram, ctx.UsarSlack));
 
-            var config = JsonManager.Leer<TelegramChat>(
-                RutasProyecto.ObtenerRutaListTelegram(_archivoSeleccionado.Ruta));
+            _router.Registrar("#CAMBIARMODELO", ctx =>
+                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    "Elije una opcion :", CambiarModelo_Telegram(),
+                    ctx.UsarTelegram, ctx.UsarSlack));
 
-            _telegramChat = config.Count > 0
-                ? config[0]
-                : new TelegramChat { ChatId = 0, Apikey = "" };
+            _router.Registrar("#CAMBIARRUTA", ctx =>
+                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    "Elije una opcion :", CambiarRuta_Telegram(),
+                    ctx.UsarTelegram, ctx.UsarSlack));
+
+            _router.Registrar("#CONFIGURACIONES", ctx =>
+                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    "Elije una opcion :", TelegramSender.Configuraciones_Menu(),
+                    ctx.UsarTelegram, ctx.UsarSlack));
+
+            _router.Registrar("#ACTIVATELEGRAM", ctx =>
+            {
+                _telegramActivo = true;
+                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    "Se activaron los mensajes de Telegram.", null,
+                    ctx.UsarTelegram, ctx.UsarSlack);
+            });
+
+            _router.Registrar("#DESACTIVATELEGRAM", ctx =>
+            {
+                _telegramActivo = false;
+                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    "Se desactivaron los mensajes de Telegram.", null,
+                    ctx.UsarTelegram, ctx.UsarSlack);
+            });
+
+            _router.Registrar("#RECORDAR", ctx =>
+            {
+                _recordarTema = !_recordarTema;
+                checkBoxRecordar.Checked = _recordarTema;
+                string estado = _recordarTema ? "activada" : "desactivada";
+                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    $"Opción RECORDAR TEMA {estado}.", null,
+                    ctx.UsarTelegram, ctx.UsarSlack);
+            });
+
+            _router.Registrar("#SOLOCHAT", ctx =>
+            {
+                _soloChat = !_soloChat;
+                checkBoxSoloChat.Checked = _soloChat;
+                string estado = _soloChat ? "activado" : "desactivado";
+                MostrarMensaje("SE ACTIVÓ LA OPCIÓN SOLO CHAT", false);
+                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    $"Opción SOLO CHAT {estado}.", null,
+                    ctx.UsarTelegram, ctx.UsarSlack);
+            });
+
+            _router.Registrar("#APIS", ctx =>
+            {
+                // [C4] CargarListaAgents solo se llama bajo demanda explícita.
+                CargarListaAgents();
+                string apis = string.Join("\n", _listaApisDisponibles.Select(a => $"- {a.Nombre}"));
+                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
+                    $"APIs disponibles:\n{apis}", null,
+                    ctx.UsarTelegram, ctx.UsarSlack);
+            });
+
+            // Texto libre o comando no registrado → motor IA. Slack tiene su
+            // propio path (Realizar_Peticiones_Slack), aquí solo aplica Telegram.
+            _router.RegistrarFallback(async (textoOriginal, ctx) =>
+            {
+                if (ctx.UsarSlack) return;
+
+                textBoxInstrucion.Text = textoOriginal;
+                try
+                {
+                    await EjecutarMotorIAAsync(textoOriginal, ctx.UsarTelegram);
+                }
+                finally
+                {
+                    textBoxInstrucion.Text = "";
+                }
+            });
         }
 
         #endregion
@@ -1914,7 +1835,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             string textoNorm = instruccion.Trim().ToUpperInvariant();
 
             if (textoNorm.StartsWith('#'))
-                await EjecutarComandoOConsultaAsync("", 0, textoNorm, "", false, true);
+                await EjecutarComandoOConsultaAsync(textoNorm, "", false, true);
             else
                 respuesta = await EjecutarMotorIAAsync(instruccion, false, true);
 
@@ -1930,89 +1851,74 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
 
         /// <summary>
         /// Inicia o reinicia el servicio de polling de Slack.
-        /// [C1] _slack?.Stop() con null-check corrige el NRE que ocurría en la
-        ///      primera carga cuando _slack todavía era null.
         /// [C1] El handler usa BeginInvoke en lugar de Invoke para no bloquear
         ///      el hilo de polling de Slack.
         /// </summary>
-        private async Task IniciarSlack()
+        private Task IniciarSlack()
         {
-            LeerConfiguracionSlack();
+            _slackService.CargarConfiguracion(_archivoSeleccionado?.Ruta ?? "");
 
-            if (string.IsNullOrEmpty(_slackChat?.Tokem)) return;
+            if (!_slackService.IsConfigured) return Task.CompletedTask;
 
-            // Detener instancia anterior antes de crear una nueva.
-            _slack?.Stop();
-            _slack = new SlackPollingService(_slackChat.Tokem, _slackChat.IDcanal);
+            // Resuscribir eventos al reiniciar evita acumulación de handlers.
+            _slackService.OnMessageReceived -= SlackService_OnMessageReceived;
+            _slackService.OnAviso           -= SlackService_OnAviso;
 
-            _slack.OnMessageReceived += async (msg) =>
+            _slackService.OnMessageReceived += SlackService_OnMessageReceived;
+            _slackService.OnAviso           += SlackService_OnAviso;
+
+            _slackService.Iniciar();
+            return Task.CompletedTask;
+        }
+
+        private async void SlackService_OnMessageReceived(SlackMessage msg)
+        {
+            if (msg == null || string.IsNullOrWhiteSpace(msg.Text)) return;
+            if (!string.IsNullOrEmpty(msg.BotId)) return;
+
+            // Refrescar config para tomar usuarios autorizados actualizados.
+            _slackService.CargarConfiguracion(_archivoSeleccionado?.Ruta ?? "");
+
+            if (!_slackService.Chat.usuarios.Contains(msg.User))
             {
-                if (msg == null || string.IsNullOrWhiteSpace(msg.Text)) return;
-                if (!string.IsNullOrEmpty(msg.BotId)) return;
+                await _slackService.EnviarMensajeAsync(
+                    "Tu usuario no está configurado para realizar instrucciones, " +
+                    "pide al administrador que te agregue.");
+                return;
+            }
 
-                LeerConfiguracionSlack();
+            if (_procesandoSlack) return;
 
-                if (!_slackChat.usuarios.Contains(msg.User))
+            _procesandoSlack = true;
+            try
+            {
+                string instruccion = msg.Text;
+                if (IsHandleCreated)
                 {
-                    await _slack.SendMessage(
-                        "Tu usuario no está configurado para realizar instrucciones, " +
-                        "pide al administrador que te agregue.");
-                    return;
-                }
-
-                if (_procesandoSlack) return;
-
-                _procesandoSlack = true;
-                try
-                {
-                    string instruccion = msg.Text;
-                    // [C1] BeginInvoke no bloquea el hilo de polling.
                     BeginInvoke(() =>
                     {
                         textBoxInstrucion.Text = instruccion;
                         MostrarMensaje("RECIBIDO: " + instruccion, false);
                     });
+                }
 
-                    await _slack.SendMessage("Su instrucción se recibió, espere respuesta...");
-                    await Realizar_Peticiones_Slack(instruccion);
-                }
-                catch
-                {
-                    await _slack.SendMessage("Error procesando la instrucción.");
-                }
-                finally
-                {
-                    _procesandoSlack = false;
-                }
-            };
-
-            _slack.Start();
+                await _slackService.EnviarMensajeAsync("Su instrucción se recibió, espere respuesta...");
+                await Realizar_Peticiones_Slack(instruccion);
+            }
+            catch
+            {
+                await _slackService.EnviarMensajeAsync("Error procesando la instrucción.");
+            }
+            finally
+            {
+                _procesandoSlack = false;
+            }
         }
 
-        private void LeerConfiguracionSlack()
+        private void SlackService_OnAviso(string mensaje)
         {
-            if (_archivoSeleccionado == null) return;
-
-            if (string.IsNullOrEmpty(_archivoSeleccionado.Ruta))
-                _archivoSeleccionado.Ruta = RutasProyecto.ObtenerRutaScripts();
-
-            if (!Directory.Exists(_archivoSeleccionado.Ruta)) return;
-
-            var config = JsonManager.Leer<SlackChat>(
-                RutasProyecto.ObtenerRutaSlack(_archivoSeleccionado.Ruta));
-
-            if (config.Count > 0)
-            {
-                _slackChat = config[0];
-            }
-            else
-            {
-                _slackChat = new SlackChat { Tokem = "", IDcanal = "" };
-                BeginInvoke(() =>
-                    MostrarMensaje(
-                        "No tienes configuración para Slack, configúrala para poder comunicarte.",
-                        false));
-            }
+            if (!IsHandleCreated) { MostrarMensaje(mensaje, false); return; }
+            BeginInvoke(() => MostrarMensaje(mensaje, false));
         }
 
         #endregion
@@ -2026,11 +1932,23 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             _configuracionClient.Mimodelo ??= new Modelo();
             _configuracionClient.MiArchivo ??= new Archivo();
             _configuracionClient.Miapi ??= new Api();
+            _configuracionClient.Preferencias ??= new PreferenciasMandos();
 
             _configuracionClient.Mimodelo = comboBoxAgentes.SelectedItem as Modelo ?? new Modelo();
             _configuracionClient.MiArchivo = comboBoxRuta.SelectedItem as Archivo ?? new Archivo();
             _configuracionClient.Miapi.Nombre = comboBoxModeloIA.Text;
             _configuracionClient.Miapi.key = _configuracionClient.Mimodelo.ApiKey;
+
+            _configuracionClient.Preferencias.RecordarTema              = checkBoxRecordar.Checked;
+            _configuracionClient.Preferencias.SoloChat                  = checkBoxSoloChat.Checked;
+            _configuracionClient.Preferencias.SoloRespuestaRapida       = checkBoxRapida.Checked;
+            _configuracionClient.Preferencias.TelegramActivo            = checkBoxTelegram.Checked;
+            _configuracionClient.Preferencias.EnviarConstructorTelegram = checkBoxConstructorTelegram.Checked;
+            _configuracionClient.Preferencias.EnviarArchivosTelegram    = checkBoxArchivosTelegram.Checked;
+            _configuracionClient.Preferencias.SlackActivo               = checkBoxSlack.Checked;
+            _configuracionClient.Preferencias.EnviarConstructorSlack    = checkBoxConstructorSlack.Checked;
+            _configuracionClient.Preferencias.EnviarArchivosSlack       = checkBoxArchivosSlack.Checked;
+            _configuracionClient.Preferencias.EnviarAudio               = checkBoxAudio.Checked;
 
             Utils.GuardarConfig<ConfiguracionClient>(
                 RutasProyecto.ObtenerRutaConfiguracion(), _configuracionClient);
@@ -2107,6 +2025,28 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             if (_configuracionClient.Mimodelo == null) return;
             if (!string.IsNullOrEmpty(_configuracionClient.Mimodelo.Modelos))
                 await CargarModeloSeleccionadoAsync();
+
+            if(_configuracionClient.MiArchivo != null)
+                comboBoxRuta.SelectedValue = _configuracionClient.MiArchivo.Ruta;
+
+            RestaurarPreferencias();
+        }
+
+        private void RestaurarPreferencias()
+        {
+            var pref = _configuracionClient.Preferencias;
+            if (pref == null) return;
+
+            checkBoxRecordar.Checked            = pref.RecordarTema;
+            checkBoxSoloChat.Checked            = pref.SoloChat;
+            checkBoxRapida.Checked              = pref.SoloRespuestaRapida;
+            checkBoxTelegram.Checked            = pref.TelegramActivo;
+            checkBoxConstructorTelegram.Checked = pref.EnviarConstructorTelegram;
+            checkBoxArchivosTelegram.Checked    = pref.EnviarArchivosTelegram;
+            checkBoxSlack.Checked               = pref.SlackActivo;
+            checkBoxConstructorSlack.Checked    = pref.EnviarConstructorSlack;
+            checkBoxArchivosSlack.Checked       = pref.EnviarArchivosSlack;
+            checkBoxAudio.Checked               = pref.EnviarAudio;
         }
 
         private void ConfigurarUI()
