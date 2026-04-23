@@ -19,6 +19,7 @@
 // ============================================================
 
 using OPENGIOAI.Data;
+using OPENGIOAI.Entidades;
 using OPENGIOAI.Utilerias;
 using System.Threading;
 
@@ -47,7 +48,17 @@ namespace OPENGIOAI.Agentes
             var resultado = new ResultadoPipeline();
 
             // Telemetría de tokens: abrir bucket por instrucción completa.
-            ConsumoTokensTracker.Instancia.IniciarEjecucion(instruccion);
+            string instruccionId = ConsumoTokensTracker.Instancia.IniciarEjecucion(instruccion);
+
+            // Tracing (Fase 1A): correlación 1-a-1 con el bucket de tokens.
+            TracerEjecucion.Instancia.IniciarTrace(
+                instruccionId, instruccion, ctx.Modelo, ctx.Servicio.ToString(), ctx.RutaArchivo);
+
+            using var spanPipeline = TracerEjecucion.Instancia.AbrirSpan(
+                SpanTipo.Pipeline, "Pipeline 4-Agentes");
+            spanPipeline.RegistrarInput(instruccion);
+            spanPipeline.AgregarAtributo("modelo", ctx.Modelo);
+            spanPipeline.AgregarAtributo("servicio", ctx.Servicio.ToString());
 
             try
             {
@@ -57,7 +68,11 @@ namespace OPENGIOAI.Agentes
                 onProgreso?.Invoke("║  AGENTE 1: PLANIFICADOR               ║");
                 onProgreso?.Invoke("╚══════════════════════════════════════╝");
 
+                var spanPlan = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Planificador");
+                spanPlan.RegistrarInput(instruccion);
                 string planTexto = await EjecutarAgentePlanificadorAsync(instruccion, ctx, ct);
+                spanPlan.RegistrarOutput(planTexto);
+                spanPlan.Dispose();
                 resultado.PlanGenerado = planTexto;
                 resultado.RegistrarEvento($"AGENTE 1 completado. Plan: {Truncar(planTexto, 100)}");
                 onProgreso?.Invoke($"✓ Plan generado:\n{planTexto}");
@@ -70,8 +85,12 @@ namespace OPENGIOAI.Agentes
                 onProgreso?.Invoke("║  AGENTE 2: EJECUTOR DE CÓDIGO         ║");
                 onProgreso?.Invoke("╚══════════════════════════════════════╝");
 
+                var spanEjec = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Ejecutor");
+                spanEjec.RegistrarInput(planTexto);
                 string codigoGenerado = await EjecutarAgenteEjecutorAsync(
                     instruccion, planTexto, ctx, ct);
+                spanEjec.RegistrarOutput(codigoGenerado);
+                spanEjec.Dispose();
                 resultado.CodigoEjecutado = codigoGenerado;
                 resultado.RegistrarEvento($"AGENTE 2 completado. Código: {Truncar(codigoGenerado, 100)}");
                 onProgreso?.Invoke($"✓ Código/acciones generadas:\n{codigoGenerado}");
@@ -84,8 +103,12 @@ namespace OPENGIOAI.Agentes
                 onProgreso?.Invoke("║  AGENTE 3: VERIFICADOR DE RESULTADOS  ║");
                 onProgreso?.Invoke("╚══════════════════════════════════════╝");
 
+                var spanVerif = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Verificador");
+                spanVerif.RegistrarInput(codigoGenerado);
                 string verificacion = await EjecutarAgenteVerificadorAsync(
                     instruccion, planTexto, codigoGenerado, ctx, ct);
+                spanVerif.RegistrarOutput(verificacion);
+                spanVerif.Dispose();
                 resultado.ResultadoVerificacion = verificacion;
                 resultado.RegistrarEvento($"AGENTE 3 completado. Verificación: {Truncar(verificacion, 100)}");
                 onProgreso?.Invoke($"✓ Verificación:\n{verificacion}");
@@ -98,8 +121,12 @@ namespace OPENGIOAI.Agentes
                 onProgreso?.Invoke("║  AGENTE 4: FORMATEADOR DE SALIDA      ║");
                 onProgreso?.Invoke("╚══════════════════════════════════════╝");
 
+                var spanFmt = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Formateador");
+                spanFmt.RegistrarInput(verificacion);
                 string salidaFinal = await EjecutarAgenteFormateadorAsync(
                     instruccion, planTexto, codigoGenerado, verificacion, ctx, ct);
+                spanFmt.RegistrarOutput(salidaFinal);
+                spanFmt.Dispose();
                 resultado.SalidaFormateada = salidaFinal;
                 resultado.RegistrarEvento("AGENTE 4 completado. Pipeline finalizado.");
                 onProgreso?.Invoke($"\n{'═',40}");
@@ -121,16 +148,23 @@ namespace OPENGIOAI.Agentes
             {
                 resultado.RegistrarEvento("Pipeline cancelado por el usuario.");
                 resultado.SalidaFormateada = "Pipeline cancelado.";
+                spanPipeline.MarcarCancelado();
+                try { TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Cancelado); } catch { }
             }
             catch (Exception ex)
             {
                 resultado.RegistrarEvento($"Error en pipeline: {ex.Message}");
                 resultado.SalidaFormateada = $"Error en pipeline: {ex.Message}";
                 onProgreso?.Invoke($"❌ Error: {ex.Message}");
+                spanPipeline.MarcarError(ex.Message);
+                try { TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Error, ex.Message); } catch { }
             }
             finally
             {
                 try { ConsumoTokensTracker.Instancia.FinalizarEjecucion(); } catch { }
+                spanPipeline.RegistrarOutput(resultado.SalidaFormateada);
+                // Si no pasó por catch (camino feliz), cerrar el trace normalmente.
+                try { TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Ok); } catch { }
             }
 
             return resultado;

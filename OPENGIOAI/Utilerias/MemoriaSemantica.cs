@@ -50,6 +50,10 @@ namespace OPENGIOAI.Utilerias
             string instruccion,
             CancellationToken ct = default)
         {
+            // Tracing: un span por lookup RAG (no-op si no hay trace activo).
+            using var span = TracerEjecucion.Instancia.AbrirSpan(
+                OPENGIOAI.Entidades.SpanTipo.Memoria, "RAG lookup");
+            span.RegistrarInput(instruccion);
             try
             {
                 if (string.IsNullOrWhiteSpace(rutaWorkspace)) return "";
@@ -109,7 +113,11 @@ namespace OPENGIOAI.Utilerias
 
                 if (resultados.Count == 0) return "";
 
-                return FormatearBloqueMarkdown(resultados);
+                string bloque = FormatearBloqueMarkdown(resultados);
+                span.AgregarAtributo("top_k", topK.ToString());
+                span.AgregarAtributo("hits", resultados.Count.ToString());
+                span.RegistrarOutput(bloque);
+                return bloque;
             }
             catch
             {

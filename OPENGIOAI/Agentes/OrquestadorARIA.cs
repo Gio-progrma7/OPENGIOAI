@@ -145,7 +145,20 @@ namespace OPENGIOAI.Agentes
             // ── Telemetría de tokens: abrir bucket de ejecución ──────────────
             // Cada llamada al LLM que haga cualquier fase del pipeline
             // quedará agrupada bajo este InstruccionId.
-            ConsumoTokensTracker.Instancia.IniciarEjecucion(instruccion);
+            string instruccionId = ConsumoTokensTracker.Instancia.IniciarEjecucion(instruccion);
+
+            // ── Tracing (Fase 1A): abrir trace correlacionado con el InstruccionId ──
+            TracerEjecucion.Instancia.IniciarTrace(
+                instruccionId, instruccion, _modelo, _servicio.ToString(), _ruta);
+
+            // Span raíz que cubre todo el pipeline. Se cierra en el finally
+            // tras FinalizarTrace, así la UI ve todos los spans hijos cerrados
+            // cuando recibe el evento OnTraceFinalizado.
+            using var spanPipeline = TracerEjecucion.Instancia.AbrirSpan(
+                SpanTipo.Pipeline, "ARIA Pipeline");
+            spanPipeline.RegistrarInput(instruccion);
+            spanPipeline.AgregarAtributo("modelo", _modelo);
+            spanPipeline.AgregarAtributo("servicio", _servicio.ToString());
 
             try
             {
@@ -153,6 +166,8 @@ namespace OPENGIOAI.Agentes
             // ── FASE 1: ANALISTA (en paralelo con pre-carga de contexto) ──────
             OnFaseIniciada?.Invoke(FaseAgente.Analista, "Analizando tu instrucción...");
 
+            var spanAnalista = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Analista");
+            spanAnalista.RegistrarInput(instruccion);
             var taskAnalista    = FaseAnalistaAsync(instruccion, ct);
             // Pre-build del contexto COMPLETO para el Constructor.
             // Se lanza en paralelo con el Analista para ocultar latencia de I/O.
@@ -166,6 +181,9 @@ namespace OPENGIOAI.Agentes
             await Task.WhenAll(taskAnalista, taskCtxPrebuild);
 
             string planSimple = taskAnalista.Result;
+            spanAnalista.RegistrarOutput(planSimple);
+            spanAnalista.Dispose();
+
             OnFaseIniciada?.Invoke(FaseAgente.Analista, planSimple);
             OnFaseCompletada?.Invoke(FaseAgente.Analista, true);
 
@@ -177,6 +195,8 @@ namespace OPENGIOAI.Agentes
 
             // ── FASE 2: CONSTRUCTOR ──────────────────────────────────────────
             OnFaseIniciada?.Invoke(FaseAgente.Constructor, "Trabajando en ello...");
+            var spanConstructor = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Constructor");
+            spanConstructor.RegistrarInput(instruccion);
             var (codigoGenerado, stdoutConstructor) = await FaseConstructorAsync(instruccion, ct);
             OnFaseCompletada?.Invoke(FaseAgente.Constructor, true);
 
@@ -214,6 +234,10 @@ namespace OPENGIOAI.Agentes
 
             // Notificar a la UI con la salida real (para reenvío opcional por Telegram, etc.)
             OnConstructorCompletado?.Invoke(salidaRawConstructor);
+            spanConstructor.AgregarAtributo("lineas_codigo", codigoGenerado.Split('\n').Length.ToString());
+            spanConstructor.RegistrarOutput(salidaRawConstructor);
+            spanConstructor.Dispose();
+
             log.AppendLine("### ⚙️ Constructor");
             log.AppendLine($"- Código: {codigoGenerado.Split('\n').Length} líneas");
             log.AppendLine($"- Salida raw: `{Truncar(salidaRawConstructor, 400)}`");
@@ -224,12 +248,17 @@ namespace OPENGIOAI.Agentes
             // ── ANALIZADOR DE SALIDA ─────────────────────────────────────────
             OnFaseIniciada?.Invoke(FaseAgente.Guardian, "Verificando el resultado...");
 
+            var spanGuardian = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Guardian");
+            spanGuardian.RegistrarInput(codigoGenerado);
+
             var (exitoRapido, salidaNormalizada) =
                 await AnalizarSalidaRapidoAsync(instruccion, codigoGenerado, ct);
 
             string resultadoFinal;
             if (exitoRapido)
             {
+                spanGuardian.AgregarAtributo("via", "rapido");
+                spanGuardian.AgregarAtributo("correcciones", "0");
                 OnFaseCompletada?.Invoke(FaseAgente.Guardian, true);
                 resultadoFinal = salidaNormalizada;
                 log.AppendLine("### 🛡️ Guardián");
@@ -239,6 +268,7 @@ namespace OPENGIOAI.Agentes
             }
             else
             {
+                spanGuardian.AgregarAtributo("via", "correccion");
                 resultadoFinal = await FaseGuardianAsync(instruccion, codigoGenerado, ct);
                 OnFaseCompletada?.Invoke(FaseAgente.Guardian, true);
                 log.AppendLine("### 🛡️ Guardián");
@@ -246,13 +276,19 @@ namespace OPENGIOAI.Agentes
                 log.AppendLine($"- Resultado corregido: `{Truncar(resultadoFinal, 400)}`");
                 log.AppendLine();
             }
+            spanGuardian.RegistrarOutput(resultadoFinal);
+            spanGuardian.Dispose();
 
             ct.ThrowIfCancellationRequested();
 
             // ── FASE 4: COMUNICADOR ──────────────────────────────────────────
             OnFaseIniciada?.Invoke(FaseAgente.Comunicador, "Preparando tu respuesta...");
+            var spanComunicador = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Comunicador");
+            spanComunicador.RegistrarInput(resultadoFinal);
             string respuesta = await FaseComunicadorAsync(
                 instruccion, codigoGenerado, resultadoFinal, ct);
+            spanComunicador.RegistrarOutput(respuesta);
+            spanComunicador.Dispose();
             OnFaseCompletada?.Invoke(FaseAgente.Comunicador, true);
 
             var duracion = DateTime.UtcNow - inicioTotal;
@@ -271,13 +307,28 @@ namespace OPENGIOAI.Agentes
             // Si falla, el usuario ni se entera — best-effort por diseño.
             _ = DispararMemoristaAsync(instruccion, respuesta);
 
+            spanPipeline.RegistrarOutput(respuesta);
             return respuesta;
+            }
+            catch (OperationCanceledException)
+            {
+                spanPipeline.MarcarCancelado();
+                TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Cancelado);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                spanPipeline.MarcarError(ex.Message);
+                TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Error, ex.Message);
+                throw;
             }
             finally
             {
                 // Cerrar el bucket de telemetría — la UI recibe el evento
                 // OnEjecucionFinalizada con el total agregado de la instrucción.
                 try { ConsumoTokensTracker.Instancia.FinalizarEjecucion(); } catch { }
+                // Si no pasó por catch (camino feliz), cerrar el trace normalmente.
+                try { TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Ok); } catch { }
             }
         }
 

@@ -344,15 +344,41 @@ namespace OPENGIOAI.Data
 
         // internal para que AgentePlanificador y PipelineMultiAgente puedan usarlo
         // sin duplicar la lógica de enrutamiento por proveedor.
-        internal static Task<string> ObtenerRespuestaLLMAsync(
+        internal static async Task<string> ObtenerRespuestaLLMAsync(
             string instruccion, AgentContext ctx, CancellationToken ct)
         {
-            return ctx.Servicio switch
+            // Tracing (Fase 1A): cada hit al LLM es un span — se cuelga de la fase
+            // activa (Analista/Constructor/Planificador/...) vía AsyncLocal.
+            // Si no hay trace activo, AbrirSpan devuelve un no-op transparente.
+            using var span = OPENGIOAI.Utilerias.TracerEjecucion.Instancia.AbrirSpan(
+                OPENGIOAI.Entidades.SpanTipo.LlamadaLLM,
+                $"LLM:{ctx.Servicio}/{(string.IsNullOrEmpty(ctx.Modelo) ? "default" : ctx.Modelo)}");
+            span.AgregarAtributo("servicio", ctx.Servicio.ToString());
+            span.AgregarAtributo("modelo", ctx.Modelo);
+            span.AgregarAtributo("fase", ctx.NombreFase);
+            span.RegistrarInput(instruccion);
+
+            try
             {
-                Servicios.Ollama      => ObtenerRespuestaOllamaAsync(instruccion, ctx, ct),
-                Servicios.Antigravity => ObtenerRespuestaAntigravityAsync(instruccion, ctx, ct),
-                _                     => ObtenerRespuestaAPIAsync(instruccion, ctx, ct)
-            };
+                string resultado = ctx.Servicio switch
+                {
+                    Servicios.Ollama      => await ObtenerRespuestaOllamaAsync(instruccion, ctx, ct),
+                    Servicios.Antigravity => await ObtenerRespuestaAntigravityAsync(instruccion, ctx, ct),
+                    _                     => await ObtenerRespuestaAPIAsync(instruccion, ctx, ct)
+                };
+                span.RegistrarOutput(resultado);
+                return resultado;
+            }
+            catch (OperationCanceledException)
+            {
+                span.MarcarCancelado();
+                throw;
+            }
+            catch (Exception ex)
+            {
+                span.MarcarError(ex.Message);
+                throw;
+            }
         }
 
         // =====================================================================

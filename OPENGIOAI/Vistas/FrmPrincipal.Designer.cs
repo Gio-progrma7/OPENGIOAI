@@ -96,9 +96,9 @@
             btnAutomatizacion.TextAlign = ContentAlignment.MiddleLeft;
             btnAutomatizacion.UseVisualStyleBackColor = true;
             btnAutomatizacion.Click += btnAutomatizacion_Click;
-            //
+            // 
             // btnPromts
-            //
+            // 
             btnPromts.FlatAppearance.BorderColor = Color.RoyalBlue;
             btnPromts.FlatAppearance.BorderSize = 0;
             btnPromts.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 192, 255);
@@ -110,7 +110,7 @@
             btnPromts.Name = "btnPromts";
             btnPromts.Size = new Size(203, 41);
             btnPromts.TabIndex = 12;
-            btnPromts.Text = "🧠  Prompts";
+            btnPromts.Text = "\U0001f9e0  Prompts";
             btnPromts.TextAlign = ContentAlignment.MiddleLeft;
             btnPromts.UseVisualStyleBackColor = true;
             btnPromts.Click += btnPromts_Click;
@@ -148,7 +148,7 @@
             btnMultiples.ForeColor = Color.FromArgb(148, 163, 184);
             btnMultiples.Location = new Point(0, 227);
             btnMultiples.Name = "btnMultiples";
-            btnMultiples.Size = new Size(203, 41);
+            btnMultiples.Size = new Size(203, 21);
             btnMultiples.TabIndex = 8;
             btnMultiples.Text = "Multiples Agentes";
             btnMultiples.UseVisualStyleBackColor = true;
@@ -252,9 +252,9 @@
             btnRutas.TextAlign = ContentAlignment.MiddleLeft;
             btnRutas.UseVisualStyleBackColor = true;
             btnRutas.Click += btnRutas_Click;
-            //
+            // 
             // btnApis
-            //
+            // 
             btnApis.FlatAppearance.BorderColor = Color.RoyalBlue;
             btnApis.FlatAppearance.BorderSize = 0;
             btnApis.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 192, 255);
@@ -270,9 +270,9 @@
             btnApis.TextAlign = ContentAlignment.MiddleLeft;
             btnApis.UseVisualStyleBackColor = true;
             btnApis.Click += btnApis_Click;
-            //
+            // 
             // btnComunicadores
-            //
+            // 
             btnComunicadores.FlatAppearance.BorderColor = Color.RoyalBlue;
             btnComunicadores.FlatAppearance.BorderSize = 0;
             btnComunicadores.FlatAppearance.MouseDownBackColor = Color.FromArgb(192, 192, 255);
@@ -280,15 +280,18 @@
             btnComunicadores.FlatStyle = FlatStyle.Flat;
             btnComunicadores.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnComunicadores.ForeColor = Color.FromArgb(148, 163, 184);
-            btnComunicadores.Location = new Point(0, 408);
-            btnComunicadores.Name = "btnComunicadores"; 
+            // Bugfix: Y=408 colisionaba con btnPromts (mismo Point).
+            // El z-order ponía btnPromts delante → btnComunicadores invisible.
+            // Relocado al slot 227 (antes ocupado por btnMultiples invisible).
+            btnComunicadores.Location = new Point(0, 227);
+            btnComunicadores.Name = "btnComunicadores";
             btnComunicadores.Size = new Size(203, 41);
             btnComunicadores.TabIndex = 12;
             btnComunicadores.Text = "📡  Comunicadores";
             btnComunicadores.TextAlign = ContentAlignment.MiddleLeft;
             btnComunicadores.UseVisualStyleBackColor = true;
             btnComunicadores.Click += btnComunicadores_Click;
-            //
+            // 
             // btnMando
             // 
             btnMando.FlatAppearance.BorderColor = Color.RoyalBlue;

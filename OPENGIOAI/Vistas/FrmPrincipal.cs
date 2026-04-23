@@ -28,6 +28,7 @@ namespace OPENGIOAI.Vistas
             AplicarTema();
             CargarDatosInicio();
             btnComunicadores.Visible = true;
+            btnComunicadores.BringToFront(); // Garantiza z-order al frente tras el fix de Y=408.
            // AgregarBotonesAgentesAvanzados();
             // pnlMenu se queda corto con los botones nuevos del Fase A/B/C.
             // Habilitamos scroll vertical por si la ventana es chica — así
@@ -39,6 +40,27 @@ namespace OPENGIOAI.Vistas
             AgregarBotonPatrones();     // relocado a (0, 640)
             AgregarBotonTokens();       // relocado a (0, 685)
             AgregarBotonEmbeddings();   // relocado a (0, 730)
+            AgregarBotonTraces();       // Fase 1A → (0, 775)
+        }
+
+        /// <summary>
+        /// Añade el botón "🔬 Traces" — Fase 1A del sistema de observabilidad.
+        /// Abre el panel flotante (TopMost-style) de traces: lista de
+        /// ejecuciones del día, árbol de spans y detalles de cada span.
+        /// Al igual que Tokens, es flotante — así el usuario puede observar
+        /// un pipeline en vivo mientras trabaja en cualquier otra pantalla.
+        /// </summary>
+        private void AgregarBotonTraces()
+        {
+            var btnTraces = CrearBotonMenu("🔬  Traces", new Point(0, 775));
+            btnTraces.Click += btnTraces_Click;
+            pnlMenu.Controls.Add(btnTraces);
+            btnTraces.BringToFront();
+        }
+
+        private void btnTraces_Click(object sender, EventArgs e)
+        {
+            FrmTraces.MostrarOTraerAlFrente(this);
         }
 
         /// <summary>

@@ -206,5 +206,39 @@ namespace OPENGIOAI.Utilerias
             string appDir = AppDomain.CurrentDomain.BaseDirectory;
             return Path.Combine(appDir, "EmbeddingsConfig.json");
         }
+
+        // ══════════════════ Traces (Fase 1A) ══════════════════
+        //
+        // Tracing estructurado por ejecución. Persistencia JSONL
+        // append-only por día, coherente con el resto del proyecto:
+        //
+        //   {AppDir}/Traces/YYYY-MM-DD.jsonl       ← un trace por línea
+        //   {AppDir}/Traces/YYYY-MM-DD.index.json  ← índice ligero
+        //
+        // Vive en AppDir (no por workspace): los traces son una
+        // vista global de toda la sesión, independiente de qué
+        // carpeta de trabajo se use.
+
+        public static string ObtenerRutaCarpetaTraces()
+        {
+            string carpeta = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Traces");
+            if (!Directory.Exists(carpeta))
+                Directory.CreateDirectory(carpeta);
+            return carpeta;
+        }
+
+        public static string ObtenerRutaTracesDelDia(DateTime fecha)
+        {
+            return Path.Combine(
+                ObtenerRutaCarpetaTraces(),
+                fecha.ToString("yyyy-MM-dd") + ".jsonl");
+        }
+
+        public static string ObtenerRutaTracesIndexDelDia(DateTime fecha)
+        {
+            return Path.Combine(
+                ObtenerRutaCarpetaTraces(),
+                fecha.ToString("yyyy-MM-dd") + ".index.json");
+        }
     }
 }
