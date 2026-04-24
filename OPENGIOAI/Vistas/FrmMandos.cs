@@ -140,12 +140,8 @@ namespace OPENGIOAI.Vistas
         // ── Control de reintentos del Guardián ────────────────────────────────
         private NumericUpDown _nudReintentos = null!;
 
-        // ── Throttle de streaming (evita inundar el hilo UI) ──────────────────
-        // Agrupa las actualizaciones de la burbuja en intervalos de 120 ms.
-        private readonly System.Windows.Forms.Timer _timerStreaming = new() { Interval = 120 };
-        private volatile bool _streamingPendiente = false;
-        private BurbujaChat? _burbujaStreamingActual;
-        private string _streamingTextoActual = "";
+        // ── Throttle de streaming (agrupa updates de burbujas a ~8 fps) ───────
+        private readonly ChatStreamingThrottleService _streaming;
 
         // ── Modelos de datos ──────────────────────────────────────────────────
         private ConfiguracionClient _configuracionClient;
@@ -165,20 +161,8 @@ namespace OPENGIOAI.Vistas
             InitializeComponent();
             _configuracionClient = config ?? throw new ArgumentNullException(nameof(config));
             _broadcast = new BroadcastService(_telegramService, _slackService);
+            _streaming = new ChatStreamingThrottleService(this);
             ConfigurarCommandRouter();
-
-            // Timer de throttle: actualiza la burbuja de streaming a ~8 fps.
-            _timerStreaming.Tick += (_, _) =>
-            {
-                if (!_streamingPendiente) return;
-                _streamingPendiente = false;
-
-                if (_burbujaStreamingActual == null || _burbujaStreamingActual.IsDisposed) return;
-                _burbujaStreamingActual.ActualizarTexto(_streamingTextoActual);
-
-                if (_burbujaStreamingActual.Parent is ScrollableControl sc)
-                    sc.ScrollControlIntoView(_burbujaStreamingActual);
-            };
         }
 
         // =====================================================================
@@ -232,8 +216,7 @@ namespace OPENGIOAI.Vistas
         private void FrmMandos_FormClosing(object sender, FormClosingEventArgs e)
         {
             // [C1] Cancelar cualquier petición en vuelo al cerrar el formulario.
-            _timerStreaming.Stop();
-            _timerStreaming.Dispose();
+            _streaming.Dispose();
             CancelarInstruccion();
             _telegramService.Detener();
             _slackService.Detener();
@@ -687,8 +670,8 @@ namespace OPENGIOAI.Vistas
                 if (fase == FaseAgente.Constructor ||
                     fase == FaseAgente.Guardian)
                 {
-                    FinalizarStreamingThrottle(
-                        _bufferScript.Length > 0 ? _bufferScript.ToString().TrimEnd() : null!);
+                    _streaming.Finalizar(
+                        _bufferScript.Length > 0 ? _bufferScript.ToString().TrimEnd() : null);
                 }
             };
 
@@ -812,12 +795,12 @@ namespace OPENGIOAI.Vistas
 
             // Flush final del Comunicador — pasar el buffer acumulado para garantizar
             // que la burbuja muestre el texto aunque el timer aún no haya disparado.
-            // Bug: FinalizarStreamingThrottle(null!) dejaba la burbuja vacía cuando
-            // el streaming terminaba antes del primer tick de 120ms.
-            string textoFinalComunicador = _bufferScript.Length > 0
+            // Bug: pasar null dejaba la burbuja vacía cuando el streaming terminaba
+            // antes del primer tick de 120ms.
+            string? textoFinalComunicador = _bufferScript.Length > 0
                 ? _bufferScript.ToString().TrimEnd()
-                : null!;
-            FinalizarStreamingThrottle(textoFinalComunicador);
+                : null;
+            _streaming.Finalizar(textoFinalComunicador);
 
             // ── Registrar en ventana de contexto y difundir ───────────────────
             _ventana.Agregar(instruccionOriginal, respuestaFinal);
@@ -891,9 +874,8 @@ namespace OPENGIOAI.Vistas
             pnlChat.Controls.Add(_burbujaScriptActual);
             pnlChat.ScrollControlIntoView(_burbujaScriptActual);
 
-            _burbujaStreamingActual = _burbujaScriptActual;
             _burbujaFaseActual = null; // Próximo OnFaseIniciada de este agente crea nueva burbuja
-            _timerStreaming.Start();
+            _streaming.Apuntar(_burbujaScriptActual);
         }
 
         /// <summary>
@@ -903,9 +885,10 @@ namespace OPENGIOAI.Vistas
         private void AgregarTokenComunicador(string token)
         {
             // Si la burbuja de streaming no pertenece al Comunicador, crear una nueva
-            if (_burbujaStreamingActual == null ||
-                _burbujaStreamingActual.IsDisposed ||
-                _burbujaStreamingActual.Tag?.ToString() != FaseAgente.Comunicador.ToString())
+            var actual = _streaming.BurbujaActual;
+            if (actual == null ||
+                actual.IsDisposed ||
+                actual.Tag?.ToString() != FaseAgente.Comunicador.ToString())
             {
                 if (InvokeRequired)
                 {
@@ -916,8 +899,7 @@ namespace OPENGIOAI.Vistas
             }
 
             _bufferScript.Append(token);
-            _streamingTextoActual = _bufferScript.ToString();
-            _streamingPendiente   = true;
+            _streaming.AcumularTexto(_bufferScript.ToString());
         }
 
         /// <summary>
@@ -939,8 +921,7 @@ namespace OPENGIOAI.Vistas
             pnlChat.Controls.Add(burbuja);
             pnlChat.ScrollControlIntoView(burbuja);
 
-            _burbujaStreamingActual = burbuja;
-            _timerStreaming.Start();
+            _streaming.Apuntar(burbuja);
         }
 
         // ── Utilidades de presentación por fase ───────────────────────────────
@@ -1009,9 +990,7 @@ namespace OPENGIOAI.Vistas
             pnlChat.Controls.Add(_burbujaScriptActual);
             pnlChat.ScrollControlIntoView(_burbujaScriptActual);
 
-            // Activar throttle sobre esta burbuja
-            _burbujaStreamingActual = _burbujaScriptActual;
-            _timerStreaming.Start();
+            _streaming.Apuntar(_burbujaScriptActual);
         }
 
         /// <summary>
@@ -1022,45 +1001,7 @@ namespace OPENGIOAI.Vistas
         {
             if (_burbujaScriptActual == null || _burbujaScriptActual.IsDisposed) return;
             _bufferScript.AppendLine(linea);
-            _streamingTextoActual = _bufferScript.ToString().TrimEnd();
-            _streamingPendiente = true;
-        }
-
-        // ─────────────────────────────────────────────────────────────────────
-        //  HELPERS DE THROTTLE STREAMING
-        // ─────────────────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Apunta el throttle a una nueva burbuja y activa el timer.
-        /// Llamar desde el hilo UI.
-        /// </summary>
-        private void IniciarStreamingThrottle(BurbujaChat burbuja)
-        {
-            _burbujaStreamingActual = burbuja;
-            _streamingTextoActual = "";
-            _streamingPendiente = false;
-            _timerStreaming.Start();
-        }
-
-        /// <summary>
-        /// Detiene el timer, realiza la última actualización pendiente y hace scroll.
-        /// Llamar desde el hilo UI (o con InvokeRequired).
-        /// </summary>
-        private void FinalizarStreamingThrottle(string textoFinal)
-        {
-            if (InvokeRequired) { Invoke(() => FinalizarStreamingThrottle(textoFinal)); return; }
-
-            _timerStreaming.Stop();
-            _streamingPendiente = false;
-
-            if (_burbujaStreamingActual == null || _burbujaStreamingActual.IsDisposed) return;
-            if (!string.IsNullOrEmpty(textoFinal))
-                _burbujaStreamingActual.ActualizarTexto(textoFinal);
-
-            if (_burbujaStreamingActual.Parent is ScrollableControl sc)
-                sc.ScrollControlIntoView(_burbujaStreamingActual);
-
-            _burbujaStreamingActual = null;
+            _streaming.AcumularTexto(_bufferScript.ToString().TrimEnd());
         }
 
         /// <summary>
@@ -1097,9 +1038,9 @@ namespace OPENGIOAI.Vistas
                 onSalidaScript: linea => AgregarLineaScriptEnVivo(linea));
 
             // Flush final de la burbuja de Agent 2
-            FinalizarStreamingThrottle(_bufferScript.Length > 0
+            _streaming.Finalizar(_bufferScript.Length > 0
                 ? _bufferScript.ToString().TrimEnd()
-                : null!);
+                : null);
 
             // El resultado definitivo viene de respuesta.txt (Agent 2 lo escribe ahí)
             return Utils.LimpiarRespuesta(ObtenerContextoChat(_archivoSeleccionado.Ruta));
@@ -1121,7 +1062,7 @@ namespace OPENGIOAI.Vistas
             };
             pnlChat.Controls.Add(_burbujaScriptActual);
             pnlChat.ScrollControlIntoView(_burbujaScriptActual);
-            IniciarStreamingThrottle(_burbujaScriptActual);
+            _streaming.Apuntar(_burbujaScriptActual);
         }
 
         /// <summary>
