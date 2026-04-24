@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using OPENGIOAI.ServiciosSlack;
 using OPENGIOAI.ServiciosTelegram;
 using System.Collections.Generic;
@@ -13,11 +14,16 @@ namespace OPENGIOAI.Utilerias
     {
         private readonly TelegramService _telegram;
         private readonly SlackChannelService _slack;
+        private readonly ILogger<BroadcastService> _logger;
 
-        public BroadcastService(TelegramService telegram, SlackChannelService slack)
+        public BroadcastService(
+            TelegramService telegram,
+            SlackChannelService slack,
+            ILogger<BroadcastService> logger)
         {
             _telegram = telegram;
             _slack = slack;
+            _logger = logger;
         }
 
         /// <summary>
@@ -38,7 +44,11 @@ namespace OPENGIOAI.Utilerias
                 tareas.Add(_slack.EnviarMensajeAsync(mensaje));
 
             if (tareas.Count > 0)
+            {
+                _logger.LogDebug("Broadcast: {Canales} canal(es), len={Len}",
+                    tareas.Count, mensaje?.Length ?? 0);
                 await Task.WhenAll(tareas);
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using OPENGIOAI.Data;
+﻿using Microsoft.Extensions.DependencyInjection;
+using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
@@ -18,12 +19,13 @@ namespace OPENGIOAI.Vistas
     public partial class FrmPrincipal : Form
     {
 
-        private string RutaTrabajo = "";
         private ConfiguracionClient Miconfiguracion = new ConfiguracionClient();
         private readonly AutomatizacionScheduler _scheduler = new();
+        private readonly IServiceProvider _services;
 
-        public FrmPrincipal()
+        public FrmPrincipal(IServiceProvider services)
         {
+            _services = services;
             InitializeComponent();
             AplicarTema();
             CargarDatosInicio();
@@ -171,7 +173,9 @@ namespace OPENGIOAI.Vistas
 
         private void btnMando_Click(object sender, EventArgs e)
         {
-            FrmMandos frmMandos = new FrmMandos(Miconfiguracion);
+            // ActivatorUtilities mezcla los servicios registrados en el container
+            // con el parámetro runtime (Miconfiguracion) que varía por sesión.
+            var frmMandos = ActivatorUtilities.CreateInstance<FrmMandos>(_services, Miconfiguracion);
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmMandos);
         }
 
@@ -195,7 +199,7 @@ namespace OPENGIOAI.Vistas
 
         private void btnMultiples_Click(object sender, EventArgs e)
         {
-            FrmMultopleAngent frmAgentes = new FrmMultopleAngent();
+            var frmAgentes = ActivatorUtilities.CreateInstance<FrmMultopleAngent>(_services);
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmAgentes);
         }
         private void btnAutomatizacion_Click(object sender, EventArgs e)

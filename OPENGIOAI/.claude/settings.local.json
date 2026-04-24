@@ -39,7 +39,9 @@
       "Bash(dd if=2026-04-20.jsonl bs=1 skip=463230 count=9521)",
       "Bash(dd if=2026-04-20.jsonl bs=1 skip=436885 count=8961)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(tasklist //FI \"IMAGENAME eq OPENGIOAI.exe\" //FI \"IMAGENAME eq devenv.exe\")",
+      "Bash(dotnet add *)"
     ]
   }
 }

@@ -240,5 +240,24 @@ namespace OPENGIOAI.Utilerias
                 ObtenerRutaCarpetaTraces(),
                 fecha.ToString("yyyy-MM-dd") + ".index.json");
         }
+
+        // ══════════════════ Logs estructurados (Fase 3) ══════════════════
+        //
+        // Serilog escribe un archivo rolling por día dentro de {AppDir}/Logs.
+        // El patrón es el mismo que Traces: carpeta global (no por workspace)
+        // porque los logs son una vista de toda la sesión.
+
+        public static string ObtenerRutaCarpetaLogs()
+        {
+            string carpeta = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+            if (!Directory.Exists(carpeta))
+                Directory.CreateDirectory(carpeta);
+            return carpeta;
+        }
+
+        public static string ObtenerRutaPatronLogs()
+        {
+            return Path.Combine(ObtenerRutaCarpetaLogs(), "app-.log");
+        }
     }
 }

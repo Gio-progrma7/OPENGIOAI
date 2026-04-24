@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Utilerias;
 using System;
@@ -17,8 +18,14 @@ namespace OPENGIOAI.ServiciosSlack
     /// </summary>
     public class SlackChannelService
     {
+        private readonly ILogger<SlackChannelService> _logger;
         private SlackPollingService? _polling;
         private SlackChat _config = new() { Tokem = "", IDcanal = "" };
+
+        public SlackChannelService(ILogger<SlackChannelService> logger)
+        {
+            _logger = logger;
+        }
 
         public SlackChat Chat => _config;
         public bool IsConfigured => !string.IsNullOrEmpty(_config?.Tokem);
@@ -57,12 +64,17 @@ namespace OPENGIOAI.ServiciosSlack
         /// </summary>
         public bool Iniciar()
         {
-            if (!IsConfigured) return false;
+            if (!IsConfigured)
+            {
+                _logger.LogWarning("Iniciar() abortado: Slack no está configurado");
+                return false;
+            }
 
             _polling?.Stop();
             _polling = new SlackPollingService(_config.Tokem, _config.IDcanal);
             _polling.OnMessageReceived += msg => OnMessageReceived?.Invoke(msg);
             _polling.Start();
+            _logger.LogInformation("Slack polling iniciado (canal={Canal})", _config.IDcanal);
             return true;
         }
 
@@ -70,6 +82,7 @@ namespace OPENGIOAI.ServiciosSlack
         {
             _polling?.Stop();
             _polling = null;
+            _logger.LogInformation("Slack polling detenido");
         }
 
         public Task EnviarMensajeAsync(string text) =>

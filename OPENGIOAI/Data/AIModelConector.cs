@@ -636,11 +636,9 @@ namespace OPENGIOAI.Data
             using var stream = await resp.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream);
 
-            while (!reader.EndOfStream)
+            string? line;
+            while ((line = await reader.ReadLineAsync(ct)) != null)
             {
-                ct.ThrowIfCancellationRequested();
-
-                var line = await reader.ReadLineAsync();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
                 string? token = esOllama
@@ -705,11 +703,9 @@ namespace OPENGIOAI.Data
             using var stream = await resp.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream);
 
-            while (!reader.EndOfStream)
+            string? line;
+            while ((line = await reader.ReadLineAsync(ct)) != null)
             {
-                ct.ThrowIfCancellationRequested();
-
-                var line = await reader.ReadLineAsync();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
                 // Vertex SSE: "data: {json}" donde json tiene el mismo schema que Gemini

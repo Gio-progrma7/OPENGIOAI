@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Utilerias;
 using System;
@@ -15,7 +16,13 @@ namespace OPENGIOAI.ServiciosTTS
     /// </summary>
     public class AudioTTSService
     {
+        private readonly ILogger<AudioTTSService> _logger;
         private ConfiguracionTTS _config = new();
+
+        public AudioTTSService(ILogger<AudioTTSService> logger)
+        {
+            _logger = logger;
+        }
 
         public ConfiguracionTTS Config => _config;
         public bool Activo => _config.Activo;
@@ -36,14 +43,26 @@ namespace OPENGIOAI.ServiciosTTS
         {
             if (!_config.Activo) return null;
 
-            var (audioBytes, ext) = await ServicioTTS.GenerarAudioAsync(mensaje, _config);
-            if (audioBytes.Length == 0) return null;
+            try
+            {
+                var (audioBytes, ext) = await ServicioTTS.GenerarAudioAsync(mensaje, _config);
+                if (audioBytes.Length == 0)
+                {
+                    _logger.LogWarning("TTS devolvió audio vacío (len texto={Len})", mensaje?.Length ?? 0);
+                    return null;
+                }
 
-            string tmpFile = Path.Combine(Path.GetTempPath(),
-                $"aria_audio_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}");
+                string tmpFile = Path.Combine(Path.GetTempPath(),
+                    $"aria_audio_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}");
 
-            await File.WriteAllBytesAsync(tmpFile, audioBytes);
-            return tmpFile;
+                await File.WriteAllBytesAsync(tmpFile, audioBytes);
+                return tmpFile;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generando audio TTS");
+                throw;
+            }
         }
     }
 }

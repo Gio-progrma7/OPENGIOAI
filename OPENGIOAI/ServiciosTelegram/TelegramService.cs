@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Utilerias;
 using System;
@@ -19,9 +20,15 @@ namespace OPENGIOAI.ServiciosTelegram
     /// </summary>
     public class TelegramService
     {
+        private readonly ILogger<TelegramService> _logger;
         private TelegramListener? _listener;
         private TelegramChat _chat = new() { ChatId = 0, Apikey = "" };
         private readonly SemaphoreSlim _semaphore = new(1, 1);
+
+        public TelegramService(ILogger<TelegramService> logger)
+        {
+            _logger = logger;
+        }
 
         public TelegramChat Chat => _chat;
         public bool IsConfigured => _chat.ChatId != 0 && !string.IsNullOrEmpty(_chat.Apikey);
@@ -55,7 +62,11 @@ namespace OPENGIOAI.ServiciosTelegram
         /// </summary>
         public bool Iniciar(string rutaTrabajo)
         {
-            if (!IsConfigured) return false;
+            if (!IsConfigured)
+            {
+                _logger.LogWarning("Iniciar() abortado: Telegram no está configurado");
+                return false;
+            }
 
             _listener?.Stop();
             _listener = new TelegramListener(_chat.Apikey, rutaTrabajo, _chat.ChatId);
@@ -69,6 +80,7 @@ namespace OPENGIOAI.ServiciosTelegram
             };
 
             _listener.Start();
+            _logger.LogInformation("Telegram listener iniciado (chatId={ChatId})", _chat.ChatId);
             return true;
         }
 
@@ -76,6 +88,7 @@ namespace OPENGIOAI.ServiciosTelegram
         {
             _listener?.Stop();
             _listener = null;
+            _logger.LogInformation("Telegram listener detenido");
         }
 
         /// <summary>Envía un mensaje al chat configurado.</summary>
@@ -96,6 +109,7 @@ namespace OPENGIOAI.ServiciosTelegram
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error enviando mensaje a Telegram (chatId={ChatId})", chatId);
                 OnError?.Invoke($"Error enviando mensaje a Telegram: {ex.Message}");
             }
         }
@@ -122,6 +136,7 @@ namespace OPENGIOAI.ServiciosTelegram
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error enviando respuesta particionada a Telegram");
                 OnError?.Invoke(ex.ToString());
             }
         }

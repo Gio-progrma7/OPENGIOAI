@@ -40,8 +40,6 @@
 // ║    · comboBoxAgentes_SelectedIndexChanged: el contador "veces" no se    ║
 // ║      reseteaba — si el usuario cambiaba de agente 3+ veces solo         ║
 // ║      disparaba la primera. Reemplazado por flag _cargaInicialAgente.     ║
-// ║    · comboBoxModeloIA_SelectedIndexChanged: ídem con "cargas". Ahora    ║
-// ║      usa _cargaInicialModelo.                                            ║
 // ║    · IniciarSlack: se protege con null-check en _slack antes de Stop()  ║
 // ║      para evitar NRE en la primera carga.                                ║
 // ║    · EnviarTelegramAsync: parámetro btns movido antes de UsarTelegram   ║
@@ -89,11 +87,7 @@ namespace OPENGIOAI.Vistas
         private readonly System.Windows.Forms.ToolTip _toolTipArchivos = new();
 
         // ── Flags de estado ───────────────────────────────────────────────────
-        private bool _bloqueTelegram = false;
         private bool _ajustandoAltura = false;
-        private bool _primeraCar = false;
-        private bool _primeraEjecucion = true;
-        private bool _primeraEjecucionAgente = true;
         private bool _telegramActivo = false;
         private bool _enviarConstructorTelegram = false;
         private bool _enviarConstructorSlack    = false;
@@ -107,9 +101,8 @@ namespace OPENGIOAI.Vistas
         private bool _isDragging = false;
         private bool _procesandoSlack = false;
 
-        // [C4] Reemplaza el contador "veces" con flags booleanos para mayor claridad.
+        // [C4] Reemplaza el contador "veces" con flag booleano para mayor claridad.
         private bool _cargaInicialAgente = true;
-        private bool _cargaInicialModelo = true;
 
         // ── Ventana deslizante de contexto conversacional ─────────────────────
         private readonly ConversationWindow _ventana = new(MaxTurnosContexto, MaxTokensContexto);
@@ -121,11 +114,11 @@ namespace OPENGIOAI.Vistas
         // ── Misc ──────────────────────────────────────────────────────────────
         private Point _mouseDownLocation;
 
-        // ── Servicios externos ────────────────────────────────────────────────
-        private readonly SlackChannelService _slackService = new();
+        // ── Servicios externos (inyectados por DI) ────────────────────────────
+        private readonly SlackChannelService _slackService;
         // [C1] _ctsIA: se hace Dispose del token anterior antes de crear uno nuevo.
         private CancellationTokenSource _ctsIA;
-        private readonly TelegramService _telegramService = new();
+        private readonly TelegramService _telegramService;
         private readonly BroadcastService _broadcast;
         private readonly CommandRouter _router = new();
 
@@ -145,7 +138,7 @@ namespace OPENGIOAI.Vistas
 
         // ── Modelos de datos ──────────────────────────────────────────────────
         private ConfiguracionClient _configuracionClient;
-        private readonly AudioTTSService _audioService = new();
+        private readonly AudioTTSService _audioService;
         private Modelo _modeloSeleccionado = new();
         private Archivo _archivoSeleccionado = new();
         private List<Api> _listaApisDisponibles = new();
@@ -156,11 +149,19 @@ namespace OPENGIOAI.Vistas
         // =====================================================================
         //  CONSTRUCTOR
         // =====================================================================
-        public FrmMandos(ConfiguracionClient config)
+        public FrmMandos(
+            ConfiguracionClient config,
+            TelegramService telegramService,
+            SlackChannelService slackService,
+            AudioTTSService audioService,
+            BroadcastService broadcast)
         {
             InitializeComponent();
             _configuracionClient = config ?? throw new ArgumentNullException(nameof(config));
-            _broadcast = new BroadcastService(_telegramService, _slackService);
+            _telegramService = telegramService;
+            _slackService    = slackService;
+            _audioService    = audioService;
+            _broadcast       = broadcast;
             _streaming = new ChatStreamingThrottleService(this);
             ConfigurarCommandRouter();
         }
@@ -409,7 +410,7 @@ namespace OPENGIOAI.Vistas
         private void comboBoxModeloIA_SelectedIndexChanged(object sender, EventArgs e)
         {
 
-            if (Entradas >0) { _cargaInicialModelo = false; Entradas--; return; }
+            if (Entradas > 0) { Entradas--; return; }
 
             if (comboBoxModeloIA.SelectedItem is ModeloAgente mimodelo)
                 _modeloSeleccionado.Modelos = mimodelo.Nombre;
@@ -467,19 +468,14 @@ namespace OPENGIOAI.Vistas
         /// </summary>
         private async Task SeleccionarAgente_Trabajo()
         {
-            _primeraCar = true;
-
             if (comboBoxAgentes.SelectedItem is not Modelo modeloSel) return;
             _modeloSeleccionado = modeloSel;
 
             await ComprobarApi(_modeloSeleccionado.ApiKey, _modeloSeleccionado.Agente);
 
-            _primeraEjecucionAgente = true;
             _modelosAgente = await ObtenerModeloAgente(
                 _modeloSeleccionado.Agente, _modeloSeleccionado.ApiKey);
 
-            // Actualizar combo sin disparar el evento de selección.
-            _cargaInicialModelo = true;
             comboBoxModeloIA.DataSource = null;
             comboBoxModeloIA.DataSource = _modelosAgente;
             comboBoxModeloIA.DisplayMember = "Nombre";
@@ -2003,8 +1999,6 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 comboBoxRuta.DisplayMember = "Ruta";
                 comboBoxRuta.ValueMember = "Ruta";
 
-                _primeraCar = true;
-
                 comboBoxAgentes.DataSource = _listaAgentes;
                 comboBoxAgentes.DisplayMember = "Agente";
                 comboBoxAgentes.ValueMember = "ApiKey";
@@ -2205,8 +2199,6 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
 
         private void ActualizarComboModelos(List<ModeloAgente> modelos)
         {
-            _cargaInicialModelo = true;
-
             comboBoxModeloIA.DisplayMember = "Nombre";
             comboBoxModeloIA.ValueMember = "Nombre";
             comboBoxModeloIA.DataSource = null;
@@ -2216,7 +2208,6 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             _modeloSeleccionado.Modelos = _configuracionClient.Mimodelo.Modelos;
             _modeloSeleccionado.ApiKey = _configuracionClient.Miapi.key;
 
-            _cargaInicialModelo = true;
             comboBoxModeloIA.SelectedValue = _modeloSeleccionado.Modelos;
         }
     }
