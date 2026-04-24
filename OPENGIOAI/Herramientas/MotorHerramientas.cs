@@ -25,6 +25,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
+using OPENGIOAI.Utilerias;
 using System.Net.Http.Headers;
 using System.Text;
 
@@ -68,13 +69,35 @@ namespace OPENGIOAI.Herramientas
             var herramientas = _registro.Value.ObtenerTodas();
             var mensajes = InicializarMensajes(instruccion, ctx);
 
+            // Span raíz del bucle ReAct — cada iteración y cada tool call cuelga de aquí.
+            using var spanReAct = TracerEjecucion.Instancia.AbrirSpan(
+                SpanTipo.Fase, "ReAct");
+            spanReAct.RegistrarInput(instruccion);
+            spanReAct.AgregarAtributo("max_iteraciones", maxIteraciones.ToString());
+
             for (int iteracion = 1; iteracion <= maxIteraciones; iteracion++)
             {
                 ct.ThrowIfCancellationRequested();
                 onProgreso?.Invoke($"[Iteración {iteracion}/{maxIteraciones}] Consultando {ctx.Servicio}...");
 
-                // 1. Enviar al LLM con definiciones de herramientas
-                string rawResponse = await EnviarConHerramientasAsync(mensajes, herramientas, ctx, ct);
+                // 1. Enviar al LLM con definiciones de herramientas (span LLM)
+                var spanLlm = TracerEjecucion.Instancia.AbrirSpan(
+                    SpanTipo.LlamadaLLM, $"LLM iter={iteracion}");
+                spanLlm.AgregarAtributo("iteracion", iteracion.ToString());
+                spanLlm.AgregarAtributo("modelo", ctx.Modelo);
+                string rawResponse;
+                try
+                {
+                    rawResponse = await EnviarConHerramientasAsync(mensajes, herramientas, ctx, ct);
+                    spanLlm.RegistrarOutput(rawResponse);
+                }
+                catch (Exception ex)
+                {
+                    spanLlm.MarcarError(ex.Message);
+                    spanLlm.Dispose();
+                    throw;
+                }
+                spanLlm.Dispose();
 
                 // 2. Parsear respuesta
                 var respuesta = ExtraerRespuestaConHerramientas(rawResponse, ctx.Servicio);
@@ -83,6 +106,8 @@ namespace OPENGIOAI.Herramientas
                 if (!respuesta.TieneLlamadasHerramientas)
                 {
                     onProgreso?.Invoke($"[Respuesta final en iteración {iteracion}]");
+                    spanReAct.AgregarAtributo("iteraciones_usadas", iteracion.ToString());
+                    spanReAct.RegistrarOutput(respuesta.Texto);
                     return respuesta.Texto;
                 }
 
@@ -91,20 +116,42 @@ namespace OPENGIOAI.Herramientas
                 // 4. Agregar respuesta del asistente (con tool_calls) al historial
                 AgregarMensajeAsistente(mensajes, rawResponse, ctx.Servicio);
 
-                // 5. Ejecutar cada herramienta y agregar resultados
+                // 5. Ejecutar cada herramienta y agregar resultados (span por tool)
                 foreach (var llamada in respuesta.LlamadasHerramientas)
                 {
                     ct.ThrowIfCancellationRequested();
                     onProgreso?.Invoke($"  → Ejecutando: {llamada.Nombre}({TruncatarJson(llamada.ArgumentosJson)})");
 
-                    string resultado = await EjecutarHerramientaAsync(llamada, ct);
+                    var spanTool = TracerEjecucion.Instancia.AbrirSpan(
+                        SpanTipo.Herramienta, $"tool:{llamada.Nombre}");
+                    spanTool.RegistrarInput(llamada.ArgumentosJson);
+                    spanTool.AgregarAtributo("iteracion", iteracion.ToString());
+
+                    string resultado;
+                    try
+                    {
+                        resultado = await EjecutarHerramientaAsync(llamada, ct);
+                        spanTool.RegistrarOutput(resultado);
+                    }
+                    catch (Exception ex)
+                    {
+                        spanTool.MarcarError(ex.Message);
+                        spanTool.Dispose();
+                        throw;
+                    }
+                    spanTool.Dispose();
+
                     onProgreso?.Invoke($"  ✓ {llamada.Nombre}: {Truncar(resultado, 120)}");
 
                     AgregarResultadoHerramienta(mensajes, llamada, resultado, ctx.Servicio);
                 }
             }
 
-            return $"El agente alcanzó el límite de {maxIteraciones} iteraciones sin concluir.";
+            string limite = $"El agente alcanzó el límite de {maxIteraciones} iteraciones sin concluir.";
+            spanReAct.AgregarAtributo("iteraciones_usadas", maxIteraciones.ToString());
+            spanReAct.AgregarAtributo("limite_alcanzado", "true");
+            spanReAct.RegistrarOutput(limite);
+            return limite;
         }
 
         // =====================================================================

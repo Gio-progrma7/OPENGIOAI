@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.Extensions.DependencyInjection;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -13,8 +14,11 @@ namespace OPENGIOAI.Vistas
 {
     public partial class FrmMultopleAngent : Form
     {
-        public FrmMultopleAngent()
+        private readonly IServiceProvider _services;
+
+        public FrmMultopleAngent(IServiceProvider services)
         {
+            _services = services;
             InitializeComponent();
             flowLayoutPanel1.Dock = DockStyle.Fill;
             flowLayoutPanel1.AutoScroll = true;
@@ -33,7 +37,7 @@ namespace OPENGIOAI.Vistas
         {
             for (int i = 0; i < N; i++)
             {
-                FrmPrincipal frm = new FrmPrincipal();
+                var frm = _services.GetRequiredService<FrmPrincipal>();
                 AgregarFormulario(frm);
             }
         }

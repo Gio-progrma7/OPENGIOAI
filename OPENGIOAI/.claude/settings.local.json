@@ -32,7 +32,16 @@
       "Bash(dotnet --list-sdks)",
       "Bash(dotnet restore:*)",
       "Bash(ls *.sln)",
-      "Bash(ls OPENGIOAI/*.csproj)"
+      "Bash(ls OPENGIOAI/*.csproj)",
+      "Bash(dd if=2026-04-20.jsonl bs=1 skip=351434 count=8322)",
+      "Bash(dd if=2026-04-20.jsonl bs=1 skip=503625 count=13853)",
+      "Bash(dd if=2026-04-20.jsonl bs=1 skip=389648 count=10699)",
+      "Bash(dd if=2026-04-20.jsonl bs=1 skip=463230 count=9521)",
+      "Bash(dd if=2026-04-20.jsonl bs=1 skip=436885 count=8961)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(tasklist //FI \"IMAGENAME eq OPENGIOAI.exe\" //FI \"IMAGENAME eq devenv.exe\")",
+      "Bash(dotnet add *)"
     ]
   }
 }

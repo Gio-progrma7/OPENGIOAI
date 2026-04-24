@@ -44,6 +44,7 @@ namespace OPENGIOAI.Utilerias
         public const string HAB_MEMORIA = "memoria";
         public const string HAB_PATRONES = "patrones";
         public const string HAB_MEMORIA_SEMANTICA = "memoria_semantica";
+        public const string HAB_TRACING = "tracing";
 
         /// <summary>
         /// Defaults sembrados la primera vez que el sistema arranca.
@@ -77,6 +78,15 @@ namespace OPENGIOAI.Utilerias
                 Descripcion   = "En lugar de inyectar TODA la memoria en cada prompt, usa embeddings para recuperar sólo los fragmentos más relevantes a la instrucción actual (top-K). Requiere que la habilidad 'Memoria' esté activa. Proveedores: Ollama (nomic-embed-text, local gratis) u OpenAI (text-embedding-3-small, barato).",
                 ImpactoTokens = "Ahorro neto: −500 a −4000 tokens por instrucción cuando la memoria crece",
                 Activa        = false,
+            },
+            new Habilidad
+            {
+                Clave         = HAB_TRACING,
+                Nombre        = "Tracing de ejecución",
+                Icono         = "🔬",
+                Descripcion   = "Captura el árbol completo de cada instrucción (fases, LLM calls, herramientas, scripts, memoria) con tiempos, tokens, costos y previews de input/output. Persistencia JSONL en Traces/. Base para evaluación y replay de ejecuciones pasadas (Fase 1B).",
+                ImpactoTokens = "0 tokens extra — solo disco y RAM (≈5–20 KB por ejecución)",
+                Activa        = true,
             },
             // Espacio reservado:
             // new Habilidad { Clave = "sugerencias_proactivas", ... }

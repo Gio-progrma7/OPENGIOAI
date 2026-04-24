@@ -169,7 +169,7 @@ namespace OPENGIOAI.Vistas
             lblConsumoA.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             lblConsumoA.AutoSize = true;
             lblConsumoA.ForeColor = Color.FromArgb(140, 160, 190);
-            lblConsumoA.Location = new Point(730, 6);
+            lblConsumoA.Location = new Point(626, 3);
             lblConsumoA.Name = "lblConsumoA";
             lblConsumoA.Size = new Size(0, 15);
             lblConsumoA.TabIndex = 10;
@@ -201,7 +201,7 @@ namespace OPENGIOAI.Vistas
             lblConsumo.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             lblConsumo.AutoSize = true;
             lblConsumo.ForeColor = Color.FromArgb(140, 160, 190);
-            lblConsumo.Location = new Point(730, 18);
+            lblConsumo.Location = new Point(644, 5);
             lblConsumo.Name = "lblConsumo";
             lblConsumo.Size = new Size(0, 15);
             lblConsumo.TabIndex = 0;

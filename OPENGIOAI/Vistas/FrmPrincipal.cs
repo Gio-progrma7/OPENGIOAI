@@ -1,4 +1,5 @@
-﻿using OPENGIOAI.Data;
+﻿using Microsoft.Extensions.DependencyInjection;
+using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
@@ -18,16 +19,18 @@ namespace OPENGIOAI.Vistas
     public partial class FrmPrincipal : Form
     {
 
-        private string RutaTrabajo = "";
         private ConfiguracionClient Miconfiguracion = new ConfiguracionClient();
         private readonly AutomatizacionScheduler _scheduler = new();
+        private readonly IServiceProvider _services;
 
-        public FrmPrincipal()
+        public FrmPrincipal(IServiceProvider services)
         {
+            _services = services;
             InitializeComponent();
             AplicarTema();
             CargarDatosInicio();
             btnComunicadores.Visible = true;
+            btnComunicadores.BringToFront(); // Garantiza z-order al frente tras el fix de Y=408.
            // AgregarBotonesAgentesAvanzados();
             // pnlMenu se queda corto con los botones nuevos del Fase A/B/C.
             // Habilitamos scroll vertical por si la ventana es chica — así
@@ -39,6 +42,27 @@ namespace OPENGIOAI.Vistas
             AgregarBotonPatrones();     // relocado a (0, 640)
             AgregarBotonTokens();       // relocado a (0, 685)
             AgregarBotonEmbeddings();   // relocado a (0, 730)
+            AgregarBotonTraces();       // Fase 1A → (0, 775)
+        }
+
+        /// <summary>
+        /// Añade el botón "🔬 Traces" — Fase 1A del sistema de observabilidad.
+        /// Abre el panel flotante (TopMost-style) de traces: lista de
+        /// ejecuciones del día, árbol de spans y detalles de cada span.
+        /// Al igual que Tokens, es flotante — así el usuario puede observar
+        /// un pipeline en vivo mientras trabaja en cualquier otra pantalla.
+        /// </summary>
+        private void AgregarBotonTraces()
+        {
+            var btnTraces = CrearBotonMenu("🔬  Traces", new Point(0, 775));
+            btnTraces.Click += btnTraces_Click;
+            pnlMenu.Controls.Add(btnTraces);
+            btnTraces.BringToFront();
+        }
+
+        private void btnTraces_Click(object sender, EventArgs e)
+        {
+            FrmTraces.MostrarOTraerAlFrente(this);
         }
 
         /// <summary>
@@ -149,7 +173,9 @@ namespace OPENGIOAI.Vistas
 
         private void btnMando_Click(object sender, EventArgs e)
         {
-            FrmMandos frmMandos = new FrmMandos(Miconfiguracion);
+            // ActivatorUtilities mezcla los servicios registrados en el container
+            // con el parámetro runtime (Miconfiguracion) que varía por sesión.
+            var frmMandos = ActivatorUtilities.CreateInstance<FrmMandos>(_services, Miconfiguracion);
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmMandos);
         }
 
@@ -173,7 +199,7 @@ namespace OPENGIOAI.Vistas
 
         private void btnMultiples_Click(object sender, EventArgs e)
         {
-            FrmMultopleAngent frmAgentes = new FrmMultopleAngent();
+            var frmAgentes = ActivatorUtilities.CreateInstance<FrmMultopleAngent>(_services);
             EmeraldTheme.OpenOrShowFormInPanel(pnlContenedor, frmAgentes);
         }
         private void btnAutomatizacion_Click(object sender, EventArgs e)
