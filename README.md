@@ -25,12 +25,13 @@
    - [Fase C — RAG Local (Memoria Semántica)](#fase-c--rag-local-memoria-semántica)
 6. [Sistema de Skills y Skills Hub](#sistema-de-skills-y-skills-hub)
 7. [Automatizaciones con Nodos](#automatizaciones-con-nodos)
-8. [Sistema de Credenciales Seguras](#sistema-de-credenciales-seguras)
-9. [Multi-Proveedor de LLMs](#multi-proveedor-de-llms)
-10. [Integración Multi-Canal](#integracion-multi-canal)
-11. [Cómo Empezar](#como-empezar)
-12. [Extensión y Desarrollo](#extension-y-desarrollo)
-13. [Troubleshooting](#troubleshooting)
+8. [Sistema de Comandos `#cmd` — Configuración desde el Chat](#sistema-de-comandos-cmd)
+9. [Sistema de Credenciales Seguras](#sistema-de-credenciales-seguras)
+10. [Multi-Proveedor de LLMs](#multi-proveedor-de-llms)
+11. [Integración Multi-Canal](#integracion-multi-canal)
+12. [Cómo Empezar](#como-empezar)
+13. [Extensión y Desarrollo](#extension-y-desarrollo)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -90,6 +91,38 @@ OPENGIOAI/
 │   ├── PipelineMultiAgente.cs  # Pipeline paralelo / verificador
 │   ├── AgentePlanificador.cs   # Planificación ReAct/CoT
 │   └── PasoDelPlan.cs          # Modelo de paso de plan
+│
+├── Comandos/                   # Sistema profesional de comandos `#cmd`
+│   ├── CommandCategoria.cs     # Enum + extensiones (icono/título)
+│   ├── CommandDescriptor.cs    # Metadata declarativa por comando
+│   ├── CommandContext.cs       # Args parseados + helpers (Arg0, on/off)
+│   ├── CommandResult.cs        # Resultado tipado (Exito/Error/Advertencia/Info)
+│   ├── ICommand.cs             # Contrato de un handler
+│   ├── CommandParser.cs        # Tokenizer shell-lite con comillas y legacy `#CMD_VALOR`
+│   ├── CommandRegistry.cs      # Registrar/Resolver + Levenshtein typo-suggest
+│   ├── CommandExecutor.cs      # Despacha: parse → resolve → execute → result
+│   ├── ResultFormatter.cs      # Render por canal (Telegram / Slack / UI)
+│   ├── IServiciosComandos.cs   # Fachada hacia FrmMandos (UI-thread safe)
+│   └── Handlers/               # 19 comandos visibles + 2 legacy ocultos
+│       ├── AgenteCommand.cs        # `#agente` → estado + lista
+│       ├── CambiarAgenteCommand.cs # `#cambiar_agente <nombre>` (+legacy)
+│       ├── ModeloCommand.cs        # `#modelo`
+│       ├── CambiarModeloCommand.cs # `#cambiar_modelo <id>` (+legacy)
+│       ├── RutaCommand.cs          # `#ruta`
+│       ├── CambiarRutaCommand.cs   # `#cambiar_ruta <path>` (+legacy)
+│       ├── ConfiguracionesCommand.cs # `#configuraciones`
+│       ├── TelegramCommand.cs      # `#telegram on|off` (+legacy ocultos)
+│       ├── SlackCommand.cs         # `#slack on|off`
+│       ├── RecordarCommand.cs      # `#recordar on|off`
+│       ├── SoloChatCommand.cs      # `#solochat on|off`
+│       ├── ApisCommand.cs          # `#apis`
+│       ├── AyudaCommand.cs         # `#ayuda` con paginación por categoría
+│       ├── HabilidadCommand.cs     # `#habilidad <clave> on|off`
+│       ├── ReintentosCommand.cs    # `#reintentos <0..5>`
+│       ├── TimeoutCommand.cs       # `#timeout <10..1800>`
+│       ├── AudioCommand.cs         # `#audio` subcomandos: proveedor/voz/idioma/apikey/activar
+│       ├── EstadoCommand.cs        # `#estado` snapshot global
+│       └── CancelarCommand.cs      # `#cancelar` (corta operación en curso)
 │
 ├── Data/                       # Núcleo lógico
 │   ├── AIModelConector.cs      # Orquestador principal (hub)
@@ -163,7 +196,12 @@ OPENGIOAI/
 │   ├── MemoriaIndexer.cs       # Indexación incremental (Fase C)
 │   ├── MemoriaSemantica.cs     # API alto nivel RAG (Fase C)
 │   └── VectorStore.cs          # JSONL vector store + cosine (Fase C)
-└── Themas/                     # EmeraldTheme, BurbujaChat…
+├── Themas/                     # EmeraldTheme, BurbujaChat…
+└── Tests/
+    ├── ComandosTests/          # 67 tests del módulo Comandos (Parser/Registry/Executor/Handlers)
+    │   ├── ComandosTests.csproj
+    │   └── Program.cs          # Test harness con FakeServicios in-memory
+    └── ConversationWindowTests/  # Tests de la ventana de contexto
 ```
 
 ---
@@ -818,6 +856,198 @@ Esto permite que instrucciones como *"filtra los datos que obtuviste en el paso 
 
 ---
 
+<a id="sistema-de-comandos-cmd"></a>
+## Sistema de Comandos `#cmd` — Configuración desde el Chat
+
+OPENGIOAI incluye un **sistema profesional de comandos en línea** inspirado en Slack, Discord y Claude Code: cualquier mensaje que empiece con `#` se interpreta como una orden de configuración. El usuario puede cambiar el agente activo, alternar canales, ajustar timeouts, gestionar habilidades cognitivas o configurar el TTS **sin tocar la UI** — directamente desde Telegram, Slack o el chat de escritorio.
+
+El módulo está construido con un patrón **Registry + Executor + Formatter** (separación parser → registry → ejecución → formateo por canal) y cuenta con **67 tests automatizados** que cubren parser, registry, executor y handlers.
+
+### Pipeline de despacho
+
+```
+Texto del usuario  ("#audio proveedor OpenAI")
+        │
+        ▼
+┌───────────────────┐
+│   CommandParser   │  Tokeniza con respeto de comillas dobles.
+│                   │  Soporta legacy `#CMD_VALOR` (callback Telegram).
+│                   │  Solo lowercase del nombre — args preservan caso.
+└─────────┬─────────┘
+          ▼
+┌───────────────────┐
+│  CommandRegistry  │  Diccionario de nombre → handler.
+│                   │  Si no existe: Levenshtein ≤ 2 → sugerir alternativas.
+│                   │  Resuelve también por alias (`#tts` → audio).
+└─────────┬─────────┘
+          ▼
+┌───────────────────┐
+│ CommandExecutor   │  Construye CommandContext (args + servicios).
+│                   │  Invoca handler.EjecutarAsync(ctx).
+│                   │  Captura excepciones → CommandResult.Error.
+└─────────┬─────────┘
+          ▼
+┌───────────────────┐
+│ ResultFormatter   │  Renderiza según el canal:
+│                   │   · Telegram → MarkdownV2 con escape
+│                   │   · Slack    → mrkdwn
+│                   │   · UI       → texto plano + emoji
+└─────────┬─────────┘
+          ▼
+   Mensaje final al canal de origen
+```
+
+### Formato de invocación
+
+Tres formas válidas, todas equivalentes según el handler:
+
+```
+#audio proveedor OpenAI         ← moderno, tokens separados por espacio
+#audio voz "nova premium"       ← comillas dobles preservan espacios
+#CAMBIAR_AGENTE_ARIA            ← legacy, soportado por callback_data de Telegram
+```
+
+El parser **no** uppercasea los argumentos — esto es crítico para API keys, voces, IDs de modelo y rutas con mayúsculas/minúsculas significativas.
+
+### Catálogo completo de comandos
+
+#### 🤖 Agente
+
+| Comando | Alias | Uso | Descripción |
+|---------|-------|-----|-------------|
+| `#agente` | `#agentes` | `#agente` | Muestra el agente activo y la lista de agentes disponibles. |
+| `#cambiar_agente` | — | `#cambiar_agente <nombre>` | Cambia el agente activo (acepta `#CAMBIAR_AGENTE_NOMBRE` legacy). |
+| `#modelo` | `#modelos` | `#modelo` | Muestra el modelo activo y los modelos del proveedor. |
+| `#cambiar_modelo` | — | `#cambiar_modelo <id>` | Cambia el modelo del proveedor actual. |
+| `#ruta` | `#rutas` | `#ruta` | Muestra la ruta de trabajo actual. |
+| `#cambiar_ruta` | — | `#cambiar_ruta <path>` | Cambia el directorio de trabajo (con comillas si tiene espacios). |
+
+#### ⚙ Configuración
+
+| Comando | Alias | Uso | Descripción |
+|---------|-------|-----|-------------|
+| `#configuraciones` | `#config`, `#ajustes` | `#configuraciones` | Resumen de todas las configuraciones activas. |
+| `#reintentos` | `#retry` | `#reintentos <0..5>` | Número de reintentos del Guardián (0 = desactivado). |
+| `#timeout` | — | `#timeout <10..1800>` | Timeout por petición LLM en segundos. |
+| `#solochat` | `#chat` | `#solochat on\|off` | Activa modo conversacional puro (sin pipeline). |
+| `#recordar` | `#memoria` | `#recordar on\|off` | Activa/desactiva memoria del tema actual. |
+| `#apis` | — | `#apis` | Lista las credenciales registradas (sólo nombres). |
+| `#cancelar` | `#stop`, `#cancel` | `#cancelar` | Cancela la operación en curso. |
+
+#### 📡 Integración
+
+| Comando | Alias | Uso | Descripción |
+|---------|-------|-----|-------------|
+| `#telegram` | `#tg` | `#telegram on\|off` | Activa/desactiva el bot de Telegram. |
+| `#slack` | — | `#slack on\|off` | Activa/desactiva el bot de Slack. |
+| `#audio` | `#tts`, `#voz` | `#audio [sub] [valor]` | Configura TTS — ver subcomandos abajo. |
+
+**Subcomandos de `#audio`:**
+
+```
+#audio                          → estado actual (proveedor, voz, idioma)
+#audio on / #audio off          → toggle de envío de audio
+#audio proveedor SystemSpeech|OpenAI|Google
+#audio voz <nombre>             → ej. "nova", "es-MX-DaliaNeural"
+#audio idioma <bcp-47>          → ej. "es-MX", "en-US"
+#audio apikey <key>             → API key del proveedor TTS (no se muestra)
+#audio activar / #audio desactivar  → marca TTS como configurado
+```
+
+#### 🧩 Habilidades
+
+| Comando | Alias | Uso | Descripción |
+|---------|-------|-----|-------------|
+| `#habilidad` | `#hab`, `#habilidades` | `#habilidad <clave> on\|off` | Activa/desactiva una habilidad cognitiva. |
+
+Sin args lista todas las habilidades con su estado. Soporta claves: `memoria`, `patrones`, `memoria_semantica`.
+
+#### 📊 Estado
+
+| Comando | Alias | Uso | Descripción |
+|---------|-------|-----|-------------|
+| `#estado` | `#status`, `#info` | `#estado` | Snapshot global: agente, modelo, ruta, toggles, habilidades. |
+
+#### ❓ Ayuda
+
+| Comando | Alias | Uso | Descripción |
+|---------|-------|-----|-------------|
+| `#ayuda` | `#help`, `#?` | `#ayuda [categoría\|comando]` | Lista comandos por categoría o detalle de uno específico. |
+
+Ejemplos: `#ayuda` (todas), `#ayuda audio` (detalle de un comando), `#ayuda integracion` (filtro por categoría).
+
+### Sugerencia inteligente de typos
+
+Si el usuario escribe un comando inexistente, el registry calcula la **distancia de Levenshtein** contra todos los nombres y alias registrados, devolviendo hasta 3 candidatos con distancia ≤ 2:
+
+```
+Usuario:  #agnte
+Bot:      ❓ Comando `agnte` no encontrado.
+          ¿Quisiste decir? `agente`, `agentes`
+```
+
+### Resultado tipado por handler
+
+Cada handler devuelve un `CommandResult` con tipo (`Exito`, `Error`, `Advertencia`, `Info`), título, mensaje y opcional lista de detalles. El `ResultFormatter` adapta el render según el canal de origen — el mismo handler funciona idéntico en Telegram, Slack o UI.
+
+### Cómo extender — un comando = una clase
+
+```csharp
+public sealed class MiComando : ICommand
+{
+    public CommandDescriptor Descriptor { get; } = new()
+    {
+        Nombre      = "miorden",
+        Alias       = new[] { "mo" },
+        Descripcion = "Hace algo útil.",
+        Uso         = "#miorden <valor>",
+        Ejemplos    = new[] { "#miorden 42" },
+        Categoria   = CommandCategoria.Configuracion,
+    };
+
+    public Task<CommandResult> EjecutarAsync(CommandContext ctx)
+    {
+        if (string.IsNullOrEmpty(ctx.Arg0))
+            return Task.FromResult(CommandResult.Error("Indica un valor."));
+
+        ctx.Servicios.HacerAlgo(ctx.Arg0);
+        return Task.FromResult(CommandResult.Exito($"Hecho: *{ctx.Arg0}*."));
+    }
+}
+```
+
+Y registrarlo en `FrmMandos.ConfigurarCommandRouter()`:
+
+```csharp
+_cmdRegistry.Registrar(new MiComando());
+```
+
+Listo — aparece automáticamente en `#ayuda`, en la categoría correspondiente y con sugerencia de typos.
+
+### UI-thread safety
+
+Los comandos pueden disparar desde un mensaje de Telegram, Slack o la UI. La fachada `IServiciosComandos` (implementada como `partial class` de `FrmMandos` en `Vistas/FrmMandos.Comandos.cs`) marshallea automáticamente al hilo UI mediante `EnUIThread()` antes de tocar controles WinForms.
+
+### Cobertura de tests
+
+`Tests/ComandosTests/Program.cs` ejecuta **67 tests** sin dependencia externa (usa `FakeServicios` in-memory):
+
+| Bloque | Tests | Cobertura |
+|--------|-------|-----------|
+| Parser  (P1–P5) | 24 | Tokenización, comillas, legacy `#CMD_VALOR`, mayúsculas, vacíos |
+| Registry (R1–R3) | 11 | Registro, alias, sugerencias Levenshtein |
+| Executor (E1–E4) | 14 | Despacho OK, no encontrado, sugerencias, captura de excepciones |
+| Handlers (H1–H5) | 18 | Casos clave de los 19 comandos visibles |
+| **Total** | **67** | **67/67 PASS** |
+
+Ejecutar:
+
+```bash
+dotnet run --project Tests/ComandosTests
+```
+
+---
+
 ## Sistema de Credenciales Seguras
 
 OPENGIOAI gestiona las API keys de forma centralizada. Los agentes **no tienen acceso directo** a las claves; en cambio, el sistema inyecta una sección de credenciales en el contexto del agente de forma controlada.
@@ -1016,6 +1246,7 @@ dotnet run --project OPENGIOAI
 6. (Opcional) Abrir **📊 Tokens** → panel flotante que muestra consumo en vivo
 7. (Opcional) Ir a **⚙ Habilidades** → activar `memoria` y/o `memoria_semantica`
 8. (Opcional) Ir a **🧬 Embeddings** → configurar proveedor (Ollama/OpenAI) → Re-indexar
+9. (Opcional) Desde el chat — Telegram, Slack o UI — escribir `#ayuda` para ver el catálogo de **comandos `#cmd`** y configurar el agente sin abrir formularios. Ejemplos rápidos: `#estado`, `#cambiar_agente ARIA`, `#timeout 60`, `#audio proveedor OpenAI`.
 
 ### Archivos de configuración en tiempo de ejecución
 
@@ -1145,6 +1376,7 @@ Luego pasarlo a `AgentContext.BuildAsync(..., perfil: PerfilContexto.MiPreset)`.
 - [x] Streaming SSE con cancelación del usuario
 - [x] Automatizaciones visuales con nodos conectables
 - [x] Telegram + Slack multi-canal
+- [x] **Sistema de comandos `#cmd`** profesional (parser + registry + executor + formatter, 19 comandos visibles, typo-suggest Levenshtein, 67/67 tests PASS)
 
 ### 🚧 En progreso / próximas fases
 
