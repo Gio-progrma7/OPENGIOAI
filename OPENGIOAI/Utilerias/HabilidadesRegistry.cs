@@ -45,6 +45,8 @@ namespace OPENGIOAI.Utilerias
         public const string HAB_PATRONES = "patrones";
         public const string HAB_MEMORIA_SEMANTICA = "memoria_semantica";
         public const string HAB_TRACING = "tracing";
+        public const string HAB_CONTEXTO_SEMANTICO = "contexto_semantico";
+        public const string HAB_HISTORIAL_COMPRIMIDO = "historial_comprimido";
 
         /// <summary>
         /// Defaults sembrados la primera vez que el sistema arranca.
@@ -87,6 +89,24 @@ namespace OPENGIOAI.Utilerias
                 Descripcion   = "Captura el árbol completo de cada instrucción (fases, LLM calls, herramientas, scripts, memoria) con tiempos, tokens, costos y previews de input/output. Persistencia JSONL en Traces/. Base para evaluación y replay de ejecuciones pasadas (Fase 1B).",
                 ImpactoTokens = "0 tokens extra — solo disco y RAM (≈5–20 KB por ejecución)",
                 Activa        = true,
+            },
+            new Habilidad
+            {
+                Clave         = HAB_CONTEXTO_SEMANTICO,
+                Nombre        = "Contexto semántico del Constructor",
+                Icono         = "🧩",
+                Descripcion   = "En lugar de inyectar TODAS las credenciales, skills y automatizaciones en cada prompt del Constructor, usa embeddings para recuperar sólo los fragmentos relevantes a la instrucción actual (top-K por fuente). Incluye una tabla de contenidos ligera para que el LLM sepa qué existe. Si el retrieval falla, cae al dump completo clásico.",
+                ImpactoTokens = "Ahorro neto: −2000 a −6000 tokens por instrucción cuando hay muchos skills/credenciales",
+                Activa        = false,
+            },
+            new Habilidad
+            {
+                Clave         = HAB_HISTORIAL_COMPRIMIDO,
+                Nombre        = "Historial comprimido",
+                Icono         = "📚",
+                Descripcion   = "Cuando la ventana de conversación expulsa turnos antiguos, en lugar de descartarlos los resume con un LLM económico y acumula el resumen. Mantiene coherencia multi-turno (el agente recuerda decisiones/archivos/objetivos) sin que cada turno pague el historial completo. Requiere al menos un proveedor configurado.",
+                ImpactoTokens = "Ahorro neto: −1000 a −4000 tokens en conversaciones largas vs. historial clásico",
+                Activa        = false,
             },
             // Espacio reservado:
             // new Habilidad { Clave = "sugerencias_proactivas", ... }

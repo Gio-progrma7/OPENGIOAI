@@ -47,6 +47,20 @@ namespace OPENGIOAI.Data
         // Se construye una sola vez en BuildAsync(), nunca se muta.
         public string PromptEfectivo { get; private set; } = "";
 
+        // ── Prompt particionado para Prompt Caching (Fase 1) ──
+        // PromptEstable  = prefijo cacheable (PromptMaestro + rutas +
+        //                  dumps clásicos + usuario + tabla de contenidos).
+        //                  Repetible entre ejecuciones → lo marcamos con
+        //                  cache_control en providers que lo soportan
+        //                  (Anthropic, OpenAI automático, Deepseek automático).
+        // PromptVariable = sufijo dinámico (RAG credenciales/skills/
+        //                  automatizaciones + memoria semántica). Cambia
+        //                  con cada instrucción del usuario → no se cachea.
+        //
+        // Invariante: PromptEstable + PromptVariable == PromptEfectivo.
+        public string PromptEstable { get; private set; } = "";
+        public string PromptVariable { get; private set; } = "";
+
         // ── Skills cargados para este contexto ────────────────
         public IReadOnlyList<Skill> Skills { get; init; } =
             System.Array.Empty<Skill>();
@@ -57,6 +71,13 @@ namespace OPENGIOAI.Data
         // Se lee una sola vez en BuildAsync. Si la memoria está vacía,
         // queda string vacío y la sección se omite.
         public string MemoriaFormateada { get; init; } = "";
+
+        // ── Contexto Semántico (Fase D) ──────────────────────
+        // Si la habilidad contexto_semantico está ON y hay una instrucción
+        // del usuario, aquí vienen los bloques filtrados de credenciales,
+        // skills y automatizaciones (en vez del dump completo).
+        // Si es null → dump clásico en ConstruirPromptEfectivo.
+        public ContextoRecuperado? ContextoSemanticoRecuperado { get; init; }
 
         // ── Telemetría (Fase A) ───────────────────────────────
         // Etiqueta de fase del pipeline. Se propaga a cada llamada al LLM
@@ -183,6 +204,32 @@ namespace OPENGIOAI.Data
                 }
             }
 
+            // ── Contexto semántico (Fase D) ──────────────────────────────────
+            // Reemplaza las secciones pesadas (credenciales + skills +
+            // automatizaciones) por top-K relevantes a la instrucción.
+            // Solo tiene sentido si el perfil las incluiría Y la habilidad
+            // está ON. Si falla o devuelve null → fallback al dump clásico.
+            ContextoRecuperado? contextoSem = null;
+            bool perfilQuiereContextoGrande =
+                perfil.IncluirCredenciales ||
+                perfil.IncluirSkills ||
+                perfil.IncluirAutomatizaciones;
+
+            if (perfilQuiereContextoGrande &&
+                !string.IsNullOrWhiteSpace(instruccionUsuario) &&
+                HabilidadesRegistry.Instancia.EstaActiva(HabilidadesRegistry.HAB_CONTEXTO_SEMANTICO))
+            {
+                try
+                {
+                    contextoSem = await ContextoSemantico.ObtenerContextoRelevanteAsync(
+                        rutaArchivo, instruccionUsuario, ct);
+                }
+                catch
+                {
+                    contextoSem = null;
+                }
+            }
+
             var ctx = new AgentContext
             {
                 PromptMaestro      = promptMaestro,
@@ -197,21 +244,36 @@ namespace OPENGIOAI.Data
                 ManifiestoSkills   = manifiesto,
                 MemoriaFormateada  = memoriaFormateada,
                 Perfil             = perfil,
+                ContextoSemanticoRecuperado = contextoSem,
             };
 
-            // Ensamblar prompt efectivo una sola vez
-            ctx.PromptEfectivo = ctx.ConstruirPromptEfectivo();
+            // Ensamblar prompt efectivo una sola vez — particionado
+            // en prefijo estable (cacheable) + sufijo variable (RAG).
+            var partes = ctx.ConstruirPromptPartes();
+            ctx.PromptEstable  = partes.estable;
+            ctx.PromptVariable = partes.variable;
+            ctx.PromptEfectivo = partes.estable + partes.variable;
 
             return ctx;
         }
 
         /// <summary>
-        /// Ensambla el prompt maestro + secciones dinámicas.
-        /// Cada sección está gobernada por el <see cref="Perfil"/>:
-        /// fases pesadas (Constructor) reciben todo; fases ligeras
-        /// (Analista, Memorista…) reciben solo lo imprescindible.
+        /// Ensambla el prompt en dos partes:
+        /// <list type="bullet">
+        ///   <item><c>estable</c>: el prefijo cacheable (PromptMaestro, rutas,
+        ///     dumps clásicos, historial, usuario, tabla de contenidos). Es el
+        ///     mismo para todas las instrucciones del usuario dentro del mismo
+        ///     workspace/sesión, por lo que proveedores como Anthropic lo
+        ///     reutilizan vía prompt caching (hasta 90% de descuento).</item>
+        ///   <item><c>variable</c>: el sufijo dinámico (bloques RAG de
+        ///     credenciales/skills/automatizaciones y memoria semántica).
+        ///     Cambia con cada instrucción → no debe marcarse como cacheable.</item>
+        /// </list>
+        /// La concatenación <c>estable + variable</c> es byte-equivalente al
+        /// PromptEfectivo clásico, preservando semántica para los proveedores
+        /// que no distinguen las partes (Gemini, Ollama, etc.).
         /// </summary>
-        private string ConstruirPromptEfectivo()
+        private (string estable, string variable) ConstruirPromptPartes()
         {
             // Si el perfil es Mínimo (todo apagado) devolvemos "" sin
             // construir nada — típico del Analista/Guardián que pasan
@@ -226,22 +288,37 @@ namespace OPENGIOAI.Data
                 !Perfil.IncluirPromptsMaestros &&
                 !Perfil.IncluirUsuario)
             {
-                return "";
+                return ("", "");
             }
 
             // Si no hay claves configuradas, el prompt maestro es suficiente.
             if (string.IsNullOrWhiteSpace(ClavesDisponibles) &&
                 Perfil.IncluirPromptMaestro)
-                return PromptMaestro;
+                return (PromptMaestro, "");
 
-            var sb = new System.Text.StringBuilder();
+            // Dos builders — separamos explícitamente lo estable de lo
+            // variable para que el caller pueda marcar solo el prefijo
+            // como cacheable.
+            var sbEstable  = new System.Text.StringBuilder();
+            var sbVariable = new System.Text.StringBuilder();
+
             if (Perfil.IncluirPromptMaestro)
-                sb.Append(PromptMaestro);
+                sbEstable.Append(PromptMaestro);
 
-            // ── Sección: credenciales (solo si el perfil lo pide) ────
+            // ── Sección: credenciales ────────────────────────────
+            // Si el retrieval semántico produjo un bloque filtrado → VARIABLE
+            // (depende de la instrucción del usuario).
+            // Si no → dump clásico ESTABLE (mismos nombres en toda la sesión).
             if (Perfil.IncluirCredenciales && !string.IsNullOrWhiteSpace(ClavesDisponibles))
             {
-                sb.Append($@"
+                string? bloqueRAG = ContextoSemanticoRecuperado?.BloqueCredenciales;
+                if (!string.IsNullOrWhiteSpace(bloqueRAG))
+                {
+                    sbVariable.Append(bloqueRAG);
+                }
+                else
+                {
+                    sbEstable.Append($@"
 ================= SISTEMA DE CREDENCIALES =================
 
 RUTA DEL JSON: {RutasProyecto.ObtenerRutaListApis()}
@@ -255,12 +332,13 @@ REGLAS:
 * Nunca inventes claves. Si no hay coincidencia → informa.
 * Si un token está vencido, usa el token Refresh para renovarlo.
 ");
+                }
             }
 
             // ── Sección: salida y rutas base ─────────────────────
             if (Perfil.IncluirRutaTrabajo)
             {
-                sb.Append($@"
+                sbEstable.Append($@"
 ================= RUTA DE TRABAJO =================
 Ruta activa: {RutaArchivo}
 Archivo de respuesta: {RutaArchivo}\respuesta.txt
@@ -271,7 +349,7 @@ Historial: {RutaArchivo}\Historial.md
             // ── Sección: SOLO_CHAT (solo si aplica) ──────────────
             if (Perfil.IncluirSoloChat && SoloChat)
             {
-                sb.Append($@"
+                sbEstable.Append($@"
 ================= MODO SOLO CHAT =================
 SOLO_CHAT = TRUE
 Toda salida visible EXCLUSIVAMENTE en: {RutaArchivo}\respuesta.txt
@@ -279,20 +357,37 @@ Tu respuesta SIEMPRE debe ser código Python válido. Sin texto plano.
 ");
             }
 
-            // ── Sección: skills disponibles (manifiesto dinámico) ──
+            // ── Sección: skills disponibles ───────────────────────
+            // Retrieval semántico ON → VARIABLE (top-K según instrucción).
+            // Retrieval OFF → manifest completo ESTABLE.
             if (Perfil.IncluirSkills && !string.IsNullOrWhiteSpace(ManifiestoSkills))
             {
-                sb.Append($@"
+                string? bloqueRAG = ContextoSemanticoRecuperado?.BloqueSkills;
+                if (!string.IsNullOrWhiteSpace(bloqueRAG))
+                {
+                    sbVariable.Append(bloqueRAG);
+                }
+                else
+                {
+                    sbEstable.Append($@"
 ================= SKILLS DISPONIBLES =================
 {ManifiestoSkills}
 Importar en Python: from skill_runner import skill_run, skill_run_json
 ");
+                }
             }
 
             // ── Sección: automatizaciones ────────────────────────
+            // El bloque RAG (cuando existe) es VARIABLE.
+            // El pie con las rutas físicas es ESTABLE (no cambia por workspace).
             if (Perfil.IncluirAutomatizaciones)
             {
-                sb.Append($@"
+                string? bloqueRAG = ContextoSemanticoRecuperado?.BloqueAutomatizaciones;
+                if (!string.IsNullOrWhiteSpace(bloqueRAG))
+                {
+                    sbVariable.Append(bloqueRAG);
+                }
+                sbEstable.Append($@"
 ================= AUTOMATIZACIONES =================
 Carpeta: {RutaArchivo}\Automatizaciones\
 Lista:   {RutaArchivo}\ListAutomatizacion.json
@@ -302,7 +397,7 @@ Lista:   {RutaArchivo}\ListAutomatizacion.json
             // ── Sección: historial ───────────────────────────────
             if (Perfil.IncluirHistorial)
             {
-                sb.Append($@"
+                sbEstable.Append($@"
 ================= HISTORIAL =================
 Registra cada ejecución en {RutaArchivo}\Historial.md
 Formato: #[FECHA] Descripción breve: [TIPO_ACCION]
@@ -312,7 +407,7 @@ Formato: #[FECHA] Descripción breve: [TIPO_ACCION]
             // ── Sección: prompts maestros ────────────────────────
             if (Perfil.IncluirPromptsMaestros)
             {
-                sb.Append($@"
+                sbEstable.Append($@"
 ================= CONFIGURACIÓN DE PROMPTS =================
 Prompt maestro:         {RutasProyecto.ObtenerRutaPromtMaestro()}
 Prompt respuesta error: {RutasProyecto.ObtenerRutaPromtAgente()}
@@ -320,21 +415,41 @@ Prompt respuesta error: {RutasProyecto.ObtenerRutaPromtAgente()}
             }
 
             // ── Sección: memoria durable (Fase 1) ────────────────
+            // Cuando HAB_MEMORIA_SEMANTICA está ON, MemoriaFormateada
+            // contiene top-K keyed por la instrucción del usuario → VARIABLE.
+            // Cuando está OFF, es el dump completo de Hechos.md/Episodios.md
+            // que no cambia entre turnos → ESTABLE.
+            // Decidimos por la misma señal que usó BuildAsync.
             if (Perfil.IncluirMemoria && !string.IsNullOrWhiteSpace(MemoriaFormateada))
             {
-                sb.Append(MemoriaFormateada);
+                bool memoriaEsVariable =
+                    HabilidadesRegistry.Instancia.EstaActiva(HabilidadesRegistry.HAB_MEMORIA_SEMANTICA);
+
+                if (memoriaEsVariable)
+                    sbVariable.Append(MemoriaFormateada);
+                else
+                    sbEstable.Append(MemoriaFormateada);
             }
 
             // ── Sección: usuario ─────────────────────────────────
             if (Perfil.IncluirUsuario)
             {
-                sb.Append(@"
+                sbEstable.Append(@"
 ================= USUARIO =================
 Nombre: Giovanni Sanchez
 ");
             }
 
-            return sb.ToString();
+            // ── Tabla de contenidos (Fase D) ─────────────────────
+            // Lista los IDs/nombres disponibles sin descripción. Depende
+            // SOLO del contenido indexado (no de la instrucción) → ESTABLE.
+            if (ContextoSemanticoRecuperado != null &&
+                !string.IsNullOrWhiteSpace(ContextoSemanticoRecuperado.TablaContenidos))
+            {
+                sbEstable.Append(ContextoSemanticoRecuperado.TablaContenidos);
+            }
+
+            return (sbEstable.ToString(), sbVariable.ToString());
         }
 
         /// <summary>
@@ -357,9 +472,14 @@ Nombre: Giovanni Sanchez
                 Skills             = Skills,
                 ManifiestoSkills   = ManifiestoSkills,
                 MemoriaFormateada  = MemoriaFormateada,
+                ContextoSemanticoRecuperado = ContextoSemanticoRecuperado,
                 NombreFase         = NombreFase,
                 Perfil             = Perfil,
                 PromptEfectivo     = PromptRespuestaErr,
+                // Agente2 usa un prompt dedicado (de error/reparación); ese
+                // prompt es estable por sí mismo y no tiene sufijo variable.
+                PromptEstable      = PromptRespuestaErr,
+                PromptVariable     = "",
             };
         }
 
@@ -384,9 +504,14 @@ Nombre: Giovanni Sanchez
                 Skills             = Skills,
                 ManifiestoSkills   = ManifiestoSkills,
                 MemoriaFormateada  = MemoriaFormateada,
+                ContextoSemanticoRecuperado = ContextoSemanticoRecuperado,
                 NombreFase         = NombreFase,
                 Perfil             = Perfil,
                 PromptEfectivo     = promptEfectivo,
+                // Prompt personalizado = prefijo estable por sí mismo (el
+                // caller suministró el texto completo). Sin sufijo variable.
+                PromptEstable      = promptEfectivo,
+                PromptVariable     = "",
             };
         }
 
@@ -406,9 +531,12 @@ Nombre: Giovanni Sanchez
                 SoloChat = SoloChat,
                 ClavesDisponibles = ClavesDisponibles,
                 MemoriaFormateada = MemoriaFormateada,
+                ContextoSemanticoRecuperado = ContextoSemanticoRecuperado,
                 NombreFase        = NombreFase,
                 Perfil            = Perfil,
                 PromptEfectivo = PromtsBase.PromtInicioUsuario(RutaArchivo),
+                PromptEstable  = PromtsBase.PromtInicioUsuario(RutaArchivo),
+                PromptVariable = "",
             };
         }
 
@@ -434,9 +562,12 @@ Nombre: Giovanni Sanchez
                 Skills             = Skills,
                 ManifiestoSkills   = ManifiestoSkills,
                 MemoriaFormateada  = MemoriaFormateada,
+                ContextoSemanticoRecuperado = ContextoSemanticoRecuperado,
                 NombreFase         = string.IsNullOrWhiteSpace(nombreFase) ? "General" : nombreFase,
                 Perfil             = Perfil,
                 PromptEfectivo     = PromptEfectivo,
+                PromptEstable      = PromptEstable,
+                PromptVariable     = PromptVariable,
             };
         }
     }

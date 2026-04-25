@@ -1,5 +1,5 @@
 ﻿// ============================================================
-//  ConversationWindow.cs  — PASO 3
+//  ConversationWindow.cs  — PASO 3 + Fase 2 (historial comprimido)
 //
 //  PROBLEMA ANTERIOR:
 //    _scritpRespuesta en FrmMandos acumulaba todo el historial
@@ -22,10 +22,20 @@
 //    se descarta el turno más antiguo antes de agregar el nuevo.
 //    El resultado es siempre una ventana de contexto controlada.
 //
+//  FASE 2 — HISTORIAL COMPRIMIDO:
+//    Cuando la habilidad HAB_HISTORIAL_COMPRIMIDO está activa, los
+//    turnos que salen de la ventana NO se descartan: se envían a un
+//    resumidor (delegate) que los fusiona con el resumen previo. El
+//    ResumenAcumulado se inyecta al inicio de ConstruirBloque() para
+//    que el LLM recuerde decisiones/archivos/objetivos aunque los
+//    turnos crudos ya se hayan expulsado.
+//
 //  USO EN FrmMandos:
 //    Reemplaza completamente _scritpRespuesta.
 //    Ver FrmMandos_ConversationWindow.cs para la integración.
 // ============================================================
+
+using OPENGIOAI.Utilerias;
 
 namespace OPENGIOAI.Data
 {
@@ -45,6 +55,16 @@ namespace OPENGIOAI.Data
     }
 
     /// <summary>
+    /// Delegado para resumir turnos expulsados de la ventana.
+    /// Recibe el resumen previo y los turnos a integrar, devuelve el
+    /// nuevo resumen fusionado. Si falla, debe devolver el previo.
+    /// </summary>
+    public delegate Task<string> ResumirHistorialDelegate(
+        string resumenPrevio,
+        IReadOnlyList<ConversationTurn> expulsados,
+        CancellationToken ct);
+
+    /// <summary>
     /// Ventana deslizante de contexto conversacional.
     /// Mantiene los últimos N turnos sin superar un límite de tokens.
     /// Thread-safe mediante lock ligero (las operaciones son O(N) con N pequeño).
@@ -53,6 +73,13 @@ namespace OPENGIOAI.Data
     {
         private readonly LinkedList<ConversationTurn> _turnos = new();
         private readonly object _lock = new();
+
+        /// <summary>
+        /// Resumen acumulado de los turnos que ya salieron de la ventana.
+        /// Vacío si la habilidad HAB_HISTORIAL_COMPRIMIDO nunca se activó
+        /// o si aún no se ha expulsado ningún turno.
+        /// </summary>
+        public string ResumenAcumulado { get; private set; } = "";
 
         // ── Configuración ─────────────────────────────────────────────────────
 
@@ -97,6 +124,8 @@ namespace OPENGIOAI.Data
         /// Agrega un turno nuevo a la ventana.
         /// Si supera MaxTurnos o MaxTokens, descarta el turno más antiguo
         /// hasta que la ventana vuelva a estar dentro de los límites.
+        /// NOTA: esta versión síncrona NO resume — los turnos expulsados
+        /// se pierden. Usar AgregarAsync para conservarlos vía resumen.
         /// </summary>
         public void Agregar(string instruccion, string respuestaAgente)
         {
@@ -124,13 +153,72 @@ namespace OPENGIOAI.Data
         }
 
         /// <summary>
-        /// Limpia toda la ventana.
+        /// Agrega un turno y, si la habilidad HAB_HISTORIAL_COMPRIMIDO está
+        /// activa y se proporciona un resumidor, fusiona los turnos expulsados
+        /// con el ResumenAcumulado previo. Si el resumidor falla, los turnos
+        /// se pierden sin romper el flujo principal (el caller sigue adelante).
+        /// </summary>
+        public async Task AgregarAsync(
+            string instruccion,
+            string respuestaAgente,
+            ResumirHistorialDelegate? resumidor,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(instruccion) &&
+                string.IsNullOrWhiteSpace(respuestaAgente))
+                return;
+
+            var turno = new ConversationTurn(
+                instruccion, respuestaAgente, DateTime.Now);
+
+            List<ConversationTurn> expulsados = new();
+
+            lock (_lock)
+            {
+                _turnos.AddLast(turno);
+
+                while (_turnos.Count > MaxTurnos)
+                {
+                    expulsados.Add(_turnos.First!.Value);
+                    _turnos.RemoveFirst();
+                }
+
+                while (_turnos.Count > 1 &&
+                       _turnos.Sum(t => t.TokensEstimados) > MaxTokens)
+                {
+                    expulsados.Add(_turnos.First!.Value);
+                    _turnos.RemoveFirst();
+                }
+            }
+
+            if (expulsados.Count == 0) return;
+            if (resumidor == null) return;
+            if (!HabilidadesRegistry.Instancia.EstaActiva(
+                    HabilidadesRegistry.HAB_HISTORIAL_COMPRIMIDO))
+                return;
+
+            try
+            {
+                string previo = ResumenAcumulado ?? "";
+                string nuevo  = await resumidor(previo, expulsados, ct);
+                if (!string.IsNullOrWhiteSpace(nuevo))
+                    ResumenAcumulado = nuevo;
+            }
+            catch
+            {
+                // Tolerante a fallos: el resumidor ya loguea/trace internamente.
+            }
+        }
+
+        /// <summary>
+        /// Limpia toda la ventana y el resumen acumulado.
         /// Llamar cuando el usuario inicia una nueva conversación o
         /// cambia de agente/ruta.
         /// </summary>
         public void Limpiar()
         {
             lock (_lock) _turnos.Clear();
+            ResumenAcumulado = "";
         }
 
         // ── Serialización a prompt ────────────────────────────────────────────
@@ -151,9 +239,22 @@ namespace OPENGIOAI.Data
         {
             lock (_lock)
             {
-                if (_turnos.Count == 0) return "";
+                bool hayResumen = !string.IsNullOrWhiteSpace(ResumenAcumulado);
+                if (_turnos.Count == 0 && !hayResumen) return "";
 
                 var sb = new System.Text.StringBuilder();
+
+                if (hayResumen)
+                {
+                    sb.AppendLine("[RESUMEN PREVIO — contexto comprimido de turnos antiguos]");
+                    sb.AppendLine(ResumenAcumulado!.Trim());
+                    sb.AppendLine("[FIN RESUMEN]");
+                    sb.AppendLine();
+                }
+
+                if (_turnos.Count == 0)
+                    return sb.ToString();
+
                 sb.AppendLine($"[CONTEXTO PREVIO — últimos {_turnos.Count} turno(s)]");
 
                 foreach (var t in _turnos)

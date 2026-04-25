@@ -49,6 +49,10 @@ namespace OPENGIOAI.Utilerias
         public int TotalCompletionTokens => Llamadas.Sum(c => c.CompletionTokens);
         public int TotalTokens           => Llamadas.Sum(c => c.TotalTokens);
         public decimal CostoEstimadoUsd  => Llamadas.Sum(c => c.CostoEstimadoUsd);
+
+        // Prompt caching (Fase 1): visibilidad del ahorro por ejecución.
+        public int TotalCacheReadTokens     => Llamadas.Sum(c => c.CacheReadTokens);
+        public int TotalCacheCreationTokens => Llamadas.Sum(c => c.CacheCreationTokens);
     }
 
     public sealed class ConsumoTokensTracker
@@ -109,12 +113,16 @@ namespace OPENGIOAI.Utilerias
             if (consumo == null) return;
 
             // Enriquecer con costo antes de registrar.
+            // Usamos la sobrecarga cache-aware para reflejar el descuento
+            // real de prompt caching en proveedores que lo exponen.
             if (consumo.CostoEstimadoUsd == 0m)
             {
                 consumo.CostoEstimadoUsd = PreciosModelos.Instancia.Estimar(
                     consumo.Modelo,
                     consumo.PromptTokens,
-                    consumo.CompletionTokens);
+                    consumo.CompletionTokens,
+                    consumo.CacheReadTokens,
+                    consumo.CacheCreationTokens);
             }
 
             lock (_lock)
@@ -182,6 +190,26 @@ namespace OPENGIOAI.Utilerias
                     usd    += _actual.CostoEstimadoUsd;
                 }
                 return (tokens, usd);
+            }
+        }
+
+        /// <summary>
+        /// Tokens de la sesión servidos desde caché del proveedor
+        /// (subset de los tokens de entrada). Cuantifica el ahorro
+        /// real del prompt caching.
+        /// </summary>
+        public (int read, int creation) CacheSesion()
+        {
+            lock (_lock)
+            {
+                int read     = _historial.Sum(e => e.TotalCacheReadTokens);
+                int creation = _historial.Sum(e => e.TotalCacheCreationTokens);
+                if (_actual != null)
+                {
+                    read     += _actual.TotalCacheReadTokens;
+                    creation += _actual.TotalCacheCreationTokens;
+                }
+                return (read, creation);
             }
         }
 

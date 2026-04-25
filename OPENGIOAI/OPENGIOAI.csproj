@@ -17,6 +17,14 @@
     <Content Include="logo.ico" />
   </ItemGroup>
 
+  <!-- Excluir subproyectos de pruebas: tienen su propio csproj y Main.
+       Sin esto, el glob implícito los compilaría aquí y chocarían los entry points. -->
+  <ItemGroup>
+    <Compile Remove="Tests\**" />
+    <EmbeddedResource Remove="Tests\**" />
+    <None Remove="Tests\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Google.Apis.Auth" Version="1.68.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />

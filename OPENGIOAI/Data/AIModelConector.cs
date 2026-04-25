@@ -718,6 +718,57 @@ namespace OPENGIOAI.Data
         //  CONSTRUCCIÓN DE REQUESTS
         // =====================================================================
 
+        /// <summary>
+        /// Construye el campo <c>system</c> de la API de Anthropic como un
+        /// array de bloques de texto, marcando el prefijo estable con
+        /// <c>cache_control: ephemeral</c> para activar prompt caching.
+        ///
+        /// RESULTADO POSIBLE:
+        ///   · Dos bloques: [estable con cache_control, variable sin cache].
+        ///   · Un bloque: solo estable o solo variable (según disponibilidad).
+        ///   · Fallback string: si el contexto no particionó el prompt
+        ///     (legacy), enviamos el PromptEfectivo como string plano —
+        ///     Anthropic acepta ambos formatos.
+        ///
+        /// NOTAS:
+        ///   · Anthropic exige mínimo 1024 tokens (≈4 KB) en el bloque para
+        ///     activar el caché. Si el estable es muy corto, cache_control
+        ///     es silenciosamente ignorado — no es un error.
+        ///   · TTL del caché: 5 minutos desde el último hit.
+        /// </summary>
+        private static object ConstruirSystemClaude(AgentContext ctx)
+        {
+            string estable  = ctx.PromptEstable  ?? "";
+            string variable = ctx.PromptVariable ?? "";
+
+            // Retrocompatibilidad: contextos antiguos sin particionar.
+            if (string.IsNullOrEmpty(estable) && string.IsNullOrEmpty(variable))
+                return ctx.PromptEfectivo ?? "";
+
+            var bloques = new List<object>();
+
+            if (!string.IsNullOrEmpty(estable))
+            {
+                bloques.Add(new
+                {
+                    type = "text",
+                    text = estable,
+                    cache_control = new { type = "ephemeral" }
+                });
+            }
+
+            if (!string.IsNullOrEmpty(variable))
+            {
+                bloques.Add(new
+                {
+                    type = "text",
+                    text = variable,
+                });
+            }
+
+            return bloques.ToArray();
+        }
+
         private static (string url, object body) ConstruirRequest(
             string instruccion, AgentContext ctx)
         {
@@ -751,7 +802,11 @@ namespace OPENGIOAI.Data
                         model = string.IsNullOrEmpty(modelo) ? "claude-3-haiku-20240307" : modelo,
                         max_tokens = 9000,
                         temperature = 1,
-                        system = prompt,
+                        // Prompt caching (Fase 1): bloque estable marcado
+                        // con cache_control → Anthropic lo reutiliza 5 min
+                        // con ~90% descuento en tokens repetidos. El bloque
+                        // variable (RAG retrievals) queda sin cache_control.
+                        system = ConstruirSystemClaude(ctx),
                         messages = new[]
                         {
                             new { role = "user", content = new[] { new { type = "text", text = instruccion } } }
@@ -837,7 +892,8 @@ namespace OPENGIOAI.Data
                         model = modelo,
                         max_tokens = 2048,
                         stream = true,
-                        system = prompt,
+                        // Igual que el path no-stream: prefijo estable cacheado.
+                        system = ConstruirSystemClaude(ctx),
                         messages = new[] { new { role = "user", content = instruccion } }
                     }
                 ),

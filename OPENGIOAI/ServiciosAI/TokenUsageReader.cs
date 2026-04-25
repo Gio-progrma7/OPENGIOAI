@@ -43,6 +43,15 @@ namespace OPENGIOAI.ServiciosAI
                         result.PromptTokens = usage["prompt_tokens"]?.Value<int>() ?? 0;
                         result.CompletionTokens = usage["completion_tokens"]?.Value<int>() ?? 0;
                         result.TotalTokens = usage["total_tokens"]?.Value<int>() ?? 0;
+
+                        // Prompt caching (Fase 1):
+                        //   · OpenAI   → usage.prompt_tokens_details.cached_tokens
+                        //   · Deepseek → usage.prompt_cache_hit_tokens
+                        //   · OpenRouter → pasa los campos del proveedor upstream.
+                        var cachedOpenAi = usage["prompt_tokens_details"]?["cached_tokens"]?.Value<int>();
+                        var cachedDeep   = usage["prompt_cache_hit_tokens"]?.Value<int>();
+                        result.CacheReadTokens = cachedOpenAi ?? cachedDeep ?? 0;
+
                         result.Disponible = true;
                         break;
                     }
@@ -55,10 +64,21 @@ namespace OPENGIOAI.ServiciosAI
                         var usage = root["usage"];
                         if (usage == null) return result;
 
-                        result.PromptTokens = usage["input_tokens"]?.Value<int>() ?? 0;
-                        result.CompletionTokens = usage["output_tokens"]?.Value<int>() ?? 0;
-                        result.TotalTokens = result.PromptTokens + result.CompletionTokens;
-                        result.Disponible = true;
+                        int inputTokens        = usage["input_tokens"]?.Value<int>() ?? 0;
+                        int outputTokens       = usage["output_tokens"]?.Value<int>() ?? 0;
+                        int cacheReadTokens    = usage["cache_read_input_tokens"]?.Value<int>() ?? 0;
+                        int cacheCreateTokens  = usage["cache_creation_input_tokens"]?.Value<int>() ?? 0;
+
+                        // Anthropic reporta input_tokens SIN contar los
+                        // cached/creation. Para mantener coherencia con
+                        // otros proveedores (donde PromptTokens incluye
+                        // cached), sumamos todo.
+                        result.PromptTokens         = inputTokens + cacheReadTokens + cacheCreateTokens;
+                        result.CompletionTokens     = outputTokens;
+                        result.TotalTokens          = result.PromptTokens + result.CompletionTokens;
+                        result.CacheReadTokens      = cacheReadTokens;
+                        result.CacheCreationTokens  = cacheCreateTokens;
+                        result.Disponible           = true;
                         break;
                     }
 

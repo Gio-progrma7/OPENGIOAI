@@ -45,5 +45,28 @@ namespace OPENGIOAI.Entidades
         /// 0 si el modelo no tiene tarifa registrada o es local (Ollama).
         /// </summary>
         public decimal CostoEstimadoUsd { get; set; } = 0m;
+
+        // ── Prompt caching (Fase 1) ─────────────────────────────────
+        //
+        // Tokens ingresados al LLM que fueron servidos desde la caché del
+        // proveedor (~90% descuento). Se reporta cuando el proveedor expone
+        // la métrica:
+        //   · Anthropic → usage.cache_read_input_tokens
+        //   · OpenAI    → usage.prompt_tokens_details.cached_tokens
+        //   · Deepseek  → usage.prompt_cache_hit_tokens
+        //
+        // Nota: estos tokens ya están contados dentro de PromptTokens.
+        // Se desglosan aquí solo para telemetría y cálculo de ahorros.
+
+        /// <summary>Tokens del prompt servidos desde caché del proveedor (subset de PromptTokens).</summary>
+        public int CacheReadTokens { get; set; } = 0;
+
+        /// <summary>
+        /// Tokens del prompt que se escribieron en la caché en esta llamada
+        /// (solo Anthropic: <c>usage.cache_creation_input_tokens</c>).
+        /// Representan el "costo de sembrado": se facturan a ~125% del
+        /// precio normal, pero después se leen a ~10%.
+        /// </summary>
+        public int CacheCreationTokens { get; set; } = 0;
     }
 }

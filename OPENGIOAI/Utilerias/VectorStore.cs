@@ -48,6 +48,22 @@ namespace OPENGIOAI.Utilerias
             _ruta = RutasProyecto.ObtenerRutaEmbeddings(rutaWorkspace);
         }
 
+        /// <summary>
+        /// Constructor con archivo personalizado (para índices paralelos
+        /// como embeddings_contexto.jsonl). Misma semántica que el ctor base,
+        /// pero permite a cada subsistema mantener su propio vector store
+        /// sin mezclar scopes (memoria vs. contexto del agente).
+        /// </summary>
+        public static VectorStore Crear(string rutaArchivoJsonl)
+        {
+            return new VectorStore(rutaArchivoJsonl, _interno: true);
+        }
+
+        private VectorStore(string rutaArchivoJsonl, bool _interno)
+        {
+            _ruta = rutaArchivoJsonl;
+        }
+
         // ══════════════════ API pública ══════════════════
 
         /// <summary>Fuerza la lectura del disco (lazy by default).</summary>

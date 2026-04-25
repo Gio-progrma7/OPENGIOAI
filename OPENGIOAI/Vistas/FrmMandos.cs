@@ -77,7 +77,11 @@ namespace OPENGIOAI.Vistas
     {
         // ── Constantes de comportamiento ──────────────────────────────────────
         // [C2] Centralizar aquí facilita cambiar el timeout sin buscar en el código.
-        private const int TimeoutSegundos = 120;
+        // NOTA (Fase comandos): TimeoutSegundos pasó de const a field privado para
+        // poder modificarse vía `#timeout <N>` desde Telegram/Slack/UI.
+        private int _timeoutSegundos = 120;
+        private const int TimeoutMinimo = 10;
+        private const int TimeoutMaximo = 1800; // 30 min — techo de seguridad
         private const int MaxTurnosContexto = 6;
         private const int MaxTokensContexto = 3000;
 
@@ -120,7 +124,9 @@ namespace OPENGIOAI.Vistas
         private CancellationTokenSource _ctsIA;
         private readonly TelegramService _telegramService;
         private readonly BroadcastService _broadcast;
-        private readonly CommandRouter _router = new();
+        // Nuevo motor de comandos — reemplaza al antiguo CommandRouter.
+        private readonly Comandos.CommandRegistry _cmdRegistry = new();
+        private Comandos.CommandExecutor _cmdExecutor = null!;
 
         // ── ARIA: panel de estado de agentes y tracking de fase ───────────────
         private PanelAgentes _panelAgentes = null!;
@@ -607,7 +613,7 @@ namespace OPENGIOAI.Vistas
         {
             _ctsIA?.Cancel();
             _ctsIA?.Dispose();
-            _ctsIA = new CancellationTokenSource(TimeSpan.FromSeconds(TimeoutSegundos));
+            _ctsIA = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSegundos));
             var ct = _ctsIA.Token;
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -799,7 +805,21 @@ namespace OPENGIOAI.Vistas
             _streaming.Finalizar(textoFinalComunicador);
 
             // ── Registrar en ventana de contexto y difundir ───────────────────
-            _ventana.Agregar(instruccionOriginal, respuestaFinal);
+            // Fase 2: si HAB_HISTORIAL_COMPRIMIDO está activa, los turnos que
+            // salgan de la ventana se resumen con el proveedor/modelo actual
+            // en lugar de perderse. Fail-open: si el resumidor falla, sigue
+            // el flujo sin romper nada.
+            await _ventana.AgregarAsync(
+                instruccionOriginal,
+                respuestaFinal,
+                (previo, expulsados, ctResumen) => HistorialResumidor.ResumirAsync(
+                    previo,
+                    expulsados,
+                    _modeloSeleccionado.Agente,
+                    _modeloSeleccionado.Modelos,
+                    _modeloSeleccionado.ApiKey,
+                    ctResumen),
+                ct);
 
             if (!string.IsNullOrWhiteSpace(respuestaFinal))
                 await EjecutarDifusionAsync(respuestaFinal, usarTelegram, usarSlack);
@@ -1583,8 +1603,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             {
                 MostrarMensaje(texto, true);
 
-                string textoNorm = texto.Trim().ToUpperInvariant();
-                bool esComando = textoNorm.StartsWith('#');
+                bool esComando = texto.TrimStart().StartsWith('#');
 
                 if (!esComando)
                 {
@@ -1593,7 +1612,8 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                         TelegramSender.CancelarConfig());
                 }
 
-                await EjecutarComandoOConsultaAsync(textoNorm, texto, true, false);
+                // Pasamos el texto ORIGINAL (preserva el case de los args).
+                await EjecutarComandoOConsultaAsync(texto, true, false);
             }
             catch (Exception ex)
             {
@@ -1613,134 +1633,75 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         private object CambiarRuta_Telegram() => TelegramSender.CrearKeyboardDesdeListaRutas(_listaArchivosDisponibles);
 
         /// <summary>
-        /// Enrutador de comandos Telegram / Slack. Delega en el CommandRouter
-        /// con los handlers registrados en ConfigurarCommandRouter().
+        /// Enrutador de comandos Telegram / Slack. Usa el nuevo CommandExecutor:
+        /// si el texto no es un comando (no empieza con `#`) delega al motor IA
+        /// como fallback. Preserva el caso original de los argumentos — crítico
+        /// para `#ruta`, `#modelo`, voces de TTS, etc.
         /// </summary>
-        private Task EjecutarComandoOConsultaAsync(
-            string textoCmd, string textoOriginal,
+        private async Task EjecutarComandoOConsultaAsync(
+            string textoOriginal,
             bool usarTelegram = false, bool usarSlack = false)
         {
-            return _router.DespacharAsync(
-                textoCmd, textoOriginal,
+            var resultado = await _cmdExecutor.DespacharAsync(
+                textoOriginal,
                 _telegramService.Chat.ChatId,
                 usarTelegram, usarSlack);
-        }
 
-        /// <summary>
-        /// Registra todos los handlers de comandos en el router. Cada handler
-        /// captura el estado de form / servicios que necesita vía closure.
-        /// </summary>
-        private void ConfigurarCommandRouter()
-        {
-            _router.Registrar("#CANCELAR", _ =>
+            // Si no era un comando `#algo`, cae al motor IA (sólo Telegram/UI;
+            // Slack tiene su propio path en Realizar_Peticiones_Slack).
+            if (!resultado.EsComando && !usarSlack && !string.IsNullOrWhiteSpace(textoOriginal))
             {
-                CancelarInstruccion();
-                return Task.CompletedTask;
-            });
-
-            _router.Registrar("#AGENTE", ctx =>
-            {
-                int svc = Utils.ObtenerServicio_Nombre(ctx.Valor);
-                var agente = _listaAgentes.FirstOrDefault(e => (int)e.Agente == svc);
-                if (agente != null) comboBoxAgentes.SelectedValue = agente.ApiKey;
-                return Task.CompletedTask;
-            });
-
-            _router.Registrar("#MODELO", ctx =>
-            {
-                comboBoxModeloIA.Text = ctx.Valor;
-                return Task.CompletedTask;
-            });
-
-            _router.Registrar("#RUTA", ctx =>
-            {
-                comboBoxRuta.Text = ctx.Valor;
-                return Task.CompletedTask;
-            });
-
-            _router.Registrar("#CAMBIARAGENTE", ctx =>
-                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    "Elije una opcion :", CambiarAgente_Telegram(),
-                    ctx.UsarTelegram, ctx.UsarSlack));
-
-            _router.Registrar("#CAMBIARMODELO", ctx =>
-                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    "Elije una opcion :", CambiarModelo_Telegram(),
-                    ctx.UsarTelegram, ctx.UsarSlack));
-
-            _router.Registrar("#CAMBIARRUTA", ctx =>
-                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    "Elije una opcion :", CambiarRuta_Telegram(),
-                    ctx.UsarTelegram, ctx.UsarSlack));
-
-            _router.Registrar("#CONFIGURACIONES", ctx =>
-                _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    "Elije una opcion :", TelegramSender.Configuraciones_Menu(),
-                    ctx.UsarTelegram, ctx.UsarSlack));
-
-            _router.Registrar("#ACTIVATELEGRAM", ctx =>
-            {
-                _telegramActivo = true;
-                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    "Se activaron los mensajes de Telegram.", null,
-                    ctx.UsarTelegram, ctx.UsarSlack);
-            });
-
-            _router.Registrar("#DESACTIVATELEGRAM", ctx =>
-            {
-                _telegramActivo = false;
-                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    "Se desactivaron los mensajes de Telegram.", null,
-                    ctx.UsarTelegram, ctx.UsarSlack);
-            });
-
-            _router.Registrar("#RECORDAR", ctx =>
-            {
-                _recordarTema = !_recordarTema;
-                checkBoxRecordar.Checked = _recordarTema;
-                string estado = _recordarTema ? "activada" : "desactivada";
-                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    $"Opción RECORDAR TEMA {estado}.", null,
-                    ctx.UsarTelegram, ctx.UsarSlack);
-            });
-
-            _router.Registrar("#SOLOCHAT", ctx =>
-            {
-                _soloChat = !_soloChat;
-                checkBoxSoloChat.Checked = _soloChat;
-                string estado = _soloChat ? "activado" : "desactivado";
-                MostrarMensaje("SE ACTIVÓ LA OPCIÓN SOLO CHAT", false);
-                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    $"Opción SOLO CHAT {estado}.", null,
-                    ctx.UsarTelegram, ctx.UsarSlack);
-            });
-
-            _router.Registrar("#APIS", ctx =>
-            {
-                // [C4] CargarListaAgents solo se llama bajo demanda explícita.
-                CargarListaAgents();
-                string apis = string.Join("\n", _listaApisDisponibles.Select(a => $"- {a.Nombre}"));
-                return _broadcast.EnviarAsync(ctx.ChatIdTelegram,
-                    $"APIs disponibles:\n{apis}", null,
-                    ctx.UsarTelegram, ctx.UsarSlack);
-            });
-
-            // Texto libre o comando no registrado → motor IA. Slack tiene su
-            // propio path (Realizar_Peticiones_Slack), aquí solo aplica Telegram.
-            _router.RegistrarFallback(async (textoOriginal, ctx) =>
-            {
-                if (ctx.UsarSlack) return;
-
                 textBoxInstrucion.Text = textoOriginal;
                 try
                 {
-                    await EjecutarMotorIAAsync(textoOriginal, ctx.UsarTelegram);
+                    await EjecutarMotorIAAsync(textoOriginal, usarTelegram);
                 }
                 finally
                 {
                     textBoxInstrucion.Text = "";
                 }
-            });
+            }
+        }
+
+        /// <summary>
+        /// Registra todos los comandos en el CommandRegistry y crea el executor.
+        /// Un comando = una clase (ver Comandos/Handlers/).
+        /// </summary>
+        private void ConfigurarCommandRouter()
+        {
+            // Handlers de configuración / estado
+            _cmdRegistry.Registrar(new Comandos.Handlers.CancelarCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.EstadoCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.AyudaCommand(_cmdRegistry));
+
+            // Handlers de agente / modelo / ruta
+            _cmdRegistry.Registrar(new Comandos.Handlers.AgenteCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.ModeloCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.RutaCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.CambiarAgenteCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.CambiarModeloCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.CambiarRutaCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.ApisCommand());
+
+            // Handlers de configuración
+            _cmdRegistry.Registrar(new Comandos.Handlers.ConfiguracionesCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.RecordarCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.SoloChatCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.ReintentosCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.TimeoutCommand());
+
+            // Handlers de integración
+            _cmdRegistry.Registrar(new Comandos.Handlers.TelegramCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.ActivaTelegramCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.DesactivaTelegramCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.SlackCommand());
+            _cmdRegistry.Registrar(new Comandos.Handlers.AudioCommand());
+
+            // Handlers de habilidades
+            _cmdRegistry.Registrar(new Comandos.Handlers.HabilidadCommand());
+
+            // `this` implementa IServiciosComandos (ver FrmMandos.Comandos.cs).
+            _cmdExecutor = new Comandos.CommandExecutor(_cmdRegistry, this);
         }
 
         #endregion
@@ -1769,10 +1730,9 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             }
 
             string respuesta = "";
-            string textoNorm = instruccion.Trim().ToUpperInvariant();
 
-            if (textoNorm.StartsWith('#'))
-                await EjecutarComandoOConsultaAsync(textoNorm, "", false, true);
+            if (instruccion.TrimStart().StartsWith('#'))
+                await EjecutarComandoOConsultaAsync(instruccion, false, true);
             else
                 respuesta = await EjecutarMotorIAAsync(instruccion, false, true);
 

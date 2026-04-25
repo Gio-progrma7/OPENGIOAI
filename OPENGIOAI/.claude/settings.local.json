@@ -41,7 +41,8 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(tasklist //FI \"IMAGENAME eq OPENGIOAI.exe\" //FI \"IMAGENAME eq devenv.exe\")",
-      "Bash(dotnet add *)"
+      "Bash(dotnet add *)",
+      "Bash(dotnet run *)"
     ]
   }
 }

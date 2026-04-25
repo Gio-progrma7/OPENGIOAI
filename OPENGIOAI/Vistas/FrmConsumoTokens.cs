@@ -154,12 +154,30 @@ namespace OPENGIOAI.Vistas
             var item = new ListViewItem(string.IsNullOrWhiteSpace(c.Fase) ? "General" : c.Fase);
             item.SubItems.Add(string.IsNullOrWhiteSpace(c.Modelo) ? "-" : c.Modelo);
             item.SubItems.Add(c.PromptTokens.ToString("N0"));
+            item.SubItems.Add(FormatearCacheCelda(c.CacheReadTokens, c.CacheCreationTokens, c.PromptTokens));
             item.SubItems.Add(c.CompletionTokens.ToString("N0"));
             item.SubItems.Add(c.TotalTokens.ToString("N0"));
             item.SubItems.Add(c.CostoEstimadoUsd > 0 ? $"${c.CostoEstimadoUsd:F4}" : "-");
             item.SubItems.Add(c.Instante.ToString("HH:mm:ss"));
             lstVivo.Items.Add(item);
             item.EnsureVisible();
+        }
+
+        /// <summary>
+        /// Formato "1.2k (42%)" para cache hits. Prioriza CacheRead (el que
+        /// importa — tokens servidos baratos). Si solo hubo creation (sembrado),
+        /// lo marca con un "+" para distinguirlo del hit real.
+        /// </summary>
+        private static string FormatearCacheCelda(int read, int creation, int prompt)
+        {
+            if (read == 0 && creation == 0) return "-";
+            if (read > 0)
+            {
+                int pct = prompt > 0 ? (int)Math.Round(read * 100.0 / prompt) : 0;
+                return $"{read:N0} ({pct}%)";
+            }
+            // Solo creation → sembrado inicial; aún no hay ahorro.
+            return $"+{creation:N0}";
         }
 
         private void RefrescarHistorial()
@@ -173,6 +191,10 @@ namespace OPENGIOAI.Vistas
                 item.SubItems.Add(Recortar(ejec.Instruccion, 80));
                 item.SubItems.Add(ejec.Llamadas.Count.ToString("N0"));
                 item.SubItems.Add(ejec.TotalTokens.ToString("N0"));
+                item.SubItems.Add(FormatearCacheCelda(
+                    ejec.TotalCacheReadTokens,
+                    ejec.TotalCacheCreationTokens,
+                    ejec.TotalPromptTokens));
                 item.SubItems.Add(ejec.CostoEstimadoUsd > 0 ? $"${ejec.CostoEstimadoUsd:F4}" : "-");
                 lstHistorial.Items.Add(item);
             }
@@ -181,15 +203,22 @@ namespace OPENGIOAI.Vistas
 
         private void RefrescarResumen()
         {
-            var (tokens, usd) = ConsumoTokensTracker.Instancia.TotalSesion();
-            var actual = ConsumoTokensTracker.Instancia.EjecucionActual();
+            var (tokens, usd)    = ConsumoTokensTracker.Instancia.TotalSesion();
+            var (cread, ccreate) = ConsumoTokensTracker.Instancia.CacheSesion();
+            var actual           = ConsumoTokensTracker.Instancia.EjecucionActual();
 
             string parteActual = actual == null
                 ? "— sin ejecución activa —"
                 : $"⏱ actual: {actual.Llamadas.Count} llamadas · {actual.TotalTokens:N0} tok · ${actual.CostoEstimadoUsd:F4}";
 
+            // Bloque de caché solo si hubo hits en la sesión — evita ruido
+            // cuando el usuario aún no ha activado un proveedor con caching.
+            string parteCache = (cread > 0 || ccreate > 0)
+                ? $"    |    💾 caché: {cread:N0} hit · {ccreate:N0} creación"
+                : "";
+
             lblResumen.Text =
-                $"Σ sesión: {tokens:N0} tok · ${usd:F4}    |    {parteActual}";
+                $"Σ sesión: {tokens:N0} tok · ${usd:F4}    |    {parteActual}{parteCache}";
         }
 
         // ═════════════════ Acciones ═════════════════
