@@ -45,18 +45,20 @@ namespace OPENGIOAI.Utilerias
         private static IEnumerable<PrecioModelo> Defaults() => new[]
         {
             // ── OpenAI ────────────────────────────────────────────
-            new PrecioModelo { Modelo = "gpt-4o",         Proveedor = "ChatGpt",    PrecioInputPorMillon = 2.50m,  PrecioOutputPorMillon = 10.00m },
-            new PrecioModelo { Modelo = "gpt-4o-mini",    Proveedor = "ChatGpt",    PrecioInputPorMillon = 0.15m,  PrecioOutputPorMillon = 0.60m  },
+            // Prompt caching automático (50% descuento sobre input).
+            new PrecioModelo { Modelo = "gpt-4o",         Proveedor = "ChatGpt",    PrecioInputPorMillon = 2.50m,  PrecioOutputPorMillon = 10.00m, PrecioCacheReadPorMillon = 1.25m  },
+            new PrecioModelo { Modelo = "gpt-4o-mini",    Proveedor = "ChatGpt",    PrecioInputPorMillon = 0.15m,  PrecioOutputPorMillon = 0.60m,  PrecioCacheReadPorMillon = 0.075m },
             new PrecioModelo { Modelo = "gpt-4-turbo",    Proveedor = "ChatGpt",    PrecioInputPorMillon = 10.00m, PrecioOutputPorMillon = 30.00m },
             new PrecioModelo { Modelo = "gpt-3.5-turbo",  Proveedor = "ChatGpt",    PrecioInputPorMillon = 0.50m,  PrecioOutputPorMillon = 1.50m  },
 
             // ── Anthropic ─────────────────────────────────────────
-            new PrecioModelo { Modelo = "claude-3-5-sonnet-20241022", Proveedor = "Claude", PrecioInputPorMillon = 3.00m,  PrecioOutputPorMillon = 15.00m },
-            new PrecioModelo { Modelo = "claude-3-5-sonnet-latest",   Proveedor = "Claude", PrecioInputPorMillon = 3.00m,  PrecioOutputPorMillon = 15.00m },
-            new PrecioModelo { Modelo = "claude-3-5-haiku-latest",    Proveedor = "Claude", PrecioInputPorMillon = 0.80m,  PrecioOutputPorMillon = 4.00m  },
-            new PrecioModelo { Modelo = "claude-3-opus-latest",       Proveedor = "Claude", PrecioInputPorMillon = 15.00m, PrecioOutputPorMillon = 75.00m },
-            new PrecioModelo { Modelo = "claude-sonnet-4-5",          Proveedor = "Claude", PrecioInputPorMillon = 3.00m,  PrecioOutputPorMillon = 15.00m },
-            new PrecioModelo { Modelo = "claude-opus-4-5",            Proveedor = "Claude", PrecioInputPorMillon = 15.00m, PrecioOutputPorMillon = 75.00m },
+            // Prompt caching explícito: read = 0.10×input, creation = 1.25×input.
+            new PrecioModelo { Modelo = "claude-3-5-sonnet-20241022", Proveedor = "Claude", PrecioInputPorMillon = 3.00m,  PrecioOutputPorMillon = 15.00m, PrecioCacheReadPorMillon = 0.30m, PrecioCacheCreationPorMillon = 3.75m  },
+            new PrecioModelo { Modelo = "claude-3-5-sonnet-latest",   Proveedor = "Claude", PrecioInputPorMillon = 3.00m,  PrecioOutputPorMillon = 15.00m, PrecioCacheReadPorMillon = 0.30m, PrecioCacheCreationPorMillon = 3.75m  },
+            new PrecioModelo { Modelo = "claude-3-5-haiku-latest",    Proveedor = "Claude", PrecioInputPorMillon = 0.80m,  PrecioOutputPorMillon = 4.00m,  PrecioCacheReadPorMillon = 0.08m, PrecioCacheCreationPorMillon = 1.00m  },
+            new PrecioModelo { Modelo = "claude-3-opus-latest",       Proveedor = "Claude", PrecioInputPorMillon = 15.00m, PrecioOutputPorMillon = 75.00m, PrecioCacheReadPorMillon = 1.50m, PrecioCacheCreationPorMillon = 18.75m },
+            new PrecioModelo { Modelo = "claude-sonnet-4-5",          Proveedor = "Claude", PrecioInputPorMillon = 3.00m,  PrecioOutputPorMillon = 15.00m, PrecioCacheReadPorMillon = 0.30m, PrecioCacheCreationPorMillon = 3.75m  },
+            new PrecioModelo { Modelo = "claude-opus-4-5",            Proveedor = "Claude", PrecioInputPorMillon = 15.00m, PrecioOutputPorMillon = 75.00m, PrecioCacheReadPorMillon = 1.50m, PrecioCacheCreationPorMillon = 18.75m },
 
             // ── Google Gemini ─────────────────────────────────────
             new PrecioModelo { Modelo = "gemini-1.5-pro",    Proveedor = "Gemenni", PrecioInputPorMillon = 1.25m,  PrecioOutputPorMillon = 5.00m  },
@@ -64,8 +66,9 @@ namespace OPENGIOAI.Utilerias
             new PrecioModelo { Modelo = "gemini-2.0-flash",  Proveedor = "Gemenni", PrecioInputPorMillon = 0.10m,  PrecioOutputPorMillon = 0.40m  },
 
             // ── DeepSeek ──────────────────────────────────────────
-            new PrecioModelo { Modelo = "deepseek-chat",     Proveedor = "Deespeek", PrecioInputPorMillon = 0.27m, PrecioOutputPorMillon = 1.10m },
-            new PrecioModelo { Modelo = "deepseek-reasoner", Proveedor = "Deespeek", PrecioInputPorMillon = 0.55m, PrecioOutputPorMillon = 2.19m },
+            // Prompt caching automático (10% sobre input).
+            new PrecioModelo { Modelo = "deepseek-chat",     Proveedor = "Deespeek", PrecioInputPorMillon = 0.27m, PrecioOutputPorMillon = 1.10m, PrecioCacheReadPorMillon = 0.027m },
+            new PrecioModelo { Modelo = "deepseek-reasoner", Proveedor = "Deespeek", PrecioInputPorMillon = 0.55m, PrecioOutputPorMillon = 2.19m, PrecioCacheReadPorMillon = 0.14m  },
 
             // ── Embeddings (Fase C) ───────────────────────────────
             // Solo cobran el input — no hay output generativo.
@@ -82,8 +85,31 @@ namespace OPENGIOAI.Utilerias
         /// <summary>
         /// Estima el costo en USD para un modelo dado y un consumo (in/out).
         /// Devuelve 0 si el modelo no está registrado (sin error).
+        /// Sobrecarga legacy — usa 0 tokens cacheados.
         /// </summary>
         public decimal Estimar(string modelo, int tokensEntrada, int tokensSalida)
+        {
+            return Estimar(modelo, tokensEntrada, tokensSalida,
+                           cacheReadTokens: 0, cacheCreationTokens: 0);
+        }
+
+        /// <summary>
+        /// Estima el costo en USD contemplando tarifas diferenciadas de
+        /// prompt caching. Los tokens de caché se asumen DESGLOSADOS del
+        /// total de entrada (es decir, PromptTokens incluye los cacheados).
+        ///
+        /// Cálculo:
+        ///   · input "fresco"   = PromptTokens − cacheRead − cacheCreation
+        ///   · cache read       = tarifa PrecioCacheReadPorMillon (fallback input)
+        ///   · cache creation   = tarifa PrecioCacheCreationPorMillon (fallback input)
+        ///   · salida           = tarifa normal de output
+        /// </summary>
+        public decimal Estimar(
+            string modelo,
+            int tokensEntrada,
+            int tokensSalida,
+            int cacheReadTokens,
+            int cacheCreationTokens)
         {
             if (string.IsNullOrWhiteSpace(modelo)) return 0m;
             AsegurarCargado();
@@ -92,9 +118,25 @@ namespace OPENGIOAI.Utilerias
             {
                 if (!_cache.TryGetValue(modelo, out var p)) return 0m;
 
-                decimal usdIn  = (tokensEntrada / 1_000_000m) * p.PrecioInputPorMillon;
-                decimal usdOut = (tokensSalida  / 1_000_000m) * p.PrecioOutputPorMillon;
-                return usdIn + usdOut;
+                // Tokens de entrada "frescos" = total − cacheados.
+                // Clamp para evitar negativos si algún proveedor reporta raro.
+                int frescos = tokensEntrada - cacheReadTokens - cacheCreationTokens;
+                if (frescos < 0) frescos = 0;
+
+                decimal precioRead = p.PrecioCacheReadPorMillon > 0m
+                    ? p.PrecioCacheReadPorMillon
+                    : p.PrecioInputPorMillon;
+
+                decimal precioCreation = p.PrecioCacheCreationPorMillon > 0m
+                    ? p.PrecioCacheCreationPorMillon
+                    : p.PrecioInputPorMillon;
+
+                decimal usdFresco   = (frescos             / 1_000_000m) * p.PrecioInputPorMillon;
+                decimal usdRead     = (cacheReadTokens     / 1_000_000m) * precioRead;
+                decimal usdCreation = (cacheCreationTokens / 1_000_000m) * precioCreation;
+                decimal usdOut      = (tokensSalida        / 1_000_000m) * p.PrecioOutputPorMillon;
+
+                return usdFresco + usdRead + usdCreation + usdOut;
             }
         }
 

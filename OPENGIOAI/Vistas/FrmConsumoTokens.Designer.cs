@@ -32,6 +32,7 @@ namespace OPENGIOAI.Vistas
             colV_Fase       = new System.Windows.Forms.ColumnHeader();
             colV_Modelo     = new System.Windows.Forms.ColumnHeader();
             colV_Prompt     = new System.Windows.Forms.ColumnHeader();
+            colV_Cache      = new System.Windows.Forms.ColumnHeader();
             colV_Compl      = new System.Windows.Forms.ColumnHeader();
             colV_Total      = new System.Windows.Forms.ColumnHeader();
             colV_Usd        = new System.Windows.Forms.ColumnHeader();
@@ -40,6 +41,7 @@ namespace OPENGIOAI.Vistas
             colH_Instr      = new System.Windows.Forms.ColumnHeader();
             colH_Llamadas   = new System.Windows.Forms.ColumnHeader();
             colH_Tokens     = new System.Windows.Forms.ColumnHeader();
+            colH_Cache      = new System.Windows.Forms.ColumnHeader();
             colH_Usd        = new System.Windows.Forms.ColumnHeader();
 
             pnlRoot.SuspendLayout();
@@ -156,12 +158,13 @@ namespace OPENGIOAI.Vistas
             lstVivo.Name = "lstVivo";
             lstVivo.View = System.Windows.Forms.View.Details;
             lstVivo.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
-                colV_Fase, colV_Modelo, colV_Prompt, colV_Compl, colV_Total, colV_Usd, colV_Hora
+                colV_Fase, colV_Modelo, colV_Prompt, colV_Cache, colV_Compl, colV_Total, colV_Usd, colV_Hora
             });
 
             colV_Fase.Text = "Fase";       colV_Fase.Width = 110;
             colV_Modelo.Text = "Modelo";   colV_Modelo.Width = 150;
             colV_Prompt.Text = "Prompt";   colV_Prompt.Width = 70; colV_Prompt.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
+            colV_Cache.Text = "💾 Caché";  colV_Cache.Width = 85;  colV_Cache.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
             colV_Compl.Text = "Compl.";    colV_Compl.Width = 70;  colV_Compl.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
             colV_Total.Text = "Total";     colV_Total.Width = 70;  colV_Total.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
             colV_Usd.Text = "USD";         colV_Usd.Width = 75;    colV_Usd.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
@@ -184,14 +187,15 @@ namespace OPENGIOAI.Vistas
             lstHistorial.Name = "lstHistorial";
             lstHistorial.View = System.Windows.Forms.View.Details;
             lstHistorial.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
-                colH_Inicio, colH_Instr, colH_Llamadas, colH_Tokens, colH_Usd
+                colH_Inicio, colH_Instr, colH_Llamadas, colH_Tokens, colH_Cache, colH_Usd
             });
 
             colH_Inicio.Text   = "Inicio";     colH_Inicio.Width   = 130;
-            colH_Instr.Text    = "Instrucción"; colH_Instr.Width   = 260;
-            colH_Llamadas.Text = "Llamadas";   colH_Llamadas.Width = 80;  colH_Llamadas.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
-            colH_Tokens.Text   = "Tokens";     colH_Tokens.Width   = 80;  colH_Tokens.TextAlign   = System.Windows.Forms.HorizontalAlignment.Right;
-            colH_Usd.Text      = "USD";        colH_Usd.Width      = 80;  colH_Usd.TextAlign      = System.Windows.Forms.HorizontalAlignment.Right;
+            colH_Instr.Text    = "Instrucción"; colH_Instr.Width   = 240;
+            colH_Llamadas.Text = "Llamadas";   colH_Llamadas.Width = 70;  colH_Llamadas.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
+            colH_Tokens.Text   = "Tokens";     colH_Tokens.Width   = 70;  colH_Tokens.TextAlign   = System.Windows.Forms.HorizontalAlignment.Right;
+            colH_Cache.Text    = "💾 Caché";   colH_Cache.Width    = 90;  colH_Cache.TextAlign    = System.Windows.Forms.HorizontalAlignment.Right;
+            colH_Usd.Text      = "USD";        colH_Usd.Width      = 75;  colH_Usd.TextAlign      = System.Windows.Forms.HorizontalAlignment.Right;
 
             //
             // FrmConsumoTokens
@@ -234,6 +238,7 @@ namespace OPENGIOAI.Vistas
         private System.Windows.Forms.ColumnHeader colV_Fase;
         private System.Windows.Forms.ColumnHeader colV_Modelo;
         private System.Windows.Forms.ColumnHeader colV_Prompt;
+        private System.Windows.Forms.ColumnHeader colV_Cache;
         private System.Windows.Forms.ColumnHeader colV_Compl;
         private System.Windows.Forms.ColumnHeader colV_Total;
         private System.Windows.Forms.ColumnHeader colV_Usd;
@@ -242,6 +247,7 @@ namespace OPENGIOAI.Vistas
         private System.Windows.Forms.ColumnHeader colH_Instr;
         private System.Windows.Forms.ColumnHeader colH_Llamadas;
         private System.Windows.Forms.ColumnHeader colH_Tokens;
+        private System.Windows.Forms.ColumnHeader colH_Cache;
         private System.Windows.Forms.ColumnHeader colH_Usd;
     }
 }

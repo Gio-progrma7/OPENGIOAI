@@ -207,6 +207,26 @@ namespace OPENGIOAI.Utilerias
             return Path.Combine(appDir, "EmbeddingsConfig.json");
         }
 
+        // ══════════════════ Contexto Semántico (Fase D) ══════════════════
+        //
+        // Índice vectorial paralelo al de memoria, pero para metadata del
+        // agente: credenciales, skills y automatizaciones. Vive en el mismo
+        // /Memoria/ del workspace pero con archivos distintos para que
+        // invalidar uno no afecte al otro.
+        //
+        //   {ruta}/Memoria/embeddings_contexto.jsonl
+        //   {ruta}/Memoria/embeddings_contexto.manifest.json
+
+        public static string ObtenerRutaEmbeddingsContexto(string rutaBase)
+        {
+            return Path.Combine(ObtenerRutaCarpetaMemoria(rutaBase), "embeddings_contexto.jsonl");
+        }
+
+        public static string ObtenerRutaEmbeddingsContextoManifest(string rutaBase)
+        {
+            return Path.Combine(ObtenerRutaCarpetaMemoria(rutaBase), "embeddings_contexto.manifest.json");
+        }
+
         // ══════════════════ Traces (Fase 1A) ══════════════════
         //
         // Tracing estructurado por ejecución. Persistencia JSONL

@@ -799,7 +799,21 @@ namespace OPENGIOAI.Vistas
             _streaming.Finalizar(textoFinalComunicador);
 
             // ── Registrar en ventana de contexto y difundir ───────────────────
-            _ventana.Agregar(instruccionOriginal, respuestaFinal);
+            // Fase 2: si HAB_HISTORIAL_COMPRIMIDO está activa, los turnos que
+            // salgan de la ventana se resumen con el proveedor/modelo actual
+            // en lugar de perderse. Fail-open: si el resumidor falla, sigue
+            // el flujo sin romper nada.
+            await _ventana.AgregarAsync(
+                instruccionOriginal,
+                respuestaFinal,
+                (previo, expulsados, ctResumen) => HistorialResumidor.ResumirAsync(
+                    previo,
+                    expulsados,
+                    _modeloSeleccionado.Agente,
+                    _modeloSeleccionado.Modelos,
+                    _modeloSeleccionado.ApiKey,
+                    ctResumen),
+                ct);
 
             if (!string.IsNullOrWhiteSpace(respuestaFinal))
                 await EjecutarDifusionAsync(respuestaFinal, usarTelegram, usarSlack);
