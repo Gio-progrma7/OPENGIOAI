@@ -1,53 +1,53 @@
-﻿// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  FrmMandos.cs — Ada Lovelace IA v3.0                                    ║
-// ║                                                                          ║
-// ║  CAMBIOS APLICADOS (resumen ejecutivo):                                  ║
-// ║                                                                          ║
-// ║  [C1] HILOS / THREAD-SAFETY                                              ║
-// ║    · MostrarMensaje: guard InvokeRequired movido al inicio del método.   ║
-// ║    · EjecutarMotorIAAsync: todos los BeginInvoke centralizados en        ║
-// ║      MostrarMensajeAsync() para evitar race conditions al escribir UI    ║
-// ║      desde tareas paralelas.                                             ║
-// ║    · IniciarSlack / Telegram: lambdas de eventos ahora usan             ║
-// ║      BeginInvoke consistentemente; se eliminaron llamadas a Invoke()     ║
-// ║      (bloqueante) dentro de callbacks async.                             ║
-// ║    · CancellationTokenSource se pasa a EjecutarMotorIAAsync y se        ║
-// ║      respeta con CancellationToken.ThrowIfCancellationRequested()        ║
-// ║      entre las dos pasadas de agentes.                                   ║
-// ║                                                                          ║
-// ║  [C2] POTENCIA DE LLAMADAS / SUB-AGENTES                                ║
-// ║    · EjecutarMotorIAAsync refactorizado en tres métodos privados:        ║
-// ║        – EjecutarAgente1Async : lanza Agente 1 con timeout configurable. ║
-// ║        – EjecutarAgente2Async : lanza Agente 2 solo si corresponde.     ║
-// ║        – EjecutarDifusiónAsync: envía resultado a Telegram + Slack en   ║
-// ║          paralelo con Task.WhenAll para reducir latencia de salida.      ║
-// ║    · Timeout configurable (_timeoutSegundos) por petición al modelo;     ║
-// ║      evita bloqueos silenciosos si la API no responde.                   ║
-// ║    · Los dos agentes comparten el mismo CancellationToken; si el usuario ║
-// ║      cancela a mitad, ninguna tarea sigue corriendo en background.       ║
-// ║                                                                          ║
-// ║  [C3] ENCAPSULAMIENTO Y COHESIÓN                                         ║
-// ║    · Extracción de AgentOrchestrator (inner class / partial) con la     ║
-// ║      lógica pura del motor desacoplada de la UI.                         ║
-// ║    · CargarListaAgents: movida a DataLoader (static) para testear sin   ║
-// ║      depender del formulario.                                            ║
-// ║    · ConversationWindow ya existía; se corrige su integración para que  ║
-// ║      Limpiar() solo se llame UNA vez por cambio de agente/ruta.          ║
-// ║    · _ctsIA: ahora se hace Dispose() del token anterior antes de        ║
-// ║      crear uno nuevo (memory leak corregido).                            ║
-// ║                                                                          ║
-// ║  [C4] BUGS CORREGIDOS                                                    ║
-// ║    · comboBoxAgentes_SelectedIndexChanged: el contador "veces" no se    ║
-// ║      reseteaba — si el usuario cambiaba de agente 3+ veces solo         ║
-// ║      disparaba la primera. Reemplazado por flag _cargaInicialAgente.     ║
-// ║    · IniciarSlack: se protege con null-check en _slack antes de Stop()  ║
-// ║      para evitar NRE en la primera carga.                                ║
-// ║    · EnviarTelegramAsync: parámetro btns movido antes de UsarTelegram   ║
-// ║      para alinear las 5 sobrecargas del sitio de llamada.               ║
-// ║    · ObtenerPromtChat: renombrado a ObtenerContextoChat (typo).         ║
-// ║    · MostrarAdvertencia: no debe lanzar Exception desde un helper        ║
-// ║      llamado en background; ahora devuelve bool + mensaje de error.      ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
+// +--------------------------------------------------------------------------+
+// �  FrmMandos.cs � Ada Lovelace IA v3.0                                    �
+// �                                                                          �
+// �  CAMBIOS APLICADOS (resumen ejecutivo):                                  �
+// �                                                                          �
+// �  [C1] HILOS / THREAD-SAFETY                                              �
+// �    � MostrarMensaje: guard InvokeRequired movido al inicio del m�todo.   �
+// �    � EjecutarMotorIAAsync: todos los BeginInvoke centralizados en        �
+// �      MostrarMensajeAsync() para evitar race conditions al escribir UI    �
+// �      desde tareas paralelas.                                             �
+// �    � IniciarSlack / Telegram: lambdas de eventos ahora usan             �
+// �      BeginInvoke consistentemente; se eliminaron llamadas a Invoke()     �
+// �      (bloqueante) dentro de callbacks async.                             �
+// �    � CancellationTokenSource se pasa a EjecutarMotorIAAsync y se        �
+// �      respeta con CancellationToken.ThrowIfCancellationRequested()        �
+// �      entre las dos pasadas de agentes.                                   �
+// �                                                                          �
+// �  [C2] POTENCIA DE LLAMADAS / SUB-AGENTES                                �
+// �    � EjecutarMotorIAAsync refactorizado en tres m�todos privados:        �
+// �        � EjecutarAgente1Async : lanza Agente 1 con timeout configurable. �
+// �        � EjecutarAgente2Async : lanza Agente 2 solo si corresponde.     �
+// �        � EjecutarDifusi�nAsync: env�a resultado a Telegram + Slack en   �
+// �          paralelo con Task.WhenAll para reducir latencia de salida.      �
+// �    � Timeout configurable (_timeoutSegundos) por petici�n al modelo;     �
+// �      evita bloqueos silenciosos si la API no responde.                   �
+// �    � Los dos agentes comparten el mismo CancellationToken; si el usuario �
+// �      cancela a mitad, ninguna tarea sigue corriendo en background.       �
+// �                                                                          �
+// �  [C3] ENCAPSULAMIENTO Y COHESI�N                                         �
+// �    � Extracci�n de AgentOrchestrator (inner class / partial) con la     �
+// �      l�gica pura del motor desacoplada de la UI.                         �
+// �    � CargarListaAgents: movida a DataLoader (static) para testear sin   �
+// �      depender del formulario.                                            �
+// �    � ConversationWindow ya exist�a; se corrige su integraci�n para que  �
+// �      Limpiar() solo se llame UNA vez por cambio de agente/ruta.          �
+// �    � _ctsIA: ahora se hace Dispose() del token anterior antes de        �
+// �      crear uno nuevo (memory leak corregido).                            �
+// �                                                                          �
+// �  [C4] BUGS CORREGIDOS                                                    �
+// �    � comboBoxAgentes_SelectedIndexChanged: el contador "veces" no se    �
+// �      reseteaba � si el usuario cambiaba de agente 3+ veces solo         �
+// �      disparaba la primera. Reemplazado por flag _cargaInicialAgente.     �
+// �    � IniciarSlack: se protege con null-check en _slack antes de Stop()  �
+// �      para evitar NRE en la primera carga.                                �
+// �    � EnviarTelegramAsync: par�metro btns movido antes de UsarTelegram   �
+// �      para alinear las 5 sobrecargas del sitio de llamada.               �
+// �    � ObtenerPromtChat: renombrado a ObtenerContextoChat (typo).         �
+// �    � MostrarAdvertencia: no debe lanzar Exception desde un helper        �
+// �      llamado en background; ahora devuelve bool + mensaje de error.      �
+// +--------------------------------------------------------------------------+
 
 using Newtonsoft.Json.Linq;
 using OPENGIOAI.Agentes;
@@ -75,22 +75,22 @@ namespace OPENGIOAI.Vistas
 {
     public partial class FrmMandos : Form
     {
-        // ── Constantes de comportamiento ──────────────────────────────────────
-        // [C2] Centralizar aquí facilita cambiar el timeout sin buscar en el código.
-        // NOTA (Fase comandos): TimeoutSegundos pasó de const a field privado para
-        // poder modificarse vía `#timeout <N>` desde Telegram/Slack/UI.
+        // -- Constantes de comportamiento --------------------------------------
+        // [C2] Centralizar aqu� facilita cambiar el timeout sin buscar en el c�digo.
+        // NOTA (Fase comandos): TimeoutSegundos pas� de const a field privado para
+        // poder modificarse v�a `#timeout <N>` desde Telegram/Slack/UI.
         private int _timeoutSegundos = 120;
         private const int TimeoutMinimo = 10;
-        private const int TimeoutMaximo = 1800; // 30 min — techo de seguridad
+        private const int TimeoutMaximo = 1800; // 30 min � techo de seguridad
         private const int MaxTurnosContexto = 6;
         private const int MaxTokensContexto = 3000;
 
         private int Entradas = 9;
 
-        // ── Controles y utilidades UI ─────────────────────────────────────────
+        // -- Controles y utilidades UI -----------------------------------------
         private readonly System.Windows.Forms.ToolTip _toolTipArchivos = new();
 
-        // ── Flags de estado ───────────────────────────────────────────────────
+        // -- Flags de estado ---------------------------------------------------
         private bool _ajustandoAltura = false;
         private bool _telegramActivo = false;
         private bool _enviarConstructorTelegram = false;
@@ -108,41 +108,41 @@ namespace OPENGIOAI.Vistas
         // [C4] Reemplaza el contador "veces" con flag booleano para mayor claridad.
         private bool _cargaInicialAgente = true;
 
-        // ── Ventana deslizante de contexto conversacional ─────────────────────
+        // -- Ventana deslizante de contexto conversacional ---------------------
         private readonly ConversationWindow _ventana = new(MaxTurnosContexto, MaxTokensContexto);
 
-        // ── Strings auxiliares ────────────────────────────────────────────────
+        // -- Strings auxiliares ------------------------------------------------
         private string _textoFaltante = "";
         private string _rutasAgregadas = "";
 
-        // ── Misc ──────────────────────────────────────────────────────────────
+        // -- Misc --------------------------------------------------------------
         private Point _mouseDownLocation;
 
-        // ── Servicios externos (inyectados por DI) ────────────────────────────
+        // -- Servicios externos (inyectados por DI) ----------------------------
         private readonly SlackChannelService _slackService;
         // [C1] _ctsIA: se hace Dispose del token anterior antes de crear uno nuevo.
         private CancellationTokenSource _ctsIA;
         private readonly TelegramService _telegramService;
         private readonly BroadcastService _broadcast;
-        // Nuevo motor de comandos — reemplaza al antiguo CommandRouter.
+        // Nuevo motor de comandos � reemplaza al antiguo CommandRouter.
         private readonly Comandos.CommandRegistry _cmdRegistry = new();
         private Comandos.CommandExecutor _cmdExecutor = null!;
 
-        // ── ARIA: panel de estado de agentes y tracking de fase ───────────────
+        // -- ARIA: panel de estado de agentes y tracking de fase ---------------
         private PanelAgentes _panelAgentes = null!;
         private BurbujaChat? _burbujaFaseActual;
 
-        // ── Streaming de salida de script en vivo ─────────────────────────────
+        // -- Streaming de salida de script en vivo -----------------------------
         private BurbujaChat? _burbujaScriptActual;
         private readonly StringBuilder _bufferScript = new();
 
-        // ── Control de reintentos del Guardián ────────────────────────────────
+        // -- Control de reintentos del Guardi�n --------------------------------
         private NumericUpDown _nudReintentos = null!;
 
-        // ── Throttle de streaming (agrupa updates de burbujas a ~8 fps) ───────
+        // -- Throttle de streaming (agrupa updates de burbujas a ~8 fps) -------
         private readonly ChatStreamingThrottleService _streaming;
 
-        // ── Modelos de datos ──────────────────────────────────────────────────
+        // -- Modelos de datos --------------------------------------------------
         private ConfiguracionClient _configuracionClient;
         private readonly AudioTTSService _audioService;
         private Modelo _modeloSeleccionado = new();
@@ -189,7 +189,7 @@ namespace OPENGIOAI.Vistas
 
         private void FrmMandos_Resize(object sender, EventArgs e)
         {
-            int anchoMax = (int)(pnlChat.ClientSize.Width * 0.75);
+            int anchoMax = (pnlChat.ClientSize.Width - 28);
             foreach (Control c in pnlChat.Controls)
             {
                 if (c is BurbujaChat burbuja)
@@ -201,7 +201,7 @@ namespace OPENGIOAI.Vistas
         /// <summary>
         /// Alinea btnEnviar y btnCancelar al borde derecho del wrapper del textbox.
         /// Se invoca en ConfigurarUI() y en cada FrmMandos_Resize para que los botones
-        /// siempre queden pegados al cuadro de instrucción sin importar el tamaño del form.
+        /// siempre queden pegados al cuadro de instrucci�n sin importar el tama�o del form.
         /// </summary>
         private void AjustarBotonesInput()
         {
@@ -222,7 +222,7 @@ namespace OPENGIOAI.Vistas
 
         private void FrmMandos_FormClosing(object sender, FormClosingEventArgs e)
         {
-            // [C1] Cancelar cualquier petición en vuelo al cerrar el formulario.
+            // [C1] Cancelar cualquier petici�n en vuelo al cerrar el formulario.
             _streaming.Dispose();
             CancelarInstruccion();
             _telegramService.Detener();
@@ -277,7 +277,7 @@ namespace OPENGIOAI.Vistas
 
         private void textBoxInstrucion_KeyDown(object sender, KeyEventArgs e)
         {
-            // Ctrl+Enter → enviar instrucción
+            // Ctrl+Enter ? enviar instrucci�n
             if (e.Control && e.KeyCode == Keys.Enter)
             {
                 e.SuppressKeyPress = true;
@@ -347,13 +347,13 @@ namespace OPENGIOAI.Vistas
         {
             if (!checkBoxAudio.Checked) { _enviarAudio = false; return; }
 
-            // Verificar que TTS esté configurado antes de activar
+            // Verificar que TTS est� configurado antes de activar
             _audioService.RecargarConfig();
             if (!_audioService.Activo)
             {
                 checkBoxAudio.Checked = false;
                 _toolTipArchivos.Show(
-                    "Configura el proveedor de voz en\nComunicadores → 🔊 Audio TTS",
+                    "Configura el proveedor de voz en\nComunicadores ? ?? Audio TTS",
                     checkBoxAudio, 0, -48, 3500);
                 return;
             }
@@ -409,9 +409,9 @@ namespace OPENGIOAI.Vistas
         }
 
         /// <summary>
-        /// [C4] Ídem a comboBoxAgentes: flag booleano en lugar de contador.
+        /// [C4] �dem a comboBoxAgentes: flag booleano en lugar de contador.
         ///      El contador "cargas" nunca se reseteaba, causando que a partir
-        ///      del 5.° evento nunca se ejecutara el cambio de modelo.
+        ///      del 5.� evento nunca se ejecutara el cambio de modelo.
         /// </summary>
         private void comboBoxModeloIA_SelectedIndexChanged(object sender, EventArgs e)
         {
@@ -445,11 +445,16 @@ namespace OPENGIOAI.Vistas
             checkBoxRecordar.Checked = !_recordarTema;
         }
 
-        private void btnLimpiar_Click(object sender, EventArgs e) => pnlChat.Controls.Clear();
+        private void btnLimpiar_Click(object sender, EventArgs e)
+        {
+            pnlChat.Controls.Clear();
+            _ultimaBurbujaComunicador = null;
+            MostrarEmptyState();
+        }
 
         /// <summary>
         /// Muestra / oculta las etiquetas de tiempo y consumo de tokens.
-        /// Sirve como botón ℹ de estadísticas en la barra inferior.
+        /// Sirve como bot�n ? de estad�sticas en la barra inferior.
         /// </summary>
         private void btnInfo_Click(object sender, EventArgs e)
         {
@@ -465,7 +470,7 @@ namespace OPENGIOAI.Vistas
         }
 
         // =====================================================================
-        //  LÓGICA DE AGENTE Y RUTA
+        //  L�GICA DE AGENTE Y RUTA
         // =====================================================================
 
         /// <summary>
@@ -490,13 +495,13 @@ namespace OPENGIOAI.Vistas
 
             // Reiniciar contexto al cambiar de agente para no mezclar historiales.
             _ventana.Limpiar();
-            MostrarMensaje("Contexto de conversación reiniciado.", false);
+            MostrarMensaje("Contexto de conversaci�n reiniciado.", false);
         }
 
         /// <summary>
-        /// Obtiene dinámicamente los modelos disponibles para cada servicio de IA.
-        /// [C2] Todas las llamadas son async y respetan un CancellationToken implícito
-        ///      (el de la petición actual); si el usuario cancela no quedan tareas colgadas.
+        /// Obtiene din�micamente los modelos disponibles para cada servicio de IA.
+        /// [C2] Todas las llamadas son async y respetan un CancellationToken impl�cito
+        ///      (el de la petici�n actual); si el usuario cancela no quedan tareas colgadas.
         /// </summary>
         private async Task<List<ModeloAgente>> ObtenerModeloAgente(Servicios servicio, string apiKey)
         {
@@ -535,7 +540,7 @@ namespace OPENGIOAI.Vistas
         // =====================================================================
 
         /// <summary>
-        /// Punto de entrada desde la UI. Recopila el texto, lo envía al motor
+        /// Punto de entrada desde la UI. Recopila el texto, lo env�a al motor
         /// y muestra la respuesta en el panel de chat.
         /// </summary>
         private async Task Procesar_Instrucciones()
@@ -559,8 +564,8 @@ namespace OPENGIOAI.Vistas
 
         /// <summary>
         /// Carga en memoria las listas base del sistema desde disco.
-        /// NOTA: método síncrono diseñado para ejecutarse en Task.Run.
-        ///       NO acceder a controles de UI aquí.
+        /// NOTA: m�todo s�ncrono dise�ado para ejecutarse en Task.Run.
+        ///       NO acceder a controles de UI aqu�.
         /// </summary>
         private void CargarListaAgents()
         {
@@ -570,9 +575,9 @@ namespace OPENGIOAI.Vistas
             _audioService.RecargarConfig();
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  MOTOR IA — ORQUESTADOR PRINCIPAL
-        // ──────────────────────────────────────────────────────────────────────
+        // ----------------------------------------------------------------------
+        //  MOTOR IA � ORQUESTADOR PRINCIPAL
+        // ----------------------------------------------------------------------
 
         /// <summary>
         /// Motor de doble pasada: Agente 1 genera, Agente 2 valida/mejora.
@@ -582,10 +587,10 @@ namespace OPENGIOAI.Vistas
         ///      timeout, ambas tareas se detienen.
         ///
         /// [C1] Se hace Dispose() del token anterior antes de crear uno nuevo
-        ///      para evitar el memory leak que existía antes.
+        ///      para evitar el memory leak que exist�a antes.
         ///
         /// [C2] EjecutarDifusionAsync lanza Telegram + Slack en Task.WhenAll,
-        ///      reduciendo la latencia de salida cuando ambos están activos.
+        ///      reduciendo la latencia de salida cuando ambos est�n activos.
         /// </summary>
         private async Task<string> EjecutarMotorIAAsync(
             string instruccion,
@@ -596,15 +601,15 @@ namespace OPENGIOAI.Vistas
             return await EjecutarConARIAAsync(instruccion, usarTelegram, usarSlack);
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  ORQUESTADOR ARIA — pipeline de 4 agentes con autocorrección
-        // ──────────────────────────────────────────────────────────────────────
+        // ----------------------------------------------------------------------
+        //  ORQUESTADOR ARIA � pipeline de 4 agentes con autocorrecci�n
+        // ----------------------------------------------------------------------
 
         /// <summary>
-        /// Pipeline ARIA: Analista → Constructor → Guardián → Comunicador.
-        /// · Cada fase actualiza las píldoras de estado en tiempo real.
-        /// · El Guardián autocorrige errores hasta 3 veces sin molestar al usuario.
-        /// · El Comunicador produce respuesta final en streaming con lenguaje amigable.
+        /// Pipeline ARIA: Analista ? Constructor ? Guardi�n ? Comunicador.
+        /// � Cada fase actualiza las p�ldoras de estado en tiempo real.
+        /// � El Guardi�n autocorrige errores hasta 3 veces sin molestar al usuario.
+        /// � El Comunicador produce respuesta final en streaming con lenguaje amigable.
         /// </summary>
         private async Task<string> EjecutarConARIAAsync(
             string instruccion,
@@ -621,11 +626,11 @@ namespace OPENGIOAI.Vistas
             string instruccionOriginal = instruccion;
             instruccion = _ventana.CombinarConInstruccion(instruccion, _recordarTema, _soloChat);
 
-            // ── Reset visual del panel de agentes ────────────────────────────
+            // -- Reset visual del panel de agentes ----------------------------
             if (InvokeRequired) BeginInvoke(_panelAgentes.Reset);
             else _panelAgentes.Reset();
 
-            // ── Crear orquestador y conectar eventos ─────────────────────────
+            // -- Crear orquestador y conectar eventos -------------------------
             var aria = new OrquestadorARIA(
                 _modeloSeleccionado.Modelos,
                 _archivoSeleccionado.Ruta,
@@ -636,12 +641,12 @@ namespace OPENGIOAI.Vistas
                 maxReintentos: (int)_nudReintentos.Value);
 
             // Flag para indicar si la fase actual debe activar el indicador "escribiendo"
-            // Solo se activa en Analista y Comunicador, NO en Constructor ni Guardián.
+            // Solo se activa en Analista y Comunicador, NO en Constructor ni Guardi�n.
             bool[] typingEnabled = { false };
 
             aria.OnFaseIniciada += (fase, msg) =>
             {
-                // Actualizar flag de typing según la fase
+                // Actualizar flag de typing seg�n la fase
                 typingEnabled[0] = fase == FaseAgente.Analista || fase == FaseAgente.Comunicador;
 
                 _panelAgentes.SetEstado(fase, EstadoAgente.Active);
@@ -649,18 +654,18 @@ namespace OPENGIOAI.Vistas
                     MostrarBurbujaFase(fase, msg);
 
                 // Reenviar el plan del Analista a Telegram / Slack en tiempo real.
-                // Se filtra el mensaje genérico inicial; solo se envía el plan real.
+                // Se filtra el mensaje gen�rico inicial; solo se env�a el plan real.
                 if (fase == FaseAgente.Analista
                     && !string.IsNullOrWhiteSpace(msg)
-                    && msg != "Analizando tu instrucción...")
+                    && msg != "Analizando tu instrucci�n...")
                 {
-                    _ = EjecutarDifusionAsync($"🔍 {msg}", usarTelegram, usarSlack);
+                    _ = EjecutarDifusionAsync($"?? {msg}", usarTelegram, usarSlack);
                 }
             };
 
             aria.OnFaseCompletada += (fase2, _ok) =>
             {
-                // Al completar Constructor o Guardián, asegurarse de que typing siga desactivado
+                // Al completar Constructor o Guardi�n, asegurarse de que typing siga desactivado
                 if (fase2 == FaseAgente.Constructor || fase2 == FaseAgente.Guardian)
                     typingEnabled[0] = false;
             };
@@ -692,8 +697,8 @@ namespace OPENGIOAI.Vistas
             aria.OnReintentoGuardian += (intento, max, razon) =>
                 _panelAgentes.SetEstado(FaseAgente.Guardian, EstadoAgente.Active);
 
-            // ── Snapshot del directorio de trabajo antes del pipeline ────────
-            // Se usa para detectar qué archivos creó el Constructor.
+            // -- Snapshot del directorio de trabajo antes del pipeline --------
+            // Se usa para detectar qu� archivos cre� el Constructor.
             var rutaTrabajo = _archivoSeleccionado?.Ruta ?? "";
             var snapshotAntes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if ((_enviarArchivosTelegram || _enviarArchivosSlack) &&
@@ -704,7 +709,7 @@ namespace OPENGIOAI.Vistas
                     snapshotAntes.Add(f);
             }
 
-            // ── Reenvío opcional del Constructor a Telegram y/o Slack ────────
+            // -- Reenv�o opcional del Constructor a Telegram y/o Slack --------
             aria.OnConstructorCompletado += salidaRaw =>
             {
                 if (!string.IsNullOrWhiteSpace(salidaRaw))
@@ -716,7 +721,7 @@ namespace OPENGIOAI.Vistas
                         _ = _slackService.EnviarCodigoAsync(FormatearConstructorParaSlack(salidaRaw));
                 }
 
-                // ── Envío de archivos nuevos creados por el Constructor ──────
+                // -- Env�o de archivos nuevos creados por el Constructor ------
                 if ((_enviarArchivosTelegram || _enviarArchivosSlack) &&
                     !string.IsNullOrWhiteSpace(rutaTrabajo) &&
                     System.IO.Directory.Exists(rutaTrabajo))
@@ -731,7 +736,7 @@ namespace OPENGIOAI.Vistas
                         string nombre = System.IO.Path.GetFileName(archivo);
 
                         if (_enviarArchivosTelegram && usarTelegram)
-                            _ = _telegramService.EnviarArchivoAsync(archivo, $"📎 {nombre}");
+                            _ = _telegramService.EnviarArchivoAsync(archivo, $"?? {nombre}");
 
                         if (_enviarArchivosSlack && usarSlack && _slackService.IsConfigured)
                             _ = _slackService.EnviarArchivoAsync(archivo, nombre);
@@ -739,9 +744,9 @@ namespace OPENGIOAI.Vistas
                 }
             };
 
-            // ── Indicadores de "escribiendo / pensando" mientras el pipeline corre ──
+            // -- Indicadores de "escribiendo / pensando" mientras el pipeline corre --
 
-            // Telegram: enviar acción "typing" cada 4 s (solo durante Analista y Comunicador)
+            // Telegram: enviar acci�n "typing" cada 4 s (solo durante Analista y Comunicador)
             using var ctsTyping = new CancellationTokenSource();
             if (usarTelegram && _telegramService.IsConfigured)
             {
@@ -767,7 +772,7 @@ namespace OPENGIOAI.Vistas
             if (usarSlack && _slackService.IsConfigured)
                 slackTsPensando = await _slackService.EnviarPensandoAsync();
 
-            // ── Ejecutar pipeline ─────────────────────────────────────────────
+            // -- Ejecutar pipeline ---------------------------------------------
             string respuestaFinal;
             try
             {
@@ -795,17 +800,20 @@ namespace OPENGIOAI.Vistas
                     _ = _slackService.EliminarMensajeAsync(slackTsPensando);
             }
 
-            // Flush final del Comunicador — pasar el buffer acumulado para garantizar
-            // que la burbuja muestre el texto aunque el timer aún no haya disparado.
-            // Bug: pasar null dejaba la burbuja vacía cuando el streaming terminaba
+            // Flush final del Comunicador � pasar el buffer acumulado para garantizar
+            // que la burbuja muestre el texto aunque el timer a�n no haya disparado.
+            // Bug: pasar null dejaba la burbuja vac�a cuando el streaming terminaba
             // antes del primer tick de 120ms.
             string? textoFinalComunicador = _bufferScript.Length > 0
                 ? _bufferScript.ToString().TrimEnd()
                 : null;
             _streaming.Finalizar(textoFinalComunicador);
 
-            // ── Registrar en ventana de contexto y difundir ───────────────────
-            // Fase 2: si HAB_HISTORIAL_COMPRIMIDO está activa, los turnos que
+            // Mostrar el panel de quick actions debajo de la última respuesta
+            MostrarQuickActions();
+
+            // -- Registrar en ventana de contexto y difundir -------------------
+            // Fase 2: si HAB_HISTORIAL_COMPRIMIDO est� activa, los turnos que
             // salgan de la ventana se resumen con el proveedor/modelo actual
             // en lugar de perderse. Fail-open: si el resumidor falla, sigue
             // el flujo sin romper nada.
@@ -827,14 +835,14 @@ namespace OPENGIOAI.Vistas
             return respuestaFinal;
         }
 
-        // ─────────────────────────────────────────────────────────────────────
-        //  HELPERS UI — BURBUJAS POR FASE ARIA
-        // ─────────────────────────────────────────────────────────────────────
+        // ---------------------------------------------------------------------
+        //  HELPERS UI � BURBUJAS POR FASE ARIA
+        // ---------------------------------------------------------------------
 
         /// <summary>
-        /// Muestra o actualiza la burbuja de un agente específico.
+        /// Muestra o actualiza la burbuja de un agente espec�fico.
         /// Si ya existe una burbuja activa para esa fase, la actualiza en lugar de crear una nueva.
-        /// Thread-safe — puede llamarse desde cualquier hilo.
+        /// Thread-safe � puede llamarse desde cualquier hilo.
         /// </summary>
         private void MostrarBurbujaFase(FaseAgente fase, string mensaje)
         {
@@ -852,7 +860,7 @@ namespace OPENGIOAI.Vistas
                 return;
             }
 
-            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            int anchoMax = Math.Max(80, (pnlChat.ClientSize.Width - 28));
             var burbuja = new BurbujaChat(
                 ObtenerPrefijoFase(fase) + mensaje,
                 false, anchoMax,
@@ -863,22 +871,23 @@ namespace OPENGIOAI.Vistas
             };
 
             _burbujaFaseActual = burbuja;
+            OcultarEmptyState();
             pnlChat.Controls.Add(burbuja);
             pnlChat.ScrollControlIntoView(burbuja);
         }
 
         /// <summary>
-        /// Inicia la burbuja de streaming para la ejecución de script del Constructor o Guardián.
+        /// Inicia la burbuja de streaming para la ejecuci�n de script del Constructor o Guardi�n.
         /// Debe llamarse desde el hilo UI (via BeginInvoke).
         /// </summary>
         private void IniciarBurbujaScriptFase(FaseAgente fase)
         {
             _bufferScript.Clear();
-            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            int anchoMax = Math.Max(80, (pnlChat.ClientSize.Width - 28));
 
             string titulo = fase == FaseAgente.Guardian
-                ? "🛡 Corrigiendo..."
-                : "⚙ Ejecutando...";
+                ? "🔧 Corrigiendo..."
+                : "▶ Ejecutando...";
 
             _burbujaScriptActual = new BurbujaChat(
                 titulo, false, anchoMax, Properties.Resources.iconos1)
@@ -890,13 +899,13 @@ namespace OPENGIOAI.Vistas
             pnlChat.Controls.Add(_burbujaScriptActual);
             pnlChat.ScrollControlIntoView(_burbujaScriptActual);
 
-            _burbujaFaseActual = null; // Próximo OnFaseIniciada de este agente crea nueva burbuja
+            _burbujaFaseActual = null; // Pr�ximo OnFaseIniciada de este agente crea nueva burbuja
             _streaming.Apuntar(_burbujaScriptActual);
         }
 
         /// <summary>
-        /// Añade un token del Comunicador a la burbuja de streaming.
-        /// Crea la burbuja si aún no existe. Thread-safe.
+        /// A�ade un token del Comunicador a la burbuja de streaming.
+        /// Crea la burbuja si a�n no existe. Thread-safe.
         /// </summary>
         private void AgregarTokenComunicador(string token)
         {
@@ -925,47 +934,49 @@ namespace OPENGIOAI.Vistas
         private void IniciarBurbujaComunicador()
         {
             _bufferScript.Clear();
-            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            int anchoMax = Math.Max(80, (pnlChat.ClientSize.Width - 28));
 
             var burbuja = new BurbujaChat(
-                "💬", false, anchoMax, Properties.Resources.iconos1)
+                "…", false, anchoMax, Properties.Resources.iconos1)
             {
                 Tag    = FaseAgente.Comunicador.ToString(),
                 Margin = new Padding(250, 5, 80, 5)
             };
 
+            OcultarEmptyState();
             pnlChat.Controls.Add(burbuja);
             pnlChat.ScrollControlIntoView(burbuja);
 
             _streaming.Apuntar(burbuja);
+            _ultimaBurbujaComunicador = burbuja;
         }
 
-        // ── Utilidades de presentación por fase ───────────────────────────────
+        // -- Utilidades de presentaci�n por fase -------------------------------
 
         private static string ObtenerPrefijoFase(FaseAgente fase) => fase switch
         {
-            FaseAgente.Analista    => "🔍  ",
-            FaseAgente.Constructor => "⚙  ",
-            FaseAgente.Guardian    => "🛡  ",
-            FaseAgente.Comunicador => "",
+            FaseAgente.Analista    => "🔍  ",          // U+1F50D  magnifying glass
+            FaseAgente.Constructor => "⚙️  ",          // U+2699   gear
+            FaseAgente.Guardian    => "🛡️  ",    // U+1F6E1  shield
+            FaseAgente.Comunicador => "✨  ",                // U+2728   sparkles
             _ => ""
         };
 
         private static Padding ObtenerMargenFase(FaseAgente fase) => fase switch
         {
-            // Analista: margen izquierdo grande → burbuja pequeña a la izquierda
+            // Analista: margen izquierdo grande ? burbuja peque�a a la izquierda
             FaseAgente.Analista    => new Padding(10, 5, 350, 5),
-            // Constructor/Guardián: centrado, cuerpo técnico
+            // Constructor/Guardi�n: centrado, cuerpo t�cnico
             FaseAgente.Constructor => new Padding(60, 5, 200, 5),
             FaseAgente.Guardian    => new Padding(60, 5, 200, 5),
-            // Comunicador: margen derecho pequeño → burbuja principal (respuesta)
+            // Comunicador: margen derecho peque�o ? burbuja principal (respuesta)
             FaseAgente.Comunicador => new Padding(250, 5, 80, 5),
             _ => new Padding(250, 5, 80, 5)
         };
 
         /// <summary>
-        /// Ejecuta Agente 1 (generación) con el token de cancelación activo.
-        /// [C2] Encapsula la llamada para hacer testeable el paso de generación
+        /// Ejecuta Agente 1 (generaci�n) con el token de cancelaci�n activo.
+        /// [C2] Encapsula la llamada para hacer testeable el paso de generaci�n
         ///      de forma independiente del validador.
         /// </summary>
         private async Task<string> EjecutarAgente1Async(string instruccion, CancellationToken ct)
@@ -985,20 +996,20 @@ namespace OPENGIOAI.Vistas
                 onSalidaScript: linea => AgregarLineaScriptEnVivo(linea));
         }
 
-        // ─────────────────────────────────────────────────────────────────────
+        // ---------------------------------------------------------------------
         //  STREAMING DE SALIDA DE SCRIPT EN VIVO
-        // ─────────────────────────────────────────────────────────────────────
+        // ---------------------------------------------------------------------
 
         /// <summary>
-        /// Crea la burbuja de "en vivo" al inicio de la ejecución del script.
-        /// Debe llamarse en el hilo de UI (ya garantizado vía BeginInvoke).
+        /// Crea la burbuja de "en vivo" al inicio de la ejecuci�n del script.
+        /// Debe llamarse en el hilo de UI (ya garantizado v�a BeginInvoke).
         /// </summary>
         private void IniciarBurbujaScriptEnVivo()
         {
             _bufferScript.Clear();
-            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            int anchoMax = Math.Max(80, (pnlChat.ClientSize.Width - 28));
             _burbujaScriptActual = new BurbujaChat(
-                "⚙ Ejecutando script...", false, anchoMax, Properties.Resources.iconos1)
+                "? Ejecutando script...", false, anchoMax, Properties.Resources.iconos1)
             {
                 Tag = "10",
                 Margin = new Padding(250, 5, 80, 5)
@@ -1010,7 +1021,7 @@ namespace OPENGIOAI.Vistas
         }
 
         /// <summary>
-        /// Acumula una línea de salida para el siguiente tick del timer de throttle.
+        /// Acumula una l�nea de salida para el siguiente tick del timer de throttle.
         /// Seguro para llamar desde cualquier hilo (incluso thread pool).
         /// </summary>
         private void AgregarLineaScriptEnVivo(string linea)
@@ -1022,13 +1033,13 @@ namespace OPENGIOAI.Vistas
 
         /// <summary>
         /// Agente 2: respuesta de texto directo del LLM con streaming token a token.
-        /// No genera ni ejecuta Python — es solo análisis y formateo de lenguaje natural.
-        /// Esto lo hace ~3x más rápido que la versión anterior (sin script execution).
+        /// No genera ni ejecuta Python � es solo an�lisis y formateo de lenguaje natural.
+        /// Esto lo hace ~3x m�s r�pido que la versi�n anterior (sin script execution).
         /// </summary>
         /// <summary>
         /// Agente 2: genera un script Python que corrige errores o informa el resultado.
-        ///   - Si Agent 1 falló → el script corrige y ejecuta, escribe resultado en respuesta.txt
-        ///   - Si Agent 1 tuvo éxito → el script escribe resumen humano en respuesta.txt
+        ///   - Si Agent 1 fall� ? el script corrige y ejecuta, escribe resultado en respuesta.txt
+        ///   - Si Agent 1 tuvo �xito ? el script escribe resumen humano en respuesta.txt
         /// La salida del script se muestra en tiempo real en una burbuja de streaming propia.
         /// </summary>
         private async Task<string> EjecutarAgente2StreamingAsync(
@@ -1058,20 +1069,20 @@ namespace OPENGIOAI.Vistas
                 ? _bufferScript.ToString().TrimEnd()
                 : null);
 
-            // El resultado definitivo viene de respuesta.txt (Agent 2 lo escribe ahí)
+            // El resultado definitivo viene de respuesta.txt (Agent 2 lo escribe ah�)
             return Utils.LimpiarRespuesta(ObtenerContextoChat(_archivoSeleccionado.Ruta));
         }
 
         /// <summary>
         /// Crea la burbuja de streaming para Agente 2 (verificador/corrector).
-        /// Llamar solo desde el hilo UI (vía BeginInvoke).
+        /// Llamar solo desde el hilo UI (v�a BeginInvoke).
         /// </summary>
         private void IniciarBurbujaAgente2()
         {
             _bufferScript.Clear();
-            int anchoMax = Math.Max(80, (int)(pnlChat.ClientSize.Width * 0.75));
+            int anchoMax = Math.Max(80, (pnlChat.ClientSize.Width - 28));
             _burbujaScriptActual = new BurbujaChat(
-                "🔍 Agente 2 verificando...", false, anchoMax, Properties.Resources.iconos1)
+                "?? Agente 2 verificando...", false, anchoMax, Properties.Resources.iconos1)
             {
                 Tag = "10",
                 Margin = new Padding(250, 5, 80, 5)
@@ -1082,13 +1093,13 @@ namespace OPENGIOAI.Vistas
         }
 
         /// <summary>
-        /// Envía el resultado a Telegram y Slack en paralelo.
+        /// Env�a el resultado a Telegram y Slack en paralelo.
         /// [C2] Task.WhenAll elimina la espera secuencial: si Telegram tarda
         ///      500 ms y Slack 300 ms, el total es ~500 ms en lugar de 800 ms.
         /// </summary>
         private async Task EjecutarDifusionAsync(string mensaje, bool usarTelegram, bool usarSlack)
         {
-            // Cuando el audio está activo, se omite el texto — solo se envía el audio
+            // Cuando el audio est� activo, se omite el texto � solo se env�a el audio
             if (!_enviarAudio)
             {
                 var tareas = new List<Task>();
@@ -1103,7 +1114,7 @@ namespace OPENGIOAI.Vistas
                     await Task.WhenAll(tareas);
             }
 
-            // ── Audio TTS — generar una sola vez y enviar a todos los canales activos ──
+            // -- Audio TTS � generar una sola vez y enviar a todos los canales activos --
             if (_enviarAudio)
             {
                 string? tmpFile = await _audioService.GenerarArchivoTemporalAsync(mensaje);
@@ -1113,7 +1124,7 @@ namespace OPENGIOAI.Vistas
                     var tareasAudio = new List<Task>();
 
                     if (usarTelegram && _telegramService.IsConfigured)
-                        tareasAudio.Add(_telegramService.EnviarArchivoAsync(tmpFile, "🔊 Audio"));
+                        tareasAudio.Add(_telegramService.EnviarArchivoAsync(tmpFile, "?? Audio"));
 
                     if (usarSlack && _slackService.IsConfigured)
                         tareasAudio.Add(_slackService.EnviarArchivoAsync(tmpFile, "Audio"));
@@ -1127,19 +1138,19 @@ namespace OPENGIOAI.Vistas
         }
 
         /// <summary>
-        /// Formatea la salida técnica cruda del Constructor para que se vea legible en Telegram.
-        /// · Si el contenido es JSON válido → lo indenta y lo envuelve en bloque de código.
-        /// · Cualquier otro texto → bloque &lt;pre&gt; monoespacio.
-        /// · Trunca a 3 800 chars para respetar el límite de 4 096 de Telegram.
+        /// Formatea la salida t�cnica cruda del Constructor para que se vea legible en Telegram.
+        /// � Si el contenido es JSON v�lido ? lo indenta y lo envuelve en bloque de c�digo.
+        /// � Cualquier otro texto ? bloque &lt;pre&gt; monoespacio.
+        /// � Trunca a 3 800 chars para respetar el l�mite de 4 096 de Telegram.
         /// </summary>
         private static string FormatearConstructorParaTelegram(string rawOutput)
         {
             if (string.IsNullOrWhiteSpace(rawOutput))
-                return "⚙️ <b>Constructor</b>\n<i>(sin salida)</i>";
+                return "?? <b>Constructor</b>\n<i>(sin salida)</i>";
 
             string contenido = rawOutput.Trim();
 
-            // ── Intentar pretty-print si parece JSON ─────────────────────────
+            // -- Intentar pretty-print si parece JSON -------------------------
             bool esJson = contenido.StartsWith("{") || contenido.StartsWith("[");
             if (esJson)
             {
@@ -1148,34 +1159,34 @@ namespace OPENGIOAI.Vistas
                     var token = Newtonsoft.Json.Linq.JToken.Parse(contenido);
                     contenido = token.ToString(Newtonsoft.Json.Formatting.Indented);
                 }
-                catch { /* dejar como está si no es JSON válido */ }
+                catch { /* dejar como est� si no es JSON v�lido */ }
             }
 
-            // ── Escapar caracteres especiales de HTML ────────────────────────
+            // -- Escapar caracteres especiales de HTML ------------------------
             contenido = contenido
                 .Replace("&", "&amp;")
                 .Replace("<", "&lt;")
                 .Replace(">", "&gt;");
 
-            // ── Truncar si supera el límite (reservar ~300 chars para cabecera) ─
+            // -- Truncar si supera el l�mite (reservar ~300 chars para cabecera) -
             const int MaxChars = 3_750;
             if (contenido.Length > MaxChars)
-                contenido = contenido[..MaxChars] + "\n<i>… (truncado)</i>";
+                contenido = contenido[..MaxChars] + "\n<i>� (truncado)</i>";
 
-            // ── Construir mensaje con bloque de código monoespacio ───────────
+            // -- Construir mensaje con bloque de c�digo monoespacio -----------
             // <pre><code> en Telegram HTML = bloque con fondo gris, fuente mono
-            return $"⚙️ <b>Constructor — resultado técnico</b>\n\n<pre><code>{contenido}</code></pre>";
+            return $"?? <b>Constructor � resultado t�cnico</b>\n\n<pre><code>{contenido}</code></pre>";
         }
 
         /// <summary>
-        /// Formatea la salida técnica del Constructor para Slack.
-        /// · JSON válido → pretty-print dentro de bloque de código (triple backtick).
-        /// · Truncado a 3 800 chars (límite práctico de Slack por mensaje).
+        /// Formatea la salida t�cnica del Constructor para Slack.
+        /// � JSON v�lido ? pretty-print dentro de bloque de c�digo (triple backtick).
+        /// � Truncado a 3 800 chars (l�mite pr�ctico de Slack por mensaje).
         /// </summary>
         private static string FormatearConstructorParaSlack(string rawOutput)
         {
             if (string.IsNullOrWhiteSpace(rawOutput))
-                return "⚙️ *Constructor* — _(sin salida)_";
+                return "?? *Constructor* � _(sin salida)_";
 
             string contenido = rawOutput.Trim();
 
@@ -1192,10 +1203,10 @@ namespace OPENGIOAI.Vistas
 
             const int MaxChars = 3_750;
             if (contenido.Length > MaxChars)
-                contenido = contenido[..MaxChars] + "\n… (truncado)";
+                contenido = contenido[..MaxChars] + "\n� (truncado)";
 
-            // Slack usa triple backtick para bloques de código monoespaciado
-            return $"⚙️ *Constructor — resultado técnico*\n```\n{contenido}\n```";
+            // Slack usa triple backtick para bloques de c�digo monoespaciado
+            return $"?? *Constructor � resultado t�cnico*\n```\n{contenido}\n```";
         }
 
         /// <summary>
@@ -1223,8 +1234,8 @@ namespace OPENGIOAI.Vistas
 
         /// <summary>
         /// Construye el prompt estructurado del Agente 2 (validador).
-        /// Extraído de EjecutarMotorIAAsync para mantener el método de
-        /// orquestación limpio y facilitar pruebas unitarias aisladas.
+        /// Extra�do de EjecutarMotorIAAsync para mantener el m�todo de
+        /// orquestaci�n limpio y facilitar pruebas unitarias aisladas.
         /// </summary>
         private static string ConstruirContextoAgente2(
             string instruccion,
@@ -1239,31 +1250,31 @@ namespace OPENGIOAI.Vistas
 [INSTRUCCION_ORIGINAL]
 {instruccion}
 
-[SALIDA_AGENTE_1 — contenido de respuesta.txt]
+[SALIDA_AGENTE_1 � contenido de respuesta.txt]
 {respuestaAgente1}
 
 [CODIGO_EJECUTADO_POR_AGENTE_1]
 {codigo}
 
-ERES EL AGENTE VERIFICADOR. Tu única tarea es escribir en respuesta.txt el resultado final.
+ERES EL AGENTE VERIFICADOR. Tu �nica tarea es escribir en respuesta.txt el resultado final.
 
-REGLA 1 — SI HAY ERROR o la salida está vacía o no cumple la instrucción original:
-  · Genera un script Python que corrija el problema y lo ejecute.
-  · Escribe SOLO el resultado corregido en respuesta.txt.
-  · Sin explicaciones, sin comentarios, solo la salida.
+REGLA 1 � SI HAY ERROR o la salida est� vac�a o no cumple la instrucci�n original:
+  � Genera un script Python que corrija el problema y lo ejecute.
+  � Escribe SOLO el resultado corregido en respuesta.txt.
+  � Sin explicaciones, sin comentarios, solo la salida.
 
-REGLA 2 — SI TODO SALIÓ BIEN:
-  · Genera un script Python que escriba en respuesta.txt un resumen claro y humano
+REGLA 2 � SI TODO SALI� BIEN:
+  � Genera un script Python que escriba en respuesta.txt un resumen claro y humano
     de lo que se hizo y el resultado obtenido.
-  · Lenguaje natural, sin tecnicismos, puedes usar emojis con moderación.
-  · Sin repetir el código, solo el resultado.
+  � Lenguaje natural, sin tecnicismos, puedes usar emojis con moderaci�n.
+  � Sin repetir el c�digo, solo el resultado.
 
-SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
+SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             ";
         }
 
         /// <summary>
-        /// Lee respuesta.txt si el modo SoloChat está activo y devuelve
+        /// Lee respuesta.txt si el modo SoloChat est� activo y devuelve
         /// el texto formateado como contexto para el modelo.
         /// [C4] Renombrado de ObtenerPromtChat (typo) a ObtenerContextoChat.
         /// </summary>
@@ -1278,15 +1289,15 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         }
 
         /// <summary>
-        /// Valida que haya instrucción, modelo y archivo antes de llamar al motor.
+        /// Valida que haya instrucci�n, modelo y archivo antes de llamar al motor.
         /// [C4] Ahora devuelve (bool ok, string error) en lugar de lanzar
-        ///      Exception directamente desde un método auxiliar; quien llama
+        ///      Exception directamente desde un m�todo auxiliar; quien llama
         ///      decide si interrumpir o solo notificar al usuario.
         /// </summary>
         private (bool ok, string error) ValidarCondiciones(string instruccion)
         {
             if (string.IsNullOrWhiteSpace(instruccion))
-                return (false, "La instrucción no puede estar vacía.");
+                return (false, "La instrucci�n no puede estar vac�a.");
             if (_modeloSeleccionado == null)
                 return (false, "No hay modelo seleccionado.");
             if (_archivoSeleccionado == null)
@@ -1295,11 +1306,11 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         }
 
         // =====================================================================
-        //  UI — MENSAJES Y CONTROLES
+        //  UI � MENSAJES Y CONTROLES
         // =====================================================================
 
         /// <summary>
-        /// Agrega una burbuja de chat al panel de conversación.
+        /// Agrega una burbuja de chat al panel de conversaci�n.
         /// [C1] InvokeRequired se comprueba al inicio; las llamadas desde hilos
         ///      de Telegram/Slack (background) son seguras sin modificar el caller.
         /// </summary>
@@ -1311,7 +1322,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 return;
             }
 
-            int anchoMax = (int)(pnlChat.ClientSize.Width * 0.75);
+            int anchoMax = (pnlChat.ClientSize.Width - 28);
 
             var burbuja = new BurbujaChat(
                 texto, esUsuario, anchoMax,
@@ -1365,12 +1376,12 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         }
 
         // =====================================================================
-        //  API — VALIDACIÓN
+        //  API � VALIDACI�N
         // =====================================================================
 
         /// <summary>
-        /// Comprueba que la API key del agente seleccionado sea válida.
-        /// Notifica al usuario si la validación falla.
+        /// Comprueba que la API key del agente seleccionado sea v�lida.
+        /// Notifica al usuario si la validaci�n falla.
         /// </summary>
         private async Task ComprobarApi(string apikey, Servicios agente)
         {
@@ -1382,7 +1393,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 Servicios.OpenRouter  => await AIServicios.ApiKeyOpenRouterValidaAsync(apikey),
                 Servicios.Claude      => await AIServicios.ApiKeyClaudeValidaAsync(apikey),
                 Servicios.Deespeek    => await AIServicios.ApiKeyDeepSeekValidaAsync(apikey),
-                // Antigravity: AntigravityEstaActivoAsync ya auto-detecta project si apikey es inválido
+                // Antigravity: AntigravityEstaActivoAsync ya auto-detecta project si apikey es inv�lido
                 Servicios.Antigravity => await AIServicios.AntigravityEstaActivoAsync(apikey),
                 _                     => false
             };
@@ -1390,13 +1401,13 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             if (!valida)
             {
                 string msg = agente == Servicios.Antigravity
-                    ? "Antigravity no está disponible.\n\n" +
+                    ? "Antigravity no est� disponible.\n\n" +
                       "Verifica:\n" +
-                      "• Ejecuta 'gcloud auth application-default login'\n" +
-                      "• Ejecuta 'gcloud config set project TU-PROYECTO'\n" +
-                      "• Que la API Vertex AI esté habilitada en el proyecto\n" +
-                      "• Guarda la config en Proveedores → Antigravity"
-                    : "Tu Api no es correcta o tiene algún error, comprueba por favor.";
+                      "� Ejecuta 'gcloud auth application-default login'\n" +
+                      "� Ejecuta 'gcloud config set project TU-PROYECTO'\n" +
+                      "� Que la API Vertex AI est� habilitada en el proyecto\n" +
+                      "� Guarda la config en Proveedores ? Antigravity"
+                    : "Tu Api no es correcta o tiene alg�n error, comprueba por favor.";
 
                 MostrarMensaje(msg, false);
             }
@@ -1529,8 +1540,8 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         #region Manejo de Telegram
 
         /// <summary>
-        /// Inicia o reinicia el listener de Telegram con la configuración actual.
-        /// [C1] El listener previo se detiene explícitamente antes de crear uno nuevo
+        /// Inicia o reinicia el listener de Telegram con la configuraci�n actual.
+        /// [C1] El listener previo se detiene expl�citamente antes de crear uno nuevo
         ///      para evitar tener dos goroutines escuchando el mismo bot token.
         /// </summary>
         private Task IniciarConversasionTelegram()
@@ -1540,13 +1551,13 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             if (!_telegramService.IsConfigured)
             {
                 MostrarMensaje(
-                    "Telegram aún no está configurado.\r\n" +
+                    "Telegram a�n no est� configurado.\r\n" +
                     "Proporciona tu API Key y tu ID de usuario y escribe #CONFIGURA TELEGRAM",
                     false);
                 return Task.CompletedTask;
             }
 
-            // Resuscribir eventos al reiniciar el listener evita acumulación
+            // Resuscribir eventos al reiniciar el listener evita acumulaci�n
             // de handlers si el usuario activa/desactiva Telegram varias veces.
             _telegramService.OnMessageReceived  -= TelegramService_OnMessageReceived;
             _telegramService.OnCallbackReceived -= TelegramService_OnCallbackReceived;
@@ -1574,7 +1585,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             BeginInvoke(async () =>
             {
                 await _telegramService.EnviarMensajeAsync(chatId,
-                    "Tu mensaje ha sido recibido y se está procesando... Por favor espera.",
+                    "Tu mensaje ha sido recibido y se est� procesando... Por favor espera.",
                     TelegramSender.CancelarConfig());
                 await ProcesarMensajeTelegramAsync(chatId, data);
             });
@@ -1593,7 +1604,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         }
 
         /// <summary>
-        /// Procesa un mensaje entrante de Telegram con exclusión mutua (semáforo)
+        /// Procesa un mensaje entrante de Telegram con exclusi�n mutua (sem�foro)
         /// para evitar procesamiento concurrente de dos mensajes del mismo usuario.
         /// </summary>
         private async Task ProcesarMensajeTelegramAsync(long chatId, string texto)
@@ -1608,7 +1619,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 if (!esComando)
                 {
                     await _telegramService.EnviarMensajeAsync(chatId,
-                        "Tu mensaje ha sido recibido y se está procesando... Por favor espera.",
+                        "Tu mensaje ha sido recibido y se est� procesando... Por favor espera.",
                         TelegramSender.CancelarConfig());
                 }
 
@@ -1619,7 +1630,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             {
                 MostrarMensaje($"Error procesando mensaje de Telegram: {ex.Message}", false);
                 await _telegramService.EnviarMensajeAsync(chatId,
-                    "Ocurrió un error procesando tu mensaje. Intenta de nuevo.");
+                    "Ocurri� un error procesando tu mensaje. Intenta de nuevo.");
             }
             finally
             {
@@ -1635,7 +1646,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         /// <summary>
         /// Enrutador de comandos Telegram / Slack. Usa el nuevo CommandExecutor:
         /// si el texto no es un comando (no empieza con `#`) delega al motor IA
-        /// como fallback. Preserva el caso original de los argumentos — crítico
+        /// como fallback. Preserva el caso original de los argumentos � cr�tico
         /// para `#ruta`, `#modelo`, voces de TTS, etc.
         /// </summary>
         private async Task EjecutarComandoOConsultaAsync(
@@ -1647,7 +1658,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 _telegramService.Chat.ChatId,
                 usarTelegram, usarSlack);
 
-            // Si no era un comando `#algo`, cae al motor IA (sólo Telegram/UI;
+            // Si no era un comando `#algo`, cae al motor IA (s�lo Telegram/UI;
             // Slack tiene su propio path en Realizar_Peticiones_Slack).
             if (!resultado.EsComando && !usarSlack && !string.IsNullOrWhiteSpace(textoOriginal))
             {
@@ -1669,7 +1680,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         /// </summary>
         private void ConfigurarCommandRouter()
         {
-            // Handlers de configuración / estado
+            // Handlers de configuraci�n / estado
             _cmdRegistry.Registrar(new Comandos.Handlers.CancelarCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.EstadoCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.AyudaCommand(_cmdRegistry));
@@ -1683,14 +1694,14 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             _cmdRegistry.Registrar(new Comandos.Handlers.CambiarRutaCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.ApisCommand());
 
-            // Handlers de configuración
+            // Handlers de configuraci�n
             _cmdRegistry.Registrar(new Comandos.Handlers.ConfiguracionesCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.RecordarCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.SoloChatCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.ReintentosCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.TimeoutCommand());
 
-            // Handlers de integración
+            // Handlers de integraci�n
             _cmdRegistry.Registrar(new Comandos.Handlers.TelegramCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.ActivaTelegramCommand());
             _cmdRegistry.Registrar(new Comandos.Handlers.DesactivaTelegramCommand());
@@ -1713,8 +1724,8 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         #region Manejo de Slack
 
         /// <summary>
-        /// Procesa una petición recibida desde Slack: si es comando la enruta,
-        /// si es texto libre la envía al motor IA.
+        /// Procesa una petici�n recibida desde Slack: si es comando la enruta,
+        /// si es texto libre la env�a al motor IA.
         /// [C1] BeginInvoke en lugar de Invoke para no bloquear el hilo de Slack.
         /// </summary>
         private async Task<string> Realizar_Peticiones_Slack(string instruccion)
@@ -1757,7 +1768,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
 
             if (!_slackService.IsConfigured) return Task.CompletedTask;
 
-            // Resuscribir eventos al reiniciar evita acumulación de handlers.
+            // Resuscribir eventos al reiniciar evita acumulaci�n de handlers.
             _slackService.OnMessageReceived -= SlackService_OnMessageReceived;
             _slackService.OnAviso           -= SlackService_OnAviso;
 
@@ -1779,7 +1790,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             if (!_slackService.Chat.usuarios.Contains(msg.User))
             {
                 await _slackService.EnviarMensajeAsync(
-                    "Tu usuario no está configurado para realizar instrucciones, " +
+                    "Tu usuario no est� configurado para realizar instrucciones, " +
                     "pide al administrador que te agregue.");
                 return;
             }
@@ -1799,12 +1810,12 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                     });
                 }
 
-                await _slackService.EnviarMensajeAsync("Su instrucción se recibió, espere respuesta...");
+                await _slackService.EnviarMensajeAsync("Su instrucci�n se recibi�, espere respuesta...");
                 await Realizar_Peticiones_Slack(instruccion);
             }
             catch
             {
-                await _slackService.EnviarMensajeAsync("Error procesando la instrucción.");
+                await _slackService.EnviarMensajeAsync("Error procesando la instrucci�n.");
             }
             finally
             {
@@ -1821,7 +1832,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         #endregion
 
         // =====================================================================
-        //  CONFIGURACIÓN, TEMAS Y UTILIDADES
+        //  CONFIGURACI�N, TEMAS Y UTILIDADES
         // =====================================================================
 
         private void GuardarConfiguracion()
@@ -1850,7 +1861,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             Utils.GuardarConfig<ConfiguracionClient>(
                 RutasProyecto.ObtenerRutaConfiguracion(), _configuracionClient);
 
-            MostrarMensaje("¡Configuración guardada!", false);
+            MostrarMensaje("�Configuraci�n guardada!", false);
         }
 
         private void LimpiarResumen()
@@ -1868,8 +1879,8 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         }
 
         /// <summary>
-        /// Cancela la petición activa al modelo de IA.
-        /// [C1] Solo cancela el token; Dispose se hace en la próxima llamada
+        /// Cancela la petici�n activa al modelo de IA.
+        /// [C1] Solo cancela el token; Dispose se hace en la pr�xima llamada
         ///      o en FormClosing para evitar doble-dispose.
         /// </summary>
         private void CancelarInstruccion()
@@ -1879,7 +1890,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
 
             _ctsIA.Cancel();
 
-            // Feedback visual inmediato en el botón
+            // Feedback visual inmediato en el bot�n
             if (btnCancelar.InvokeRequired)
             {
                 btnCancelar.BeginInvoke(() => MostrarFeedbackCancelacion());
@@ -1897,7 +1908,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             var textoOriginal   = btnCancelar.Text;
 
             // Estado "Cancelando..."
-            btnCancelar.Text      = "⏹ Cancelando...";
+            btnCancelar.Text      = "? Cancelando...";
             btnCancelar.ForeColor = Color.OrangeRed;
             btnCancelar.FlatAppearance.BorderColor = Color.OrangeRed;
             btnCancelar.Enabled   = false;
@@ -1927,6 +1938,9 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 comboBoxRuta.SelectedValue = _configuracionClient.MiArchivo.Ruta;
 
             RestaurarPreferencias();
+            AplicarTemaEmerald();
+            ConstruirTokenCounter();
+            MostrarEmptyState();
         }
 
         private void RestaurarPreferencias()
@@ -1968,9 +1982,9 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 textBoxInstrucion.AllowDrop = true;
                 textBoxInstrucion.AcceptsTab = true;
 
-                // ── Barra de estado de agentes ARIA ─────────────────────────────
+                // -- Barra de estado de agentes ARIA -----------------------------
                 // Se inserta entre panelHead (DockStyle.Top) y pnlChat (Fill).
-                // SetChildIndex con el índice de panelHead empuja panelHead al siguiente
+                // SetChildIndex con el �ndice de panelHead empuja panelHead al siguiente
                 // z-order, de modo que panelHead se acople primero (arriba del todo)
                 // y _panelAgentes se acople debajo sin tocar el Designer.
                 _panelAgentes = new PanelAgentes
@@ -2001,7 +2015,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                     focusColor: Color.FromArgb(41, 128, 185),
                     agregarSombra: true);
 
-                // ── Propagar Anchor al wrapper creado por RedondearRichTextBox ──────────
+                // -- Propagar Anchor al wrapper creado por RedondearRichTextBox ----------
                 // RedondearRichTextBox reparenta textBoxInstrucion dentro de un Panel nuevo
                 // que no hereda el Anchor original (Left|Right). Sin este fix el wrapper
                 // no se expande al redimensionar y btnEnviar/btnCancelar quedan sueltos.
@@ -2025,10 +2039,10 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 _toolTipArchivos.ReshowDelay = 200;
                 _toolTipArchivos.ShowAlways = true;
 
-                // ── Barra inferior: label "🔔 Notificar en:" ─────────────────
+                // -- Barra inferior: label "?? Notificar en:" -----------------
                 var lblNotif = new Label
                 {
-                    Text      = "🔔 Notif.:",
+                    Text      = "?? Notif.:",
                     AutoSize  = true,
                     ForeColor = Color.FromArgb(100, 120, 155),
                     BackColor = Color.Transparent,
@@ -2059,7 +2073,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 btnLimpiar.BringToFront();
                 btnInfo.BringToFront();
 
-                // ── Control de reintentos del Guardián (barra inferior) ────
+                // -- Control de reintentos del Guardi�n (barra inferior) ----
                 var lblReintentos = new Label
                 {
                     Text      = "Reintentos:",
@@ -2087,23 +2101,23 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
                 };
 
                 _toolTipArchivos.SetToolTip(_nudReintentos,
-                    "Correcciones automáticas del Guardián (0 = sin reintentos)");
+                    "Correcciones autom�ticas del Guardi�n (0 = sin reintentos)");
                 _toolTipArchivos.SetToolTip(lblReintentos,
-                    "Correcciones automáticas del Guardián");
+                    "Correcciones autom�ticas del Guardi�n");
 
                 pnlContenedorTxt.Controls.Add(lblReintentos);
                 pnlContenedorTxt.Controls.Add(_nudReintentos);
                 lblReintentos.BringToFront();
                 _nudReintentos.BringToFront();
 
-                // ── Sub-checkboxes del Constructor: deshabilitados hasta activar el canal ──
+                // -- Sub-checkboxes del Constructor: deshabilitados hasta activar el canal --
                 checkBoxConstructorTelegram.Enabled = false;
                 checkBoxConstructorSlack.Enabled    = false;
                 checkBoxArchivosTelegram.Enabled    = false;
                 checkBoxArchivosSlack.Enabled       = false;
-                // checkBoxAudio siempre habilitado — es independiente
+                // checkBoxAudio siempre habilitado � es independiente
 
-                // ── Labels de estadísticas ocultas hasta presionar ℹ ──────
+                // -- Labels de estad�sticas ocultas hasta presionar ? ------
                 lblTime.Visible     = false;
                 lblTimeR.Visible    = false;
                 lblConsumo.Visible  = false;
@@ -2139,7 +2153,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
         }
 
         /// <summary>
-        /// Carga el modelo guardado en la configuración y actualiza los combos.
+        /// Carga el modelo guardado en la configuraci�n y actualiza los combos.
         /// [C4] await directo elimina el Task.Run(() => asyncMethod()) que
         ///      creaba un deadlock potencial al mezclar sync y async.
         /// </summary>
@@ -2169,6 +2183,394 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada más.
             _modeloSeleccionado.ApiKey = _configuracionClient.Miapi.key;
 
             comboBoxModeloIA.SelectedValue = _modeloSeleccionado.Modelos;
+        }
+
+        // -- Paleta Emerald (consistente con FrmPrincipal / FrmApis / FrmModelos) --
+        private static readonly Color _emBgDeep    = ColorTranslator.FromHtml("#050505");
+        private static readonly Color _emBgCard    = ColorTranslator.FromHtml("#0f1117");
+        private static readonly Color _emBgInput   = ColorTranslator.FromHtml("#0b0e16");
+        private static readonly Color _emEmerald   = ColorTranslator.FromHtml("#10b981");
+        private static readonly Color _emEmerald4  = ColorTranslator.FromHtml("#34d399");
+        private static readonly Color _emEmerald9  = ColorTranslator.FromHtml("#064e3b");
+        private static readonly Color _emTextMain  = ColorTranslator.FromHtml("#f0fdf4");
+        private static readonly Color _emTextSub   = ColorTranslator.FromHtml("#a7f3d0");
+
+        /// <summary>
+        /// Aplica la paleta Emerald a todo el �rbol de controles del chat.
+        /// No toca el panel de chat (pnlChat) ni las burbujas para no romper el layout
+        /// del scroll ni los avatares; solo recolorea fondo, header, controles de
+        /// entrada y botones secundarios.
+        /// </summary>
+        private void AplicarTemaEmerald()
+        {
+            BackColor = _emBgDeep;
+            ForeColor = _emTextMain;
+
+            RecolorearArbolEmerald(this);
+
+            // Acentos espec�ficos en botones de acci�n
+            EstilizarBotonEmerald(btnEnviar,   primario: true);
+            EstilizarBotonEmerald(btnCancelar, primario: false, danger: true);
+        }
+
+        private void RecolorearArbolEmerald(Control raiz)
+        {
+            foreach (Control c in raiz.Controls)
+            {
+                // No tocamos las burbujas ni el panel de scroll del chat
+                if (c is BurbujaChat) continue;
+                if (c == pnlChat) { pnlChat.BackColor = _emBgDeep; continue; }
+
+                switch (c)
+                {
+                    case Button btn:
+                        EstilizarBotonEmerald(btn);
+                        break;
+
+                    case CheckBox chk:
+                        chk.ForeColor = _emTextSub;
+                        chk.BackColor = Color.Transparent;
+                        chk.FlatStyle = FlatStyle.Flat;
+                        chk.Cursor    = Cursors.Hand;
+                        break;
+
+                    case Label lbl:
+                        if (EsColorSemanticoEmerald(lbl.ForeColor)) break;
+                        lbl.BackColor = Color.Transparent;
+                        lbl.ForeColor = (lbl.Font?.Bold ?? false) ? _emTextMain : _emTextSub;
+                        break;
+
+                    case TextBox tb:
+                        tb.BackColor   = _emBgInput;
+                        tb.ForeColor   = _emTextMain;
+                        tb.BorderStyle = BorderStyle.FixedSingle;
+                        break;
+
+                    case RichTextBox rtb:
+                        rtb.BackColor   = _emBgInput;
+                        rtb.ForeColor   = _emTextMain;
+                        break;
+
+                    case ComboBox cmb:
+                        cmb.BackColor = _emBgInput;
+                        cmb.ForeColor = _emTextMain;
+                        cmb.FlatStyle = FlatStyle.Flat;
+                        break;
+
+                    case Panel pnl:
+                        // Header / contenedor de input / archivos: card oscura
+                        if (pnl == panelHead || pnl == pnlContenedorTxt || pnl == pnlContenedorArchivos)
+                            pnl.BackColor = _emBgCard;
+                        else
+                            pnl.BackColor = _emBgDeep;
+                        break;
+                }
+
+                if (c.HasChildren) RecolorearArbolEmerald(c);
+            }
+        }
+
+        private void EstilizarBotonEmerald(Button btn, bool primario = false, bool danger = false)
+        {
+            btn.FlatStyle = FlatStyle.Flat;
+            btn.FlatAppearance.BorderSize  = 1;
+            btn.ForeColor = _emTextMain;
+            btn.Cursor    = Cursors.Hand;
+            btn.Font      = new Font("Segoe UI Semibold", 9F);
+
+            if (danger)
+            {
+                var rojo  = ColorTranslator.FromHtml("#dc2626");
+                var rojo9 = ColorTranslator.FromHtml("#7f1d1d");
+                btn.BackColor = rojo9;
+                btn.FlatAppearance.BorderColor        = rojo;
+                btn.FlatAppearance.MouseOverBackColor = rojo;
+                btn.FlatAppearance.MouseDownBackColor = ColorTranslator.FromHtml("#991b1b");
+            }
+            else if (primario)
+            {
+                btn.BackColor = _emEmerald;
+                btn.FlatAppearance.BorderColor        = _emEmerald4;
+                btn.FlatAppearance.MouseOverBackColor = _emEmerald4;
+                btn.FlatAppearance.MouseDownBackColor = _emEmerald9;
+            }
+            else
+            {
+                btn.BackColor = _emEmerald9;
+                btn.FlatAppearance.BorderColor        = _emEmerald;
+                btn.FlatAppearance.MouseOverBackColor = _emEmerald;
+                btn.FlatAppearance.MouseDownBackColor = _emEmerald4;
+            }
+        }
+
+        private static bool EsColorSemanticoEmerald(Color c)
+        {
+            return (c.R == 34  && c.G == 197 && c.B == 94)
+                || (c.R == 245 && c.G == 158 && c.B == 11)
+                || (c.R == 239 && c.G == 68  && c.B == 68)
+                || (c.R == 100 && c.G == 116 && c.B == 139);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  MEJORAS DE UX: empty state + token counter + quick actions
+        // ═══════════════════════════════════════════════════════════════════
+
+        private Panel _emptyStatePanel;
+        private Label _lblTokenCount;
+        private BurbujaChat _ultimaBurbujaComunicador;
+
+        // ── EMPTY STATE ──────────────────────────────────────────────
+        private void MostrarEmptyState()
+        {
+            if (pnlChat == null) return;
+            if (_emptyStatePanel != null && !_emptyStatePanel.IsDisposed)
+            {
+                _emptyStatePanel.Visible = true;
+                if (!pnlChat.Controls.Contains(_emptyStatePanel))
+                    pnlChat.Controls.Add(_emptyStatePanel);
+                return;
+            }
+
+            _emptyStatePanel = new Panel
+            {
+                BackColor = Color.Transparent,
+                Width     = Math.Max(400, pnlChat.ClientSize.Width - 40),
+                Height    = 220,
+                Margin    = new Padding(0, 60, 0, 0)
+            };
+
+            var lblTitulo = new Label
+            {
+                Text      = "✦  ¿En qué te ayudo hoy?",
+                Font      = new Font("Segoe UI Semibold", 16F, FontStyle.Bold),
+                ForeColor = _emTextMain,
+                BackColor = Color.Transparent,
+                AutoSize  = true,
+                Location  = new Point(20, 20)
+            };
+
+            var lblSub = new Label
+            {
+                Text      = "Probá con una de estas o escribí tu propia instrucción ↓",
+                Font      = new Font("Segoe UI", 9.5F),
+                ForeColor = _emTextSub,
+                BackColor = Color.Transparent,
+                AutoSize  = true,
+                Location  = new Point(22, 56)
+            };
+
+            _emptyStatePanel.Controls.Add(lblTitulo);
+            _emptyStatePanel.Controls.Add(lblSub);
+
+            // Chips de sugerencia
+            (string icono, string texto)[] chips =
+            {
+                ("\U0001F4DD", "Crear un archivo notas.md"),
+                ("\U0001F50D", "Buscar archivos en mi carpeta"),
+                ("\U0001F4E4", "Enviarme un resumen por Telegram"),
+                ("⚡",     "Ejecutar una skill"),
+            };
+
+            int x = 22, y = 96;
+            int gap = 10, anchoChip = 240, altoChip = 38;
+            int colsPorFila = 2;
+            int idxChip = 0;
+
+            foreach (var (icono, texto) in chips)
+            {
+                int col = idxChip % colsPorFila;
+                int row = idxChip / colsPorFila;
+
+                var chip = new Label
+                {
+                    Text       = $"{icono}   {texto}",
+                    Font       = new Font("Segoe UI", 9.5F),
+                    ForeColor  = _emTextMain,
+                    BackColor  = _emBgCard,
+                    TextAlign  = ContentAlignment.MiddleLeft,
+                    Padding    = new Padding(12, 0, 12, 0),
+                    Cursor     = Cursors.Hand,
+                    Width      = anchoChip,
+                    Height     = altoChip,
+                    Location   = new Point(x + col * (anchoChip + gap), y + row * (altoChip + gap)),
+                    Tag        = texto
+                };
+                chip.MouseEnter += (_, __) => chip.BackColor = _emEmerald9;
+                chip.MouseLeave += (_, __) => chip.BackColor = _emBgCard;
+                chip.Click      += (s, __) =>
+                {
+                    if (s is Label l && l.Tag is string sugerencia)
+                    {
+                        textBoxInstrucion.Text = sugerencia;
+                        textBoxInstrucion.SelectionStart = sugerencia.Length;
+                        textBoxInstrucion.Focus();
+                    }
+                };
+
+                _emptyStatePanel.Controls.Add(chip);
+                idxChip++;
+            }
+
+            pnlChat.Controls.Add(_emptyStatePanel);
+        }
+
+        private void OcultarEmptyState()
+        {
+            if (_emptyStatePanel != null && !_emptyStatePanel.IsDisposed)
+            {
+                _emptyStatePanel.Visible = false;
+                pnlChat.Controls.Remove(_emptyStatePanel);
+            }
+        }
+
+        // ── TOKEN COUNTER ────────────────────────────────────────────
+        private void ConstruirTokenCounter()
+        {
+            if (_lblTokenCount != null) return;
+            if (pnlContenedorTxt == null || textBoxInstrucion == null) return;
+
+            _lblTokenCount = new Label
+            {
+                AutoSize  = true,
+                Text      = "0 tokens",
+                Font      = new Font("Segoe UI Semibold", 7.5F, FontStyle.Bold),
+                ForeColor = _emTextSub,
+                BackColor = Color.Transparent,
+                Anchor    = AnchorStyles.Top | AnchorStyles.Right
+            };
+            pnlContenedorTxt.Controls.Add(_lblTokenCount);
+
+            ReposicionarTokenCounter();
+            pnlContenedorTxt.Resize       += (_, __) => ReposicionarTokenCounter();
+            pnlContenedorTxt.ClientSizeChanged += (_, __) => ReposicionarTokenCounter();
+
+            textBoxInstrucion.TextChanged += (_, __) =>
+            {
+                ActualizarTokenCounter();
+                ReposicionarTokenCounter();
+            };
+            ActualizarTokenCounter();
+        }
+
+        private void ReposicionarTokenCounter()
+        {
+            if (_lblTokenCount == null || pnlContenedorTxt == null) return;
+            // Zona libre del panel: pegado a btnLimpiar (725, 108) por encima,
+            // alineado verticalmente con los checks de notificadores (y ≈ 116).
+            // La columna 8..420 está ocupada por checks Telegram/Slack/Audio,
+            // y la franja 420..720 contiene 'Reintentos' + nudReintentos.
+            // Por eso lo posicionamos a la izquierda de btnLimpiar dentro de
+            // esa franja libre (x≈540..720, y≈116) — fuera de cualquier control.
+            int yTarget = 116;
+            int xTarget = 725 - _lblTokenCount.PreferredWidth - 12;
+            // Si el panel es muy angosto, fall-back a la esquina superior derecha
+            if (xTarget < 530)
+            {
+                xTarget = pnlContenedorTxt.ClientSize.Width - _lblTokenCount.PreferredWidth - 14;
+                yTarget = 7;
+            }
+            _lblTokenCount.Location = new Point(Math.Max(0, xTarget), Math.Max(0, yTarget));
+            _lblTokenCount.BringToFront();
+        }
+
+        private void ActualizarTokenCounter()
+        {
+            if (_lblTokenCount == null) return;
+            string txt = textBoxInstrucion?.Text ?? string.Empty;
+            // Aproximación: 1 token ≈ 4 caracteres en español/inglés
+            int tokens = (int)Math.Ceiling(txt.Length / 4.0);
+            int chars  = txt.Length;
+            _lblTokenCount.Text = $"~{tokens} tokens · {chars} chars";
+
+            // Cambia color si es muy largo
+            if (tokens > 1500)      _lblTokenCount.ForeColor = ColorTranslator.FromHtml("#f87171");
+            else if (tokens > 800)  _lblTokenCount.ForeColor = ColorTranslator.FromHtml("#fbbf24");
+            else                    _lblTokenCount.ForeColor = _emTextSub;
+        }
+
+        // ── QUICK ACTIONS sobre la última respuesta del Comunicador ──
+        public void MostrarQuickActions()
+        {
+            if (_ultimaBurbujaComunicador == null || _ultimaBurbujaComunicador.IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(MostrarQuickActions); return; }
+
+            // Si ya hay un panel de quick actions debajo, no duplicar
+            int idx = pnlChat.Controls.IndexOf(_ultimaBurbujaComunicador);
+            if (idx < 0) return;
+
+            // Verificar si el siguiente control ya es un panel de acciones
+            if (idx + 1 < pnlChat.Controls.Count
+                && pnlChat.Controls[idx + 1] is Panel sig
+                && sig.Tag?.ToString() == "QuickActions")
+                return;
+
+            var pnlAcciones = new Panel
+            {
+                Tag       = "QuickActions",
+                Width     = 280,
+                Height    = 32,
+                BackColor = Color.Transparent,
+                Margin    = new Padding(250, 0, 80, 8)
+            };
+
+            (string icono, string tooltip, Action accion)[] acciones =
+            {
+                ("\U0001F501", "Regenerar respuesta",  AccionRegenerar),
+                ("\U0001F4CB", "Copiar respuesta",     AccionCopiarUltima),
+                ("\U0001F44D", "Útil",                 () => Feedback(true)),
+                ("\U0001F44E", "No útil",              () => Feedback(false)),
+            };
+
+            int xb = 0;
+            foreach (var (icono, tip, accion) in acciones)
+            {
+                var btn = new Label
+                {
+                    Text       = icono,
+                    Font       = new Font("Segoe UI Emoji", 10F),
+                    ForeColor  = _emTextSub,
+                    BackColor  = _emBgCard,
+                    TextAlign  = ContentAlignment.MiddleCenter,
+                    Width      = 32,
+                    Height     = 28,
+                    Location   = new Point(xb, 2),
+                    Cursor     = Cursors.Hand
+                };
+                _toolTipArchivos.SetToolTip(btn, tip);
+                btn.MouseEnter += (_, __) => { btn.BackColor = _emEmerald9; btn.ForeColor = _emEmerald4; };
+                btn.MouseLeave += (_, __) => { btn.BackColor = _emBgCard;   btn.ForeColor = _emTextSub; };
+                btn.Click      += (_, __) => accion();
+                pnlAcciones.Controls.Add(btn);
+                xb += 36;
+            }
+
+            pnlChat.Controls.Add(pnlAcciones);
+            pnlChat.Controls.SetChildIndex(pnlAcciones, idx + 1);
+            pnlChat.ScrollControlIntoView(pnlAcciones);
+        }
+
+        private void AccionRegenerar()
+        {
+            // No toca lógica; solo re-dispara btnEnviar si hay texto en el campo
+            if (!string.IsNullOrWhiteSpace(textBoxInstrucion.Text))
+                btnEnviar_Click(this, EventArgs.Empty);
+        }
+
+        private void AccionCopiarUltima()
+        {
+            try
+            {
+                if (_ultimaBurbujaComunicador != null && !_ultimaBurbujaComunicador.IsDisposed)
+                    Clipboard.SetText(_ultimaBurbujaComunicador.Text ?? string.Empty);
+            }
+            catch { /* clipboard puede fallar si la ventana no tiene foco */ }
+        }
+
+        private void Feedback(bool positivo)
+        {
+            // Solo feedback visual; sin persistencia
+            string msg = positivo ? "👍 Gracias por tu feedback" : "👎 Anotado";
+            _toolTipArchivos.Show(msg, this, PointToClient(MousePosition), 1400);
         }
     }
 }

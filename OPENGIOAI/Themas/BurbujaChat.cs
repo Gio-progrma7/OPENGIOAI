@@ -1,50 +1,67 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.ComponentModel;
 
 namespace OPENGIOAI.Themas
 {
     /// <summary>
-    /// Burbuja de chat estilo moderno (WhatsApp/Telegram-inspired).
-    /// Soporta texto enriquecido, rutas/URLs clicables, preview de imágenes
-    /// y avatar circular con borde de color según el remitente.
+    /// Burbuja de chat estilo moderno con paleta Emerald.
+    /// Soporta texto enriquecido, rutas/URLs clicables, preview de imágenes,
+    /// avatar circular y un toggle "Mostrar más / Mostrar menos" cuando la
+    /// respuesta es larga (típico del Constructor que devuelve JSON crudo).
     /// </summary>
     public class BurbujaChat : Control
     {
         // ─────────────────────────────────────────────────────────────
         //  Constantes de diseño
         // ─────────────────────────────────────────────────────────────
-        private const int TamañoAvatar = 42;
-        private const int RadioBurbuja = 18;
-        private const int PaddingBurbuja = 14;
-        private const int MargenAvatar = 6;
-        private const int PreviewSize = 110;
-        private const int PreviewGap = 6;
-        private const int SombraAlfa = 45;
-        private const int SombraDesplaz = 3;
+        private const int TamañoAvatar    = 36;
+        private const int RadioBurbuja    = 14;
+        private const int PaddingBurbuja  = 14;
+        private const int MargenAvatar    = 8;
+        private const int GapAvatarTexto  = 10;
+        private const int PreviewSize     = 110;
+        private const int PreviewGap      = 6;
+
+        // Toggle "ver más / ver menos"
+        private const int LimiteCaracteres = 420;   // a partir de aquí se colapsa
+        private const int LineasColapsado  = 6;     // líneas visibles en colapso
+        private const int AltoToggle       = 26;    // alto del botón de toggle
+
+        // Timestamp + botón copiar
+        private const int AltoMeta         = 16;    // alto del pie con hora
+        private const int TamañoBtnCopiar  = 22;
 
         // ─────────────────────────────────────────────────────────────
-        //  Paleta de colores
+        //  Paleta Emerald (consistente con FrmPrincipal / FrmApis)
         // ─────────────────────────────────────────────────────────────
-        private static readonly Color ColorUsuario = Color.FromArgb(0, 102, 161);
-        private static readonly Color ColorUsuarioClaro = Color.FromArgb(0, 122, 185);
-        private static readonly Color ColorIA = Color.FromArgb(32, 41, 46);
-        private static readonly Color ColorIAClaro = Color.FromArgb(45, 56, 63);
-        private static readonly Color ColorTexto = Color.FromArgb(240, 240, 240);
-        private static readonly Color ColorEnlace = Color.FromArgb(255, 180, 72);
-        private static readonly Color ColorAvatarBordeU = Color.FromArgb(0, 140, 210);
-        private static readonly Color ColorAvatarBordeIA = Color.FromArgb(80, 100, 110);
+        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#050505");
+        private static readonly Color BgCard    = ColorTranslator.FromHtml("#0f1117");
+        private static readonly Color BgCardHi  = ColorTranslator.FromHtml("#141826");
+        private static readonly Color Emerald   = ColorTranslator.FromHtml("#10b981");
+        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#34d399");
+        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#064e3b");
+        private static readonly Color Emerald12 = ColorTranslator.FromHtml("#022c22");
+        private static readonly Color TextMain  = ColorTranslator.FromHtml("#f0fdf4");
+        private static readonly Color TextSub   = ColorTranslator.FromHtml("#a7f3d0");
+        private static readonly Color BorderCol = ColorTranslator.FromHtml("#1f2937");
+
+        // Fondos por remitente
+        private static readonly Color BgUsuario  = Emerald9;     // verde profundo
+        private static readonly Color BgUsuario2 = Emerald12;    // gradiente
+        private static readonly Color BgIA       = BgCard;
+        private static readonly Color BgIA2      = BgCardHi;
 
         // ─────────────────────────────────────────────────────────────
-        //  Expresión regular para rutas y URLs
+        //  Regex para rutas y URLs
         // ─────────────────────────────────────────────────────────────
         private static readonly Regex RegexRuta = new Regex(
             @"([A-Za-z]:\\(?:[^\n""'<>|*?\r\\/:]+\\)*[^\n""'<>|*?\r\/:\\]*)|(https?:\/\/[^\s\n""'<>]+)",
@@ -66,50 +83,67 @@ namespace OPENGIOAI.Themas
         //  Campos privados
         // ─────────────────────────────────────────────────────────────
         private int _anchoMaximo;
+        private string _textoCompleto;
+        private bool _expandido = true;          // por defecto expandido; se colapsa si excede
+        private bool _puedeColapsar;             // true si el texto supera el límite
         private RichTextBox _txtMensaje;
         private Panel _avatarPanel;
+        private Label _btnToggle;                // "Mostrar más ⌄ / Mostrar menos ⌃"
+        private Label _lblHora;                  // timestamp HH:mm
+        private Label _btnCopiar;                // 📋 al hover
+        private DateTime _timestamp = DateTime.Now;
         private ToolTip _tooltip;
         private List<Panel> _previews = new List<Panel>();
+
+        // Animación "está pensando..." (cuando el texto termina en "...")
+        private System.Windows.Forms.Timer _timerTyping;
+        private int _typingTick;
 
         // ─────────────────────────────────────────────────────────────
         //  Constructor
         // ─────────────────────────────────────────────────────────────
         public BurbujaChat(string texto, bool esUsuario, int anchoMaximo, Image avatarImg)
         {
-            EsUsuario = esUsuario;
-            Text = texto;
-            _anchoMaximo = anchoMaximo;
+            EsUsuario      = esUsuario;
+            Text           = texto;
+            _textoCompleto = texto ?? string.Empty;
+            _anchoMaximo   = anchoMaximo;
 
             SetStyle(ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.AllPaintingInWmPaint |
-                     ControlStyles.ResizeRedraw, true);
+                     ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
 
             DoubleBuffered = true;
-            Font = new Font("Segoe UI Emoji", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
-            BackColor = Color.FromArgb(15, 23, 42);
-            Margin = new Padding(4, 3, 4, 3);
+            Font           = new Font("Segoe UI Emoji", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            BackColor      = BgDeep;
+            Margin         = new Padding(0, 4, 0, 4);
 
             _tooltip = new ToolTip { AutomaticDelay = 400, ShowAlways = true };
 
-            Color colorFondo = EsUsuario ? ColorUsuario : ColorIA;
+            Color colorFondo = EsUsuario ? BgUsuario : BgIA;
+
+            // ── Determinar si el contenido debe poder colapsarse ─────
+            _puedeColapsar = !EsUsuario && _textoCompleto.Length > LimiteCaracteres;
+            _expandido     = !_puedeColapsar; // si es largo arranca colapsado
 
             // ── RichTextBox ──────────────────────────────────────────
             _txtMensaje = new RichTextBox
             {
-                Text = texto,
-                ReadOnly = true,
+                Text        = TextoVisible(),
+                ReadOnly    = true,
                 BorderStyle = BorderStyle.None,
-                ScrollBars = RichTextBoxScrollBars.None,
-                Multiline = true,
-                TabStop = false,
-                Font = Font,
-                ForeColor = ColorTexto,
-                BackColor = colorFondo,
-                Cursor = Cursors.IBeam,
-                WordWrap = true
+                ScrollBars  = RichTextBoxScrollBars.None,
+                Multiline   = true,
+                TabStop     = false,
+                Font        = Font,
+                ForeColor   = TextMain,
+                BackColor   = colorFondo,
+                Cursor      = Cursors.IBeam,
+                WordWrap    = true
             };
 
-            _txtMensaje.MouseMove += OnTxtMouseMove;
+            _txtMensaje.MouseMove  += OnTxtMouseMove;
             _txtMensaje.MouseClick += OnTxtMouseClick;
 
             AplicarFormatoEnlaces();
@@ -120,15 +154,15 @@ namespace OPENGIOAI.Themas
                 ImagenPerfil = avatarImg;
                 _avatarPanel = new Panel
                 {
-                    Size = new Size(TamañoAvatar, TamañoAvatar),
+                    Size      = new Size(TamañoAvatar, TamañoAvatar),
                     BackColor = Color.Transparent
                 };
 
                 var pb = new PictureBox
                 {
-                    Image = avatarImg,
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Dock = DockStyle.Fill,
+                    Image     = avatarImg,
+                    SizeMode  = PictureBoxSizeMode.Zoom,
+                    Dock      = DockStyle.Fill,
                     BackColor = Color.Transparent
                 };
 
@@ -138,23 +172,164 @@ namespace OPENGIOAI.Themas
 
             Controls.Add(_txtMensaje);
 
+            // ── Timestamp ────────────────────────────────────────────
+            _lblHora = new Label
+            {
+                AutoSize  = true,
+                Text      = _timestamp.ToString("HH:mm"),
+                ForeColor = Color.FromArgb(110, 130, 145),
+                BackColor = Color.Transparent,
+                Font      = new Font("Segoe UI", 7.5F, FontStyle.Regular)
+            };
+            Controls.Add(_lblHora);
+
+            // ── Botón copiar (visible al hover) ──────────────────────
+            _btnCopiar = new Label
+            {
+                AutoSize    = false,
+                Size        = new Size(TamañoBtnCopiar, TamañoBtnCopiar),
+                Text        = "\U0001F4CB",        // 📋
+                TextAlign   = ContentAlignment.MiddleCenter,
+                ForeColor   = TextSub,
+                BackColor   = Color.Transparent,
+                Cursor      = Cursors.Hand,
+                Font        = new Font("Segoe UI Emoji", 9F),
+                Visible     = false
+            };
+            _btnCopiar.Click       += OnCopiarClick;
+            _btnCopiar.MouseEnter  += (_, __) => _btnCopiar.ForeColor = Emerald4;
+            _btnCopiar.MouseLeave  += (_, __) => _btnCopiar.ForeColor = TextSub;
+            _tooltip.SetToolTip(_btnCopiar, "Copiar mensaje");
+            Controls.Add(_btnCopiar);
+
+            // Hover: mostrar/ocultar el botón copiar en toda la burbuja
+            this.MouseEnter        += MostrarCopiar;
+            _txtMensaje.MouseEnter += MostrarCopiar;
+            _txtMensaje.MouseLeave += OcultarSiCorresponde;
+            this.MouseLeave        += OcultarSiCorresponde;
+
+            // ── Botón "Mostrar más / menos" (solo si aplica) ─────────
+            if (_puedeColapsar)
+            {
+                _btnToggle = new Label
+                {
+                    AutoSize    = false,
+                    TextAlign   = ContentAlignment.MiddleCenter,
+                    ForeColor   = Emerald4,
+                    BackColor   = Color.Transparent,
+                    Cursor      = Cursors.Hand,
+                    Font        = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
+                    Height      = AltoToggle,
+                    Text        = "  Mostrar más  ⌄"
+                };
+                _btnToggle.Click       += OnToggleClick;
+                _btnToggle.MouseEnter  += (_, __) => _btnToggle.ForeColor = Emerald;
+                _btnToggle.MouseLeave  += (_, __) => _btnToggle.ForeColor = Emerald4;
+                Controls.Add(_btnToggle);
+            }
+
             // ── Previews de imágenes ─────────────────────────────────
-            CargarPreviewImagenes(texto, colorFondo);
+            CargarPreviewImagenes(_textoCompleto, colorFondo);
+
+            // ── Animación "pensando" cuando texto termina en "..." ───
+            ActualizarAnimacionTyping();
+        }
+
+        private void ActualizarAnimacionTyping()
+        {
+            bool debeAnimar = !EsUsuario && (_textoCompleto?.TrimEnd().EndsWith("...") == true);
+
+            if (debeAnimar && _timerTyping == null)
+            {
+                _timerTyping = new System.Windows.Forms.Timer { Interval = 380 };
+                _timerTyping.Tick += (_, __) =>
+                {
+                    _typingTick = (_typingTick + 1) % 4;
+                    string sufijo = new string('.', _typingTick);
+                    string baseTxt = (_textoCompleto ?? "").TrimEnd('.', ' ');
+                    _txtMensaje.Text = baseTxt + (sufijo.Length > 0 ? "  " + sufijo : "");
+                    AplicarFormatoEnlaces();
+                };
+                _timerTyping.Start();
+            }
+            else if (!debeAnimar && _timerTyping != null)
+            {
+                _timerTyping.Stop();
+                _timerTyping.Dispose();
+                _timerTyping = null;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────
-        //  ENLACES — formato y eventos
+        //  TOGGLE Mostrar más / menos
+        // ─────────────────────────────────────────────────────────────
+        private string TextoVisible()
+        {
+            if (_expandido || !_puedeColapsar) return _textoCompleto;
+
+            var lineas = _textoCompleto.Replace("\r\n", "\n").Split('\n');
+            string corte = lineas.Length > LineasColapsado
+                ? string.Join("\n", lineas.Take(LineasColapsado))
+                : _textoCompleto.Substring(0, Math.Min(LimiteCaracteres, _textoCompleto.Length));
+
+            return corte.TrimEnd() + " …";
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        //  COPIAR + HOVER
+        // ─────────────────────────────────────────────────────────────
+        private void MostrarCopiar(object sender, EventArgs e)
+        {
+            if (_btnCopiar != null) _btnCopiar.Visible = true;
+        }
+
+        private void OcultarSiCorresponde(object sender, EventArgs e)
+        {
+            if (_btnCopiar == null) return;
+            // Solo ocultar si el cursor salió de toda la burbuja
+            var pos = PointToClient(MousePosition);
+            if (!ClientRectangle.Contains(pos)) _btnCopiar.Visible = false;
+        }
+
+        private async void OnCopiarClick(object sender, EventArgs e)
+        {
+            try { Clipboard.SetText(_textoCompleto ?? string.Empty); }
+            catch { return; }
+
+            string original = _btnCopiar.Text;
+            _btnCopiar.Text      = "✓";   // ✓
+            _btnCopiar.ForeColor = Emerald;
+            await Task.Delay(900);
+            if (_btnCopiar == null || _btnCopiar.IsDisposed) return;
+            _btnCopiar.Text      = original;
+            _btnCopiar.ForeColor = TextSub;
+        }
+
+        private void OnToggleClick(object sender, EventArgs e)
+        {
+            _expandido = !_expandido;
+            _btnToggle.Text = _expandido
+                ? "  Mostrar menos  ⌃"
+                : "  Mostrar más  ⌄";
+            _txtMensaje.Text = TextoVisible();
+            AplicarFormatoEnlaces();
+            CalcularTamaño();
+            Invalidate();
+            Parent?.PerformLayout();
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        //  ENLACES
         // ─────────────────────────────────────────────────────────────
         private void AplicarFormatoEnlaces()
         {
             foreach (Match m in RegexRuta.Matches(_txtMensaje.Text))
             {
                 _txtMensaje.Select(m.Index, m.Length);
-                _txtMensaje.SelectionColor = ColorEnlace;
-                _txtMensaje.SelectionFont =
-                    new Font(_txtMensaje.Font, FontStyle.Underline);
+                _txtMensaje.SelectionColor = Emerald4;
+                _txtMensaje.SelectionFont  = new Font(_txtMensaje.Font, FontStyle.Underline);
             }
-            _txtMensaje.SelectionStart = 0;
+            _txtMensaje.SelectionStart  = 0;
             _txtMensaje.SelectionLength = 0;
         }
 
@@ -199,8 +374,7 @@ namespace OPENGIOAI.Themas
         //  PREVIEW DE IMÁGENES
         // ─────────────────────────────────────────────────────────────
         private static bool EsImagen(string ruta) =>
-            ExtensionesImagen.Any(ext =>
-                ruta.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
+            ExtensionesImagen.Any(ext => ruta.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
 
         private void CargarPreviewImagenes(string texto, Color colorFondo)
         {
@@ -215,30 +389,28 @@ namespace OPENGIOAI.Themas
                 try
                 {
                     string rutaLocal = ruta;
-                    Image imagen = Image.FromFile(rutaLocal);
+                    Image imagen     = Image.FromFile(rutaLocal);
 
                     Panel contenedor = new Panel
                     {
                         BackColor = colorFondo,
-                        Cursor = Cursors.Hand,
-                        Tag = rutaLocal,
-                        Size = new Size(PreviewSize, PreviewSize)
+                        Cursor    = Cursors.Hand,
+                        Tag       = rutaLocal,
+                        Size      = new Size(PreviewSize, PreviewSize),
+                        Padding   = new Padding(3)
                     };
-
-                    // Borde redondeado simulado con padding
-                    contenedor.Padding = new Padding(3);
 
                     var pb = new PictureBox
                     {
-                        Image = imagen,
-                        SizeMode = PictureBoxSizeMode.Zoom,
-                        Dock = DockStyle.Fill,
-                        Cursor = Cursors.Hand,
+                        Image     = imagen,
+                        SizeMode  = PictureBoxSizeMode.Zoom,
+                        Dock      = DockStyle.Fill,
+                        Cursor    = Cursors.Hand,
                         BackColor = Color.Transparent
                     };
 
-                    pb.Click += (s, ev) => MostrarPreviewPopup(rutaLocal);
-                    contenedor.Click += (s, ev) => MostrarPreviewPopup(rutaLocal);
+                    pb.Click          += (s, ev) => MostrarPreviewPopup(rutaLocal);
+                    contenedor.Click  += (s, ev) => MostrarPreviewPopup(rutaLocal);
                     contenedor.Controls.Add(pb);
 
                     _tooltip.SetToolTip(contenedor,
@@ -262,53 +434,55 @@ namespace OPENGIOAI.Themas
 
                 Form popup = new Form
                 {
-                    Text = Path.GetFileName(rutaImagen),
-                    Size = new Size(800, 580),
-                    MinimumSize = new Size(400, 300),
-                    StartPosition = FormStartPosition.CenterScreen,
-                    BackColor = Color.FromArgb(18, 18, 20),
+                    Text            = Path.GetFileName(rutaImagen),
+                    Size            = new Size(800, 580),
+                    MinimumSize     = new Size(400, 300),
+                    StartPosition   = FormStartPosition.CenterScreen,
+                    BackColor       = BgDeep,
                     FormBorderStyle = FormBorderStyle.Sizable,
-                    Icon = SystemIcons.Application
+                    Icon            = SystemIcons.Application
                 };
 
                 var pb = new PictureBox
                 {
-                    Image = imagen,
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Dock = DockStyle.Fill,
+                    Image     = imagen,
+                    SizeMode  = PictureBoxSizeMode.Zoom,
+                    Dock      = DockStyle.Fill,
                     BackColor = Color.Transparent
                 };
 
                 Panel barraInferior = new Panel
                 {
-                    Dock = DockStyle.Bottom,
-                    Height = 44,
-                    BackColor = Color.FromArgb(28, 28, 32),
-                    Padding = new Padding(8, 5, 8, 5)
+                    Dock      = DockStyle.Bottom,
+                    Height    = 44,
+                    BackColor = BgCard,
+                    Padding   = new Padding(8, 5, 8, 5)
                 };
 
                 var btnAbrir = new Button
                 {
-                    Text = "📂  Abrir en visor",
+                    Text      = "📂  Abrir en visor",
                     FlatStyle = FlatStyle.Flat,
-                    ForeColor = Color.White,
-                    BackColor = ColorUsuario,
-                    Height = 32,
-                    Width = 150,
-                    Left = 8,
-                    Top = 6,
-                    Cursor = Cursors.Hand
+                    ForeColor = TextMain,
+                    BackColor = Emerald9,
+                    Height    = 32,
+                    Width     = 150,
+                    Left      = 8,
+                    Top       = 6,
+                    Cursor    = Cursors.Hand
                 };
-                btnAbrir.FlatAppearance.BorderSize = 0;
+                btnAbrir.FlatAppearance.BorderColor       = Emerald;
+                btnAbrir.FlatAppearance.BorderSize        = 1;
+                btnAbrir.FlatAppearance.MouseOverBackColor = Emerald;
                 btnAbrir.Click += (s, e) => AbrirRuta(rutaImagen);
 
                 var lblInfo = new Label
                 {
-                    Text = $"{imagen.Width} × {imagen.Height} px",
-                    ForeColor = Color.FromArgb(160, 160, 160),
-                    AutoSize = true,
-                    Top = 13,
-                    Left = 170
+                    Text      = $"{imagen.Width} × {imagen.Height} px",
+                    ForeColor = TextSub,
+                    AutoSize  = true,
+                    Top       = 13,
+                    Left      = 170
                 };
 
                 barraInferior.Controls.Add(btnAbrir);
@@ -333,23 +507,48 @@ namespace OPENGIOAI.Themas
             Invalidate();
         }
 
-        /// <summary>
-        /// Actualiza el texto de la burbuja en tiempo real (usado para streaming de salida de scripts).
-        /// Seguro para llamar desde cualquier hilo — hace InvokeRequired internamente.
-        /// </summary>
         public void ActualizarTexto(string nuevoTexto)
         {
             if (IsDisposed) return;
             if (InvokeRequired) { BeginInvoke(() => ActualizarTexto(nuevoTexto)); return; }
 
-            if (nuevoTexto == Text) return;
-            Text = nuevoTexto;
-            _txtMensaje.Text = nuevoTexto;
+            if (nuevoTexto == _textoCompleto) return;
+            _textoCompleto = nuevoTexto ?? string.Empty;
+            Text           = _textoCompleto;
+
+            // Reevaluar si ahora se puede colapsar
+            bool podiaColapsar = _puedeColapsar;
+            _puedeColapsar = !EsUsuario && _textoCompleto.Length > LimiteCaracteres;
+
+            if (_puedeColapsar && _btnToggle == null)
+            {
+                _btnToggle = new Label
+                {
+                    AutoSize    = false,
+                    TextAlign   = ContentAlignment.MiddleCenter,
+                    ForeColor   = Emerald4,
+                    BackColor   = Color.Transparent,
+                    Cursor      = Cursors.Hand,
+                    Font        = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
+                    Height      = AltoToggle,
+                    Text        = "  Mostrar más  ⌄"
+                };
+                _btnToggle.Click += OnToggleClick;
+                Controls.Add(_btnToggle);
+                _expandido = false;
+            }
+            else if (!_puedeColapsar && podiaColapsar && _btnToggle != null)
+            {
+                Controls.Remove(_btnToggle);
+                _btnToggle.Dispose();
+                _btnToggle = null;
+                _expandido = true;
+            }
+
+            _txtMensaje.Text = TextoVisible();
             AplicarFormatoEnlaces();
             CalcularTamaño();
-            // NO llamar Parent.PerformLayout() aquí — cambiar Width/Height ya
-            // dispara el re-layout del FlowLayoutPanel automáticamente.
-            // Llamarlo explícitamente en cada token causaba redibujado en cascada.
+            ActualizarAnimacionTyping();
             Invalidate();
         }
 
@@ -363,66 +562,75 @@ namespace OPENGIOAI.Themas
         {
             if (!IsHandleCreated) return;
 
-            // Ancho disponible para el texto (descuenta avatar + paddings)
-            int anchoTexto = Math.Min(
-                _anchoMaximo - TamañoAvatar - MargenAvatar * 2 - PaddingBurbuja * 2,
-                _anchoMaximo - TamañoAvatar - 30
-            );
+            // El control siempre ocupa el ancho del panel; la burbuja se alinea
+            // adentro a izquierda (IA) o derecha (usuario).
+            int anchoControl = Math.Max(_anchoMaximo, 100);
+
+            // Ancho máximo de la burbuja: ~78% del ancho del panel
+            int anchoMaxBurbuja = (int)(anchoControl * 0.78);
+            int anchoTextoMax   = anchoMaxBurbuja - PaddingBurbuja * 2;
 
             Size tamTexto = TextRenderer.MeasureText(
-                Text,
+                _txtMensaje.Text,
                 Font,
-                new Size(anchoTexto, int.MaxValue),
-                TextFormatFlags.WordBreak
-            );
+                new Size(anchoTextoMax, int.MaxValue),
+                TextFormatFlags.WordBreak);
 
-            // Calcular espacio para previews en grilla
+            // Ancho real de la burbuja (se ajusta al contenido si es corto)
+            int anchoBurbuja = Math.Min(
+                tamTexto.Width + PaddingBurbuja * 2 + 8,
+                anchoMaxBurbuja);
+
+            // Espacio para previews
             int previewsAlto = 0;
+            int colsPrev = 1;
             if (_previews.Count > 0)
             {
-                int cols = Math.Max(1, anchoTexto / (PreviewSize + PreviewGap));
-                int rows = (int)Math.Ceiling(_previews.Count / (double)cols);
+                colsPrev     = Math.Max(1, (anchoBurbuja - PaddingBurbuja * 2) / (PreviewSize + PreviewGap));
+                int rows     = (int)Math.Ceiling(_previews.Count / (double)colsPrev);
                 previewsAlto = rows * (PreviewSize + PreviewGap) + PreviewGap;
             }
 
-            int burbujaAncho = tamTexto.Width + PaddingBurbuja * 2 + TamañoAvatar + MargenAvatar;
-            int burbujaAlto = Math.Max(tamTexto.Height + PaddingBurbuja * 2, TamañoAvatar + 10)
-                             + previewsAlto;
+            int altoToggleEspacio = (_btnToggle != null) ? AltoToggle + 4 : 0;
+            int altoMetaEspacio   = AltoMeta + 2;  // siempre reservamos espacio para el timestamp
+            int altoBurbuja = tamTexto.Height + PaddingBurbuja * 2 + previewsAlto + altoToggleEspacio + altoMetaEspacio;
 
-            Width = Math.Min(burbujaAncho, _anchoMaximo);
-            Height = burbujaAlto + SombraDesplaz + 4; // espacio para sombra
+            // Alto del control = max(burbuja, avatar)
+            int altoControl = Math.Max(altoBurbuja, TamañoAvatar) + 6;
 
-            // ── Posición horizontal del bloque de contenido ──────────
-            int xContenido = EsUsuario
-                ? MargenAvatar
-                : TamañoAvatar + MargenAvatar;
+            Width  = anchoControl;
+            Height = altoControl;
 
-            int anchoContenido = Width - TamañoAvatar - MargenAvatar * 2;
+            // ── Posición horizontal ──────────────────────────────────
+            // Avatar IA → izquierda. Avatar usuario → derecha. Burbuja al lado opuesto.
+            int xAvatar, xBurbuja;
+            if (EsUsuario)
+            {
+                xAvatar  = anchoControl - TamañoAvatar - MargenAvatar;
+                xBurbuja = xAvatar - GapAvatarTexto - anchoBurbuja;
+            }
+            else
+            {
+                xAvatar  = MargenAvatar;
+                xBurbuja = xAvatar + TamañoAvatar + GapAvatarTexto;
+            }
+
+            // Avatar arriba, alineado al inicio de la burbuja
+            if (_avatarPanel != null)
+                _avatarPanel.SetBounds(xAvatar, 2, TamañoAvatar, TamañoAvatar);
 
             // ── Posicionar RichTextBox ───────────────────────────────
             _txtMensaje.SetBounds(
-                xContenido + PaddingBurbuja,
+                xBurbuja + PaddingBurbuja,
                 PaddingBurbuja,
-                anchoContenido - PaddingBurbuja * 2,
-                tamTexto.Height + 4
-            );
+                anchoBurbuja - PaddingBurbuja * 2,
+                tamTexto.Height + 4);
 
-            // ── Posicionar avatar ────────────────────────────────────
-            if (_avatarPanel != null)
-            {
-                int xAvatar = EsUsuario
-                    ? Width - TamañoAvatar - MargenAvatar
-                    : MargenAvatar;
-                int yAvatar = Height - TamañoAvatar - SombraDesplaz - 2;
-                _avatarPanel.SetBounds(xAvatar, yAvatar, TamañoAvatar, TamañoAvatar);
-            }
-
-            // ── Posicionar previews en grilla ────────────────────────
+            // ── Posicionar previews ──────────────────────────────────
             if (_previews.Count > 0)
             {
-                int cols = Math.Max(1, anchoContenido / (PreviewSize + PreviewGap));
-                int xStart = xContenido + PaddingBurbuja;
-                int yStart = PaddingBurbuja + tamTexto.Height + 10;
+                int xStart = xBurbuja + PaddingBurbuja;
+                int yStart = PaddingBurbuja + tamTexto.Height + 8;
                 int col = 0, row = 0;
 
                 foreach (var panel in _previews)
@@ -432,10 +640,47 @@ namespace OPENGIOAI.Themas
                     panel.SetBounds(px, py, PreviewSize, PreviewSize);
 
                     col++;
-                    if (col >= cols) { col = 0; row++; }
+                    if (col >= colsPrev) { col = 0; row++; }
                 }
             }
+
+            // ── Posicionar toggle "Mostrar más/menos" ────────────────
+            if (_btnToggle != null)
+            {
+                int yToggle = PaddingBurbuja + tamTexto.Height + previewsAlto;
+                _btnToggle.SetBounds(
+                    xBurbuja + PaddingBurbuja - 2,
+                    yToggle,
+                    anchoBurbuja - PaddingBurbuja * 2 + 4,
+                    AltoToggle);
+            }
+
+            // ── Posicionar timestamp (al pie, alineado con la burbuja) ──
+            if (_lblHora != null)
+            {
+                int yMeta = altoBurbuja - AltoMeta + 2;
+                int xMeta = EsUsuario
+                    ? xBurbuja + anchoBurbuja - _lblHora.PreferredWidth - 6
+                    : xBurbuja + PaddingBurbuja - 2;
+                _lblHora.SetBounds(xMeta, yMeta, _lblHora.PreferredWidth, AltoMeta);
+            }
+
+            // ── Posicionar botón copiar (esquina superior opuesta al avatar) ──
+            if (_btnCopiar != null)
+            {
+                int xCopy = EsUsuario
+                    ? xBurbuja + 4
+                    : xBurbuja + anchoBurbuja - TamañoBtnCopiar - 4;
+                int yCopy = 4;
+                _btnCopiar.SetBounds(xCopy, yCopy, TamañoBtnCopiar, TamañoBtnCopiar);
+                _btnCopiar.BringToFront();
+            }
+
+            // Guardar el rect de la burbuja para OnPaint
+            _rectBurbuja = new Rectangle(xBurbuja, 0, anchoBurbuja, altoBurbuja);
         }
+
+        private Rectangle _rectBurbuja;
 
         protected override void OnResize(EventArgs e)
         {
@@ -451,119 +696,65 @@ namespace OPENGIOAI.Themas
             base.OnPaint(e);
 
             var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.SmoothingMode      = SmoothingMode.AntiAlias;
+            g.InterpolationMode  = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode    = PixelOffsetMode.HighQuality;
             g.CompositingQuality = CompositingQuality.HighQuality;
 
-            Color colorFondo = EsUsuario ? ColorUsuario : ColorIA;
+            if (_rectBurbuja.Width <= 0) return;
 
-            // ── Calcular rectángulo de burbuja ───────────────────────
-            int xBurbuja = EsUsuario
-                ? MargenAvatar
-                : TamañoAvatar + MargenAvatar;
+            Color bg1 = EsUsuario ? BgUsuario  : BgIA;
+            Color bg2 = EsUsuario ? BgUsuario2 : BgIA2;
 
-            int anchoBurbuja = Width - TamañoAvatar - MargenAvatar * 2;
-            int altoBurbuja = Height - SombraDesplaz - 4;
+            var rect = new Rectangle(
+                _rectBurbuja.X,
+                _rectBurbuja.Y,
+                _rectBurbuja.Width - 1,
+                _rectBurbuja.Height - 1);
 
-            Rectangle rectBurbuja = new Rectangle(
-                xBurbuja, 0, anchoBurbuja - 1, altoBurbuja - 1);
-
-            // ── Sombra suave ─────────────────────────────────────────
-            DibujarSombra(g, rectBurbuja);
-
-            // ── Degradado de fondo ───────────────────────────────────
-            using (var path = CrearPathRedondeado(rectBurbuja, RadioBurbuja))
+            // ── Fondo con gradiente sutil ────────────────────────────
+            using (var path = CrearPathRedondeado(rect, RadioBurbuja))
+            using (var brush = new LinearGradientBrush(
+                rect, bg1, bg2,
+                EsUsuario ? LinearGradientMode.BackwardDiagonal
+                          : LinearGradientMode.ForwardDiagonal))
             {
-                Color colorClaro = EsUsuario ? ColorUsuarioClaro : ColorIAClaro;
+                g.FillPath(brush, path);
 
-                using (var brush = new LinearGradientBrush(
-                    rectBurbuja, colorClaro, colorFondo,
-                    EsUsuario ? LinearGradientMode.BackwardDiagonal
-                              : LinearGradientMode.ForwardDiagonal))
-                {
-                    g.FillPath(brush, path);
-                }
+                // Borde fino — esmeralda translúcido en usuario, gris en IA
+                Color colorBorde = EsUsuario
+                    ? Color.FromArgb(120, Emerald.R, Emerald.G, Emerald.B)
+                    : Color.FromArgb(180, BorderCol.R, BorderCol.G, BorderCol.B);
 
-                // Borde sutil
-                using (var pen = new Pen(Color.FromArgb(60, 255, 255, 255), 1f))
+                using (var pen = new Pen(colorBorde, 1f))
                     g.DrawPath(pen, path);
             }
 
-            // ── Cola de burbuja ──────────────────────────────────────
-            DibujarCola(g, rectBurbuja, colorFondo);
+            // ── Barra de acento lateral (sólo IA) ────────────────────
+            if (!EsUsuario)
+            {
+                var rectAcento = new Rectangle(
+                    _rectBurbuja.X, _rectBurbuja.Y + 8, 3, _rectBurbuja.Height - 16);
+                using (var b = new SolidBrush(Emerald))
+                    g.FillRectangle(b, rectAcento);
+            }
 
             // ── Avatar circular con borde ────────────────────────────
-            if (ImagenPerfil != null)
+            if (ImagenPerfil != null && _avatarPanel != null)
             {
-                int xAvatar = EsUsuario
-                    ? Width - TamañoAvatar - MargenAvatar
-                    : MargenAvatar;
-                int yAvatar = Height - TamañoAvatar - SombraDesplaz - 2;
-
-                DibujarAvatar(g, ImagenPerfil, xAvatar, yAvatar,
-                    EsUsuario ? ColorAvatarBordeU : ColorAvatarBordeIA);
+                DibujarAvatar(g, ImagenPerfil,
+                    _avatarPanel.Left, _avatarPanel.Top,
+                    EsUsuario ? Emerald : BorderCol);
             }
         }
 
         // ─────────────────────────────────────────────────────────────
         //  HELPERS DE PINTADO
         // ─────────────────────────────────────────────────────────────
-        private void DibujarSombra(Graphics g, Rectangle rect)
-        {
-            for (int i = SombraDesplaz; i >= 1; i--)
-            {
-                int alfa = (int)(SombraAlfa * (1.0 - (i - 1.0) / SombraDesplaz));
-                var r = new Rectangle(
-                    rect.X + i, rect.Y + i,
-                    rect.Width - 1, rect.Height - 1);
-
-                using (var path = CrearPathRedondeado(r, RadioBurbuja))
-                using (var brush = new SolidBrush(Color.FromArgb(alfa, 0, 0, 0)))
-                    g.FillPath(brush, path);
-            }
-        }
-
-        private void DibujarCola(Graphics g, Rectangle rect, Color color)
-        {
-            // Cola triangular pequeña en la esquina inferior
-            const int sz = 10;
-            Point tip, p1, p2;
-
-            if (EsUsuario)
-            {
-                int x = rect.Right;
-                int y = rect.Bottom - RadioBurbuja;
-                tip = new Point(x + sz, y + sz);
-                p1 = new Point(x, y - 4);
-                p2 = new Point(x, y + 4);
-            }
-            else
-            {
-                int x = rect.Left;
-                int y = rect.Bottom - RadioBurbuja;
-                tip = new Point(x - sz, y + sz);
-                p1 = new Point(x, y - 4);
-                p2 = new Point(x, y + 4);
-            }
-
-            using (var brush = new SolidBrush(color))
-                g.FillPolygon(brush, new[] { tip, p1, p2 });
-        }
-
         private static void DibujarAvatar(Graphics g, Image img, int x, int y, Color colorBorde)
         {
             var rect = new Rectangle(x, y, TamañoAvatar, TamañoAvatar);
 
-            // Sombra del avatar
-            using (var shadowPath = new GraphicsPath())
-            {
-                shadowPath.AddEllipse(x + 2, y + 2, TamañoAvatar, TamañoAvatar);
-                using (var b = new SolidBrush(Color.FromArgb(40, 0, 0, 0)))
-                    g.FillPath(b, shadowPath);
-            }
-
-            // Clip circular para la imagen
             using (var clipPath = new GraphicsPath())
             {
                 clipPath.AddEllipse(rect);
@@ -572,8 +763,7 @@ namespace OPENGIOAI.Themas
                 g.ResetClip();
             }
 
-            // Borde de color
-            using (var pen = new Pen(colorBorde, 2.5f))
+            using (var pen = new Pen(colorBorde, 2f))
                 g.DrawEllipse(pen, rect);
         }
 
@@ -599,6 +789,11 @@ namespace OPENGIOAI.Themas
                 _tooltip?.Dispose();
                 _txtMensaje?.Dispose();
                 _avatarPanel?.Dispose();
+                _btnToggle?.Dispose();
+                _lblHora?.Dispose();
+                _btnCopiar?.Dispose();
+                _timerTyping?.Stop();
+                _timerTyping?.Dispose();
                 foreach (var p in _previews) p.Dispose();
             }
             base.Dispose(disposing);
