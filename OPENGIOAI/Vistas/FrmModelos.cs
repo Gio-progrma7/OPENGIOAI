@@ -34,6 +34,17 @@ namespace OPENGIOAI.Vistas
         {
             InitializeComponent();
             AplicarThema();
+
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
+        }
+
+        private void OnTemaChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnTemaChanged); return; }
+            AplicarThema();
+            Invalidate(true);
         }
 
         private async void FrmModelos_Load(object sender, EventArgs e)
@@ -532,12 +543,30 @@ namespace OPENGIOAI.Vistas
             pnlAntigravity.Enabled = estado;
         }
 
+        // ── Paleta Blue/Teal (consistente con FrmPrincipal / FrmApis / FrmAutomatizaciones) ──
+        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#002647");
+        private static readonly Color BgSurface = ColorTranslator.FromHtml("#00305a");
+        private static readonly Color BgCard    = ColorTranslator.FromHtml("#00305a");
+        private static readonly Color BgCardHi  = ColorTranslator.FromHtml("#003d73");
+        private static readonly Color BgInput   = ColorTranslator.FromHtml("#002647");
+        private static readonly Color Emerald   = ColorTranslator.FromHtml("#3660C9");
+        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#94E6EC");
+        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#1E4545");
+        private static readonly Color TextMain  = ColorTranslator.FromHtml("#FFFFFF");
+        private static readonly Color TextSub   = ColorTranslator.FromHtml("#B6E3D4");
+        private static readonly Color BorderCol = ColorTranslator.FromHtml("#1a3a5c");
+
         /// <summary>
-        /// Aplica el tema visual unificado a todos los paneles del formulario:
-        /// bordes redondeados, color de acento y sombra exterior.
+        /// Aplica la paleta Emerald al formulario completo: fondo, paneles, botones,
+        /// combos, checks y labels. Mantiene los bordes redondeados de los paneles
+        /// pero con acento esmeralda en lugar del azul previo.
         /// </summary>
         private void AplicarThema()
         {
+            BackColor = BgDeep;
+            ForeColor = TextMain;
+            Font      = new Font("Segoe UI", 9.5F, FontStyle.Regular);
+
             var paneles = new[]
             {
                 pnlClau, pnlGem, pnlOllla,
@@ -546,13 +575,95 @@ namespace OPENGIOAI.Vistas
 
             foreach (var panel in paneles)
             {
+                panel.BackColor = BgCard;
                 panel.RedondearPanel(
-                    borderRadius: 20,
-                    borderColor: Color.FromArgb(64, 158, 255),
-                    borderSize: 2,
+                    borderRadius: 18,
+                    borderColor:  Emerald,
+                    borderSize:   1,
                     agregarSombra: true
                 );
             }
+
+            RecolorearArbol(this);
+        }
+
+        private void RecolorearArbol(Control raiz)
+        {
+            foreach (Control c in raiz.Controls)
+            {
+                switch (c)
+                {
+                    case Button btn:
+                        EstilizarBoton(btn);
+                        break;
+
+                    case CheckBox chk:
+                        chk.ForeColor = TextSub;
+                        chk.BackColor = Color.Transparent;
+                        chk.FlatStyle = FlatStyle.Flat;
+                        chk.Cursor    = Cursors.Hand;
+                        break;
+
+                    case Label lbl:
+                        // Respeta colores semánticos ya asignados (status verde/ámbar/rojo)
+                        if (EsColorSemantico(lbl.ForeColor)) break;
+                        lbl.BackColor = Color.Transparent;
+                        lbl.ForeColor = EsTitulo(lbl) ? TextMain : TextSub;
+                        break;
+
+                    case TextBox tb:
+                        tb.BackColor   = BgInput;
+                        tb.ForeColor   = TextMain;
+                        tb.BorderStyle = BorderStyle.FixedSingle;
+                        break;
+
+                    case ComboBox cmb:
+                        cmb.BackColor     = BgInput;
+                        cmb.ForeColor     = TextMain;
+                        cmb.FlatStyle     = FlatStyle.Flat;
+                        break;
+
+                    case Panel pnl when !EsPanelTema(pnl):
+                        pnl.BackColor = BgDeep;
+                        break;
+                }
+
+                if (c.HasChildren) RecolorearArbol(c);
+            }
+        }
+
+        private void EstilizarBoton(Button btn)
+        {
+            btn.FlatStyle = FlatStyle.Flat;
+            btn.FlatAppearance.BorderSize        = 1;
+            btn.FlatAppearance.BorderColor       = Emerald;
+            btn.FlatAppearance.MouseOverBackColor = Emerald;
+            btn.FlatAppearance.MouseDownBackColor = Emerald4;
+            btn.BackColor = Emerald9;
+            btn.ForeColor = TextMain;
+            btn.Cursor    = Cursors.Hand;
+            btn.Font      = new Font("Segoe UI Semibold", 9F);
+        }
+
+        private static bool EsTitulo(Label lbl)
+        {
+            return lbl.Font != null && (lbl.Font.Bold || lbl.Font.Size >= 11F);
+        }
+
+        private static bool EsColorSemantico(Color c)
+        {
+            // Verde 22,197,94 / Ámbar 245,158,11 / Rojo 239,68,68 / Slate 100,116,139
+            return (c.R == 34  && c.G == 197 && c.B == 94)
+                || (c.R == 245 && c.G == 158 && c.B == 11)
+                || (c.R == 239 && c.G == 68  && c.B == 68)
+                || (c.R == 100 && c.G == 116 && c.B == 139);
+        }
+
+        private bool EsPanelTema(Panel pnl)
+        {
+            return pnl == pnlClau || pnl == pnlGem || pnl == pnlOllla
+                || pnl == pnlDeesp || pnl == pnllChat || pnl == pnlOpenroute
+                || pnl == pnlAntigravity;
         }
 
         #endregion

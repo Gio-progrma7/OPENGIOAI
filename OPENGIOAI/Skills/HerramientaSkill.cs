@@ -45,8 +45,17 @@ namespace OPENGIOAI.Skills
 
         public string Nombre => _skill.IdEfectivo;
 
-        public string Descripcion =>
-            $"[{_skill.Categoria}] {_skill.Descripcion}";
+        public string Descripcion
+        {
+            get
+            {
+                string firma = ConstruirFirmaTexto();
+                string baseDesc = $"[{_skill.Categoria}] {_skill.Descripcion}";
+                return string.IsNullOrEmpty(firma)
+                    ? baseDesc
+                    : $"{baseDesc}  ·  firma: {Nombre}({firma})";
+            }
+        }
 
         public JObject EsquemaParametros => ConstruirSchema();
 
@@ -58,6 +67,21 @@ namespace OPENGIOAI.Skills
         public async Task<string> EjecutarAsync(
             JObject parametros, CancellationToken ct = default)
         {
+            // ── Validación previa: requeridos / tipos / opciones ─────────────
+            // Si faltan, devolvemos un mensaje estructurado al LLM en lugar de
+            // dejar que el script Python crashee, así el agente puede pedir
+            // los datos faltantes en el siguiente turno.
+            var errores = _skill.ValidarParametros(parametros);
+            if (errores.Count > 0)
+            {
+                var sbErr = new StringBuilder();
+                sbErr.AppendLine($"[Skill '{Nombre}' — parámetros inválidos]");
+                foreach (var er in errores) sbErr.AppendLine($"  · {er}");
+                sbErr.AppendLine();
+                sbErr.AppendLine("Vuelve a llamar al skill incluyendo los parámetros faltantes/correctos.");
+                return sbErr.ToString().TrimEnd();
+            }
+
             // Resolver ruta absoluta del script
             string scriptPath = ResolverRutaScript();
 
@@ -139,11 +163,26 @@ namespace OPENGIOAI.Skills
 
             foreach (var p in _skill.Parametros)
             {
-                properties[p.Nombre] = new JObject
+                var prop = new JObject
                 {
-                    ["type"]        = p.Tipo,
+                    ["type"]        = NormalizarTipoSchema(p.Tipo),
                     ["description"] = p.Descripcion
                 };
+
+                // Enum: si hay opciones cerradas, exponerlas al LLM
+                if (p.Opciones != null && p.Opciones.Count > 0)
+                {
+                    var arr = new JArray();
+                    foreach (var op in p.Opciones) arr.Add(op);
+                    prop["enum"] = arr;
+                }
+
+                // Default: ayuda al LLM a no preguntar de más por opcionales
+                if (!string.IsNullOrWhiteSpace(p.ValorPorDefecto))
+                    prop["default"] = p.ValorPorDefecto;
+
+                properties[p.Nombre] = prop;
+
                 if (p.Requerido)
                     required.Add(p.Nombre);
             }
@@ -154,6 +193,39 @@ namespace OPENGIOAI.Skills
                 ["properties"] = properties,
                 ["required"]   = required
             };
+        }
+
+        private static string NormalizarTipoSchema(string tipo)
+        {
+            return (tipo ?? "string").Trim().ToLowerInvariant() switch
+            {
+                "int" or "integer" or "long" => "integer",
+                "float" or "double" or "number" or "decimal" => "number",
+                "bool" or "boolean" => "boolean",
+                "list" or "array" => "array",
+                "object" or "dict" or "map" => "object",
+                _ => "string"
+            };
+        }
+
+        /// <summary>
+        /// Devuelve una firma legible "ruta: string*, sheet: string=Hoja1"
+        /// que se concatena a la descripción de la herramienta.
+        /// </summary>
+        private string ConstruirFirmaTexto()
+        {
+            if (_skill.Parametros == null || _skill.Parametros.Count == 0)
+                return "";
+
+            var partes = _skill.Parametros.Select(p =>
+            {
+                string sufijo = p.Requerido ? "*" : "";
+                string defecto = !string.IsNullOrWhiteSpace(p.ValorPorDefecto)
+                    ? $"={p.ValorPorDefecto}"
+                    : "";
+                return $"{p.Nombre}: {p.Tipo}{sufijo}{defecto}";
+            });
+            return string.Join(", ", partes);
         }
     }
 }

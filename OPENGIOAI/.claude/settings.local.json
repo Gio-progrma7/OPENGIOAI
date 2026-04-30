@@ -42,7 +42,17 @@
       "Bash(git commit -m ' *)",
       "Bash(tasklist //FI \"IMAGENAME eq OPENGIOAI.exe\" //FI \"IMAGENAME eq devenv.exe\")",
       "Bash(dotnet add *)",
-      "Bash(dotnet run *)"
+      "Bash(dotnet run *)",
+      "Bash(powershell -Command \"\\(Get-Content -Raw 'Vistas/FrmMandos.cs'\\) -replace '\\\\\\(int\\\\\\)\\\\\\(pnlChat\\\\.ClientSize\\\\.Width \\\\* 0\\\\.75\\\\\\)', '\\(pnlChat.ClientSize.Width - 28\\)' | Set-Content 'Vistas/FrmMandos.cs' -NoNewline\")",
+      "Bash(grep -E \"error CS|Errores$\")",
+      "Bash(git -C \"C:/Users/PC ONE/source/repos/OPENGIOAI\" status)",
+      "Bash(git -C 'C:/Users/PC ONE/source/repos/OPENGIOAI' add OPENGIOAI/Themas/BurbujaChat.cs OPENGIOAI/Vistas/FrmMandos.cs OPENGIOAI/Vistas/FrmModelos.cs OPENGIOAI/Vistas/FrmApis.cs OPENGIOAI/Vistas/FrmApis.Designer.cs OPENGIOAI/Vistas/FrmPrincipal.cs OPENGIOAI/Vistas/FrmPrincipal.Designer.cs OPENGIOAI/Entidades/ConfiguracionClient.cs)",
+      "Bash(git -C 'C:/Users/PC ONE/source/repos/OPENGIOAI' commit -m ' *)",
+      "Bash(powershell -Command \"\\(Get-Content -Raw 'Vistas/FrmMandos.cs'\\) -replace 'pnlChat\\\\.ScrollControlIntoView\\\\\\([^\\)]+\\\\\\);', 'ScrollSuaveAlFinal\\(\\);' | Set-Content 'Vistas/FrmMandos.cs' -NoNewline\")",
+      "Bash(powershell -Command \"\\(Get-Content -Raw 'ServiciosSlack/SlackPollingService.cs'\\) -replace 'JsonSerializer\\\\.Serialize\\\\\\(payload\\\\\\)', 'JsonSerializer.Serialize\\(payload, JsonOpts\\)' | Set-Content 'ServiciosSlack/SlackPollingService.cs' -NoNewline\")",
+      "Bash(grep -n '\"?? \\\\|\"? \\\\|^.*\"??$\\\\|\"??\\\\\\\\\"' \"C:/Users/PC ONE/source/repos/OPENGIOAI/OPENGIOAI/Vistas/FrmMandos.cs\")",
+      "Bash(awk -F'Point\\\\\\\\\\(' '{print $2}')",
+      "Bash(sort -t',' -k2 -n -r)"
     ]
   }
 }

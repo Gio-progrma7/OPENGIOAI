@@ -10,21 +10,70 @@ namespace OPENGIOAI.Themas
 {
     public static class EmeraldTheme
     {
-        // ===== COLORES =====
-        public static Color BgDeep = ColorTranslator.FromHtml("#050505");
-        public static Color BgSurface = ColorTranslator.FromHtml("#0a0a0a");
-        public static Color BgCard = ColorTranslator.FromHtml("#0f0f0f");
-        public static Color Glass = Color.FromArgb(13, 16, 185, 129);
-        public static Color GlassStrong = Color.FromArgb(25, 16, 185, 129);
-        public static Color Emerald500 = ColorTranslator.FromHtml("#10b981");
-        public static Color Emerald400 = ColorTranslator.FromHtml("#34d399");
-        public static Color Emerald600 = ColorTranslator.FromHtml("#059669");
-        public static Color Emerald900 = ColorTranslator.FromHtml("#064e3b");
-        public static Color TextPrimary = ColorTranslator.FromHtml("#f0fdf4");
-        public static Color TextSecondary = ColorTranslator.FromHtml("#a7f3d0");
-        public static Color TextMuted = ColorTranslator.FromHtml("#6ee7b7");
-        public static Color Error = ColorTranslator.FromHtml("#f87171");
-        public static Color Shadow = Color.FromArgb(30, 0, 0, 0);
+        // ═══════════════════════════════════════════════════════════════════
+        //  MODO: Oscuro / Claro
+        // ═══════════════════════════════════════════════════════════════════
+
+        private static bool _isDark = true;
+
+        /// <summary>true = modo oscuro (por defecto), false = modo claro.</summary>
+        public static bool IsDark => _isDark;
+
+        /// <summary>Se dispara en el hilo UI cada vez que cambia el tema.</summary>
+        public static event Action? ThemeChanged;
+
+        public static void SetTheme(bool dark)
+        {
+            if (_isDark == dark) return;
+            _isDark = dark;
+            ThemeChanged?.Invoke();
+        }
+        public static void ToggleTheme() => SetTheme(!_isDark);
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  PALETA OSCURA
+        // ═══════════════════════════════════════════════════════════════════
+        private static readonly Color _dBgDeep    = ColorTranslator.FromHtml("#080808");
+        private static readonly Color _dBgSurface = ColorTranslator.FromHtml("#1A1A1C");
+        private static readonly Color _dBgCard    = ColorTranslator.FromHtml("#191919");
+        private static readonly Color _dTextPri   = Color.White;
+        private static readonly Color _dTextSec   = ColorTranslator.FromHtml("#D3D3ED");
+        private static readonly Color _dTextMut   = ColorTranslator.FromHtml("#D3D3ED");
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  PALETA CLARA
+        // ═══════════════════════════════════════════════════════════════════
+        private static readonly Color _lBgDeep    = Color.White;
+        private static readonly Color _lBgSurface = ColorTranslator.FromHtml("#F0F6FF");
+        private static readonly Color _lBgCard    = ColorTranslator.FromHtml("#E8F1FF");
+        private static readonly Color _lTextPri   = ColorTranslator.FromHtml("#002647");
+        private static readonly Color _lTextSec   = ColorTranslator.FromHtml("#1E4545");
+        private static readonly Color _lTextMut   = ColorTranslator.FromHtml("#4158D0");
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  ACENTOS (iguales en ambos modos)
+        // ═══════════════════════════════════════════════════════════════════
+        public static readonly Color Emerald500 = ColorTranslator.FromHtml("#080808");
+        public static readonly Color Emerald400 = ColorTranslator.FromHtml("#94E6EC");
+        public static readonly Color Emerald600 = ColorTranslator.FromHtml("#4158D0");
+        public static readonly Color Emerald900 = ColorTranslator.FromHtml("#1E4545");
+        public static readonly Color Error       = ColorTranslator.FromHtml("#f87171");
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  PROPIEDADES DINÁMICAS (cambian con el modo)
+        // ═══════════════════════════════════════════════════════════════════
+        public static Color BgDeep      => _isDark ? _dBgDeep    : _lBgDeep;
+        public static Color BgSurface   => _isDark ? _dBgSurface : _lBgSurface;
+        public static Color BgCard      => _isDark ? _dBgCard    : _lBgCard;
+        public static Color Glass       => _isDark ? Color.FromArgb(13, 54, 96, 201)
+                                                   : Color.FromArgb(30, 54, 96, 201);
+        public static Color GlassStrong => _isDark ? Color.FromArgb(25, 54, 96, 201)
+                                                   : Color.FromArgb(60, 54, 96, 201);
+        public static Color TextPrimary   => _isDark ? _dTextPri  : _lTextPri;
+        public static Color TextSecondary => _isDark ? _dTextSec  : _lTextSec;
+        public static Color TextMuted     => _isDark ? _dTextMut  : _lTextMut;
+        public static Color Shadow        => _isDark ? Color.FromArgb(30, 0, 0, 0)
+                                                     : Color.FromArgb(15, 0, 38, 71);
 
         // ===== APLICAR TEMA =====
         public static void ApplyTheme(Form form)
@@ -431,7 +480,7 @@ namespace OPENGIOAI.Themas
                 e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
                 bool isSelected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
-                Color itemBgColor = isSelected ? Color.FromArgb(25, 16, 185, 129) : BgSurface;
+                Color itemBgColor = isSelected ? Color.FromArgb(25, 54, 96, 201) : BgSurface;
 
                 using (SolidBrush bgBrush = new SolidBrush(itemBgColor))
                 {
@@ -536,7 +585,7 @@ namespace OPENGIOAI.Themas
                     // Brillo cuando está enfocado
                     if (isFocused)
                     {
-                        using (Pen glowPen = new Pen(Color.FromArgb(30, 16, 185, 129), 3f))
+                        using (Pen glowPen = new Pen(Color.FromArgb(30, 54, 96, 201), 3f))
                         {
                             e.Graphics.DrawPath(glowPen, path);
                         }
@@ -672,7 +721,7 @@ namespace OPENGIOAI.Themas
                     // Brillo sutil cuando está enfocado
                     if (isFocused)
                     {
-                        using (Pen glowPen = new Pen(Color.FromArgb(30, 16, 185, 129), 3f))
+                        using (Pen glowPen = new Pen(Color.FromArgb(30, 54, 96, 201), 3f))
                         {
                             e.Graphics.DrawPath(glowPen, path);
                         }

@@ -58,14 +58,14 @@ namespace OPENGIOAI.Vistas
             btnLimpiar = new Button();
             btnInfo = new Button();
             pnlChat = new FlowLayoutPanel();
-            panelHead = new Panel();
-            btnGuardar = new Button();
-            label3 = new Label();
-            comboBoxModeloIA = new ModernComboBox();
-            label2 = new Label();
-            label1 = new Label();
             comboBoxRuta = new ModernComboBox();
             comboBoxAgentes = new ModernComboBox();
+            comboBoxModeloIA = new ModernComboBox();
+            btnGuardar = new Button();
+            label1 = new Label();
+            label3 = new Label();
+            label2 = new Label();
+            panelHead = new Panel();
             pnlContenedorTxt.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)ChkNotiT).BeginInit();
             ((System.ComponentModel.ISupportInitialize)ChkNotiS).BeginInit();
@@ -106,9 +106,9 @@ namespace OPENGIOAI.Vistas
             pnlContenedorTxt.Controls.Add(btnLimpiar);
             pnlContenedorTxt.Controls.Add(btnInfo);
             pnlContenedorTxt.Dock = DockStyle.Bottom;
-            pnlContenedorTxt.Location = new Point(0, 487);
+            pnlContenedorTxt.Location = new Point(0, 527);
             pnlContenedorTxt.Name = "pnlContenedorTxt";
-            pnlContenedorTxt.Size = new Size(915, 168);
+            pnlContenedorTxt.Size = new Size(915, 179);
             pnlContenedorTxt.TabIndex = 0;
             // 
             // ChkNotiT
@@ -226,9 +226,9 @@ namespace OPENGIOAI.Vistas
             // textBoxInstrucion
             // 
             textBoxInstrucion.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            textBoxInstrucion.BackColor = Color.FromArgb(30, 41, 59);
+            textBoxInstrucion.BackColor = Color.Black;
             textBoxInstrucion.ForeColor = Color.Gainsboro;
-            textBoxInstrucion.Location = new Point(8, 26);
+            textBoxInstrucion.Location = new Point(3, 26);
             textBoxInstrucion.Name = "textBoxInstrucion";
             textBoxInstrucion.Size = new Size(851, 78);
             textBoxInstrucion.TabIndex = 4;
@@ -433,14 +433,14 @@ namespace OPENGIOAI.Vistas
             // 
             // btnLimpiar
             // 
-            btnLimpiar.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            btnLimpiar.Anchor = AnchorStyles.Bottom;
             btnLimpiar.FlatAppearance.BorderColor = Color.FromArgb(50, 65, 90);
             btnLimpiar.FlatAppearance.MouseDownBackColor = Color.FromArgb(40, 55, 80);
             btnLimpiar.FlatAppearance.MouseOverBackColor = Color.FromArgb(35, 50, 75);
             btnLimpiar.FlatStyle = FlatStyle.Flat;
             btnLimpiar.Image = Properties.Resources.escoba;
             btnLimpiar.ImageAlign = ContentAlignment.MiddleLeft;
-            btnLimpiar.Location = new Point(725, 108);
+            btnLimpiar.Location = new Point(714, 110);
             btnLimpiar.Name = "btnLimpiar";
             btnLimpiar.Size = new Size(140, 28);
             btnLimpiar.TabIndex = 19;
@@ -451,16 +451,16 @@ namespace OPENGIOAI.Vistas
             // 
             // btnInfo
             // 
-            btnInfo.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            btnInfo.Anchor = AnchorStyles.Bottom;
             btnInfo.FlatAppearance.BorderColor = Color.FromArgb(50, 65, 90);
             btnInfo.FlatAppearance.MouseDownBackColor = Color.FromArgb(40, 55, 80);
             btnInfo.FlatAppearance.MouseOverBackColor = Color.FromArgb(35, 50, 75);
             btnInfo.FlatStyle = FlatStyle.Flat;
             btnInfo.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point, 0);
             btnInfo.ForeColor = Color.FromArgb(120, 150, 200);
-            btnInfo.Location = new Point(869, 108);
+            btnInfo.Location = new Point(866, 110);
             btnInfo.Name = "btnInfo";
-            btnInfo.Size = new Size(38, 28);
+            btnInfo.Size = new Size(40, 28);
             btnInfo.TabIndex = 21;
             btnInfo.Text = "ℹ";
             btnInfo.UseVisualStyleBackColor = true;
@@ -471,93 +471,10 @@ namespace OPENGIOAI.Vistas
             pnlChat.BackColor = Color.Transparent;
             pnlChat.BackgroundImageLayout = ImageLayout.Stretch;
             pnlChat.Dock = DockStyle.Fill;
-            pnlChat.Location = new Point(0, 50);
+            pnlChat.Location = new Point(0, 0);
             pnlChat.Name = "pnlChat";
-            pnlChat.Size = new Size(915, 437);
+            pnlChat.Size = new Size(915, 527);
             pnlChat.TabIndex = 1;
-            // 
-            // panelHead
-            // 
-            panelHead.BackColor = Color.FromArgb(30, 41, 59);
-            panelHead.Controls.Add(btnGuardar);
-            panelHead.Controls.Add(label3);
-            panelHead.Controls.Add(comboBoxModeloIA);
-            panelHead.Controls.Add(label2);
-            panelHead.Controls.Add(label1);
-            panelHead.Controls.Add(comboBoxRuta);
-            panelHead.Controls.Add(comboBoxAgentes);
-            panelHead.Dock = DockStyle.Top;
-            panelHead.Location = new Point(0, 0);
-            panelHead.Name = "panelHead";
-            panelHead.Size = new Size(915, 50);
-            panelHead.TabIndex = 2;
-            // 
-            // btnGuardar
-            // 
-            btnGuardar.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnGuardar.BackColor = Color.MediumSeaGreen;
-            btnGuardar.FlatAppearance.BorderColor = Color.OliveDrab;
-            btnGuardar.FlatAppearance.MouseDownBackColor = Color.FromArgb(0, 64, 0);
-            btnGuardar.FlatAppearance.MouseOverBackColor = Color.DarkSeaGreen;
-            btnGuardar.FlatStyle = FlatStyle.Flat;
-            btnGuardar.Image = Properties.Resources.marcador;
-            btnGuardar.ImageAlign = ContentAlignment.MiddleLeft;
-            btnGuardar.Location = new Point(674, 16);
-            btnGuardar.Name = "btnGuardar";
-            btnGuardar.Size = new Size(178, 30);
-            btnGuardar.TabIndex = 6;
-            btnGuardar.Text = "Guardar Configuracion";
-            btnGuardar.UseVisualStyleBackColor = false;
-            btnGuardar.Click += btnGuardar_Click;
-            // 
-            // label3
-            // 
-            label3.AutoSize = true;
-            label3.Font = new Font("Segoe UI", 7.5F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            label3.ForeColor = Color.FromArgb(150, 170, 200);
-            label3.Location = new Point(425, 2);
-            label3.Name = "label3";
-            label3.Size = new Size(39, 12);
-            label3.TabIndex = 5;
-            label3.Text = "Modelo";
-            // 
-            // comboBoxModeloIA
-            // 
-            comboBoxModeloIA.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            comboBoxModeloIA.BackColor = Color.FromArgb(30, 41, 59);
-            comboBoxModeloIA.DrawMode = DrawMode.OwnerDrawFixed;
-            comboBoxModeloIA.DropDownStyle = ComboBoxStyle.DropDownList;
-            comboBoxModeloIA.FlatStyle = FlatStyle.Flat;
-            comboBoxModeloIA.ForeColor = Color.White;
-            comboBoxModeloIA.FormattingEnabled = true;
-            comboBoxModeloIA.ItemHeight = 24;
-            comboBoxModeloIA.Location = new Point(425, 16);
-            comboBoxModeloIA.Name = "comboBoxModeloIA";
-            comboBoxModeloIA.Size = new Size(243, 30);
-            comboBoxModeloIA.TabIndex = 4;
-            comboBoxModeloIA.SelectedIndexChanged += comboBoxModeloIA_SelectedIndexChanged;
-            // 
-            // label2
-            // 
-            label2.AutoSize = true;
-            label2.Font = new Font("Segoe UI", 7.5F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            label2.ForeColor = Color.FromArgb(150, 170, 200);
-            label2.Location = new Point(254, 2);
-            label2.Name = "label2";
-            label2.Size = new Size(36, 12);
-            label2.TabIndex = 3;
-            label2.Text = "Agente";
-            // 
-            // label1
-            // 
-            label1.AutoSize = true;
-            label1.Font = new Font("Segoe UI", 7.5F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            label1.ForeColor = Color.FromArgb(150, 170, 200);
-            label1.Location = new Point(6, 2);
-            label1.Name = "label1";
-            label1.Size = new Size(72, 12);
-            label1.TabIndex = 2;
-            label1.Text = "Ruta de trabajo";
             // 
             // comboBoxRuta
             // 
@@ -568,7 +485,7 @@ namespace OPENGIOAI.Vistas
             comboBoxRuta.ForeColor = Color.White;
             comboBoxRuta.FormattingEnabled = true;
             comboBoxRuta.ItemHeight = 24;
-            comboBoxRuta.Location = new Point(3, 16);
+            comboBoxRuta.Location = new Point(8, 3);
             comboBoxRuta.Name = "comboBoxRuta";
             comboBoxRuta.Size = new Size(246, 30);
             comboBoxRuta.TabIndex = 1;
@@ -583,20 +500,103 @@ namespace OPENGIOAI.Vistas
             comboBoxAgentes.ForeColor = Color.White;
             comboBoxAgentes.FormattingEnabled = true;
             comboBoxAgentes.ItemHeight = 24;
-            comboBoxAgentes.Location = new Point(254, 16);
+            comboBoxAgentes.Location = new Point(267, 3);
             comboBoxAgentes.Name = "comboBoxAgentes";
             comboBoxAgentes.Size = new Size(166, 30);
             comboBoxAgentes.TabIndex = 0;
             comboBoxAgentes.SelectedIndexChanged += comboBoxAgentes_SelectedIndexChanged;
             // 
+            // comboBoxModeloIA
+            // 
+            comboBoxModeloIA.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            comboBoxModeloIA.BackColor = Color.FromArgb(30, 41, 59);
+            comboBoxModeloIA.DrawMode = DrawMode.OwnerDrawFixed;
+            comboBoxModeloIA.DropDownStyle = ComboBoxStyle.DropDownList;
+            comboBoxModeloIA.FlatStyle = FlatStyle.Flat;
+            comboBoxModeloIA.ForeColor = Color.White;
+            comboBoxModeloIA.FormattingEnabled = true;
+            comboBoxModeloIA.ItemHeight = 24;
+            comboBoxModeloIA.Location = new Point(439, 3);
+            comboBoxModeloIA.Name = "comboBoxModeloIA";
+            comboBoxModeloIA.Size = new Size(243, 30);
+            comboBoxModeloIA.TabIndex = 4;
+            comboBoxModeloIA.SelectedIndexChanged += comboBoxModeloIA_SelectedIndexChanged;
+            // 
+            // btnGuardar
+            // 
+            btnGuardar.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnGuardar.BackColor = Color.MediumSeaGreen;
+            btnGuardar.FlatAppearance.BorderColor = Color.OliveDrab;
+            btnGuardar.FlatAppearance.MouseDownBackColor = Color.FromArgb(0, 64, 0);
+            btnGuardar.FlatAppearance.MouseOverBackColor = Color.DarkSeaGreen;
+            btnGuardar.FlatStyle = FlatStyle.Flat;
+            btnGuardar.Image = Properties.Resources.marcador;
+            btnGuardar.ImageAlign = ContentAlignment.MiddleLeft;
+            btnGuardar.Location = new Point(688, 3);
+            btnGuardar.Name = "btnGuardar";
+            btnGuardar.Size = new Size(166, 30);
+            btnGuardar.TabIndex = 6;
+            btnGuardar.Text = "Guardar Configuracion";
+            btnGuardar.UseVisualStyleBackColor = false;
+            btnGuardar.Click += btnGuardar_Click;
+            // 
+            // label1
+            // 
+            label1.AutoSize = true;
+            label1.Font = new Font("Segoe UI", 7.5F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            label1.ForeColor = Color.FromArgb(150, 170, 200);
+            label1.Location = new Point(8, 36);
+            label1.Name = "label1";
+            label1.Size = new Size(72, 12);
+            label1.TabIndex = 2;
+            label1.Text = "Ruta de trabajo";
+            // 
+            // label3
+            // 
+            label3.AutoSize = true;
+            label3.Font = new Font("Segoe UI", 7.5F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            label3.ForeColor = Color.FromArgb(150, 170, 200);
+            label3.Location = new Point(439, 36);
+            label3.Name = "label3";
+            label3.Size = new Size(39, 12);
+            label3.TabIndex = 5;
+            label3.Text = "Modelo";
+            // 
+            // label2
+            // 
+            label2.AutoSize = true;
+            label2.Font = new Font("Segoe UI", 7.5F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            label2.ForeColor = Color.FromArgb(150, 170, 200);
+            label2.Location = new Point(267, 36);
+            label2.Name = "label2";
+            label2.Size = new Size(36, 12);
+            label2.TabIndex = 3;
+            label2.Text = "Agente";
+            // 
+            // panelHead
+            // 
+            panelHead.BackColor = Color.Black;
+            panelHead.Controls.Add(btnGuardar);
+            panelHead.Controls.Add(comboBoxRuta);
+            panelHead.Controls.Add(comboBoxAgentes);
+            panelHead.Controls.Add(comboBoxModeloIA);
+            panelHead.Controls.Add(label2);
+            panelHead.Controls.Add(label3);
+            panelHead.Controls.Add(label1);
+            panelHead.Dock = DockStyle.Top;
+            panelHead.Location = new Point(0, 0);
+            panelHead.Name = "panelHead";
+            panelHead.Size = new Size(915, 51);
+            panelHead.TabIndex = 2;
+            // 
             // FrmMandos
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            BackColor = Color.FromArgb(15, 23, 42);
-            ClientSize = new Size(915, 655);
-            Controls.Add(pnlChat);
+            BackColor = Color.Black;
+            ClientSize = new Size(915, 706);
             Controls.Add(panelHead);
+            Controls.Add(pnlChat);
             Controls.Add(pnlContenedorTxt);
             ForeColor = Color.Transparent;
             MinimumSize = new Size(680, 500);

@@ -133,6 +133,7 @@
             // pnlContenedor
             // 
             pnlContenedor.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            pnlContenedor.BackColor = Color.Black;
             pnlContenedor.Location = new Point(12, 245);
             pnlContenedor.Name = "pnlContenedor";
             pnlContenedor.Size = new Size(796, 405);
@@ -142,7 +143,7 @@
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            BackColor = Color.FromArgb(15, 23, 42);
+            BackColor = Color.Black;
             ClientSize = new Size(820, 662);
             Controls.Add(pnlContenedor);
             Controls.Add(panelFormulario);

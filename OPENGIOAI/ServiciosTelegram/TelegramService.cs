@@ -125,7 +125,11 @@ namespace OPENGIOAI.ServiciosTelegram
             try
             {
                 var keyboard = Utils.CrearKeyboardDesdeTexto(respuesta);
-                string codificada = WebUtility.HtmlEncode(respuesta);
+                // ── Fix de emojis: WebUtility.HtmlEncode convertía 🔍 ⚙️ 🛡️ ✨
+                //    a entidades HTML que Telegram no decodifica de vuelta.
+                //    Telegram con parse_mode=HTML solo requiere escapar
+                //    < > & — los emojis deben pasar como UTF-8 literales.
+                string codificada = EscaparHtmlSeguro(respuesta);
                 var partes = Utils.DividirMensajeTelegram(codificada);
 
                 for (int i = 0; i < partes.Count; i++)
@@ -151,6 +155,20 @@ namespace OPENGIOAI.ServiciosTelegram
         {
             if (!IsConfigured) return Task.CompletedTask;
             return TelegramSender.EnviarAccionEscribiendoAsync(_chat.Apikey, _chat.ChatId);
+        }
+
+        /// <summary>
+        /// Escapa solo los caracteres reservados de HTML (& &lt; &gt;) requeridos
+        /// por Telegram con parse_mode=HTML. Preserva los emojis y demás Unicode
+        /// como literales — al contrario que WebUtility.HtmlEncode que los rompe.
+        /// </summary>
+        private static string EscaparHtmlSeguro(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
+            return s
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;");
         }
     }
 }

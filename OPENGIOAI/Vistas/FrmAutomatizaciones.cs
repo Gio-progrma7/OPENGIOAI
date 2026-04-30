@@ -19,16 +19,16 @@ namespace OPENGIOAI.Vistas
 {
     public partial class FrmAutomatizaciones : Form
     {
-        // ── Colores ───────────────────────────────────────────────────────────
-        private static readonly Color BgDeep     = ColorTranslator.FromHtml("#050505");
-        private static readonly Color BgSurface  = ColorTranslator.FromHtml("#0a0a0a");
-        private static readonly Color BgCard     = ColorTranslator.FromHtml("#0f1117");
-        private static readonly Color Emerald    = ColorTranslator.FromHtml("#10b981");
-        private static readonly Color Emerald4   = ColorTranslator.FromHtml("#34d399");
-        private static readonly Color Emerald9   = ColorTranslator.FromHtml("#064e3b");
-        private static readonly Color TextMain   = ColorTranslator.FromHtml("#f0fdf4");
-        private static readonly Color TextSub    = ColorTranslator.FromHtml("#a7f3d0");
-        private static readonly Color TextMuted  = ColorTranslator.FromHtml("#6ee7b7");
+        // ── Colores (mismos que el tema Emerald usado en FrmMandos) ───────────
+        private static Color BgDeep    => EmeraldTheme.BgDeep;
+        private static Color BgSurface => EmeraldTheme.BgDeep;
+        private static Color BgCard    => EmeraldTheme.BgCard;
+        private static Color Emerald   => EmeraldTheme.Emerald500;
+        private static Color Emerald4  => EmeraldTheme.Emerald400;
+        private static Color Emerald9  => EmeraldTheme.Emerald900;
+        private static Color TextMain  => EmeraldTheme.TextPrimary;
+        private static Color TextSub   => EmeraldTheme.TextSecondary;
+        private static Color TextMuted => EmeraldTheme.TextSecondary;
         private static readonly Color ErrorColor = ColorTranslator.FromHtml("#f87171");
         private static readonly Color WarnColor  = ColorTranslator.FromHtml("#fbbf24");
 
@@ -73,11 +73,12 @@ namespace OPENGIOAI.Vistas
         private Button   btnCrearIA    = null!, btnNueva = null!, btnGuardar = null!;
         private Button   btnEjecutar   = null!, btnDetener = null!, btnAddNodo = null!, btnToggleLog = null!;
         private Button   btnEliminarAuto = null!;
+        private Button   btnValidar = null!;
         private Label    lblTituloAuto = null!, lblInfoConfig = null!, lblEstadoIA = null!;
         // Editor
         private TextBox  edtTitulo = null!, edtDescripcion = null!, edtInstruccion = null!;
         private ComboBox cmbTipoNodo = null!;
-        private Button   btnGenScript = null!, btnCerrarEditor = null!;
+        private Button   btnGenScript = null!, btnCerrarEditor = null!, btnProbarNodo = null!;
         private Label    lblScriptStatus = null!, lblResultadoNodo = null!;
         // Conexiones en editor
         private CheckedListBox chkConexiones = null!;
@@ -125,8 +126,20 @@ namespace OPENGIOAI.Vistas
                 _streamingPend = false;
                 FlushBufferAlLog();
             };
+
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
             ConstruirUI();
             CargarLista();
+        }
+
+        private void OnTemaChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnTemaChanged); return; }
+            // Solo refrescar UI; la lógica y datos quedan intactos.
+            ConstruirUI();
+            Invalidate(true);
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -160,6 +173,7 @@ namespace OPENGIOAI.Vistas
             btnAddNodo     = Btn("＋ Nodo",      BgCard,    90);
             btnEjecutar    = Btn("▶ Ejecutar",   Emerald,   100);
             btnDetener     = Btn("■ Detener",    ErrorColor,96);
+            btnValidar     = Btn("✓ Validar",    Emerald9,  90);
             btnEliminarAuto= Btn("🗑 Eliminar",  ErrorColor,100);
             btnToggleLog   = Btn("📋 Log",       BgCard,    76);
             btnDetener.Enabled = false;
@@ -194,7 +208,8 @@ namespace OPENGIOAI.Vistas
                 WrapContents = false, BackColor = Color.Transparent, Padding = new Padding(0, 12, 4, 0)
             };
             fp.Controls.AddRange(new Control[]
-                { btnNueva, btnGuardar, btnAddNodo, btnEjecutar, btnDetener, btnEliminarAuto, btnToggleLog,
+                { btnNueva, btnGuardar, btnAddNodo, btnEjecutar, btnDetener, btnValidar,
+                  btnEliminarAuto, btnToggleLog,
                   btnZoomOut, lblZoom, btnZoomIn });
 
             // Panel izquierdo del toolbar: contiene título e info sin solaparse con los botones
@@ -399,6 +414,7 @@ namespace OPENGIOAI.Vistas
             btnAddNodo.Click     += (_, _) => AgregarNodoManual();
             btnEjecutar.Click    += async (_, _) => await EjecutarAutomatizacionCompleta();
             btnDetener.Click     += (_, _) => { _cts?.Cancel(); EstadoIA("Cancelado.", WarnColor); };
+            btnValidar.Click     += (_, _) => ValidarGrafoActual();
             btnEliminarAuto.Click+= (_, _) => EliminarAutoActual();
             btnToggleLog.Click   += (_, _) => pnlLog.Visible = !pnlLog.Visible;
             // ClientSizeChanged se dispara cuando el scrollbar aparece/desaparece, ajustando anchos exactos
@@ -465,6 +481,17 @@ namespace OPENGIOAI.Vistas
             };
             btnGenScript.FlatAppearance.BorderSize = 0;
             btnGenScript.Click += async (_, _) => await GenerarScriptNodo();
+
+            btnProbarNodo = new Button
+            {
+                Text = "🧪 Probar nodo (dry-run)", Size = new Size(fw, 30),
+                BackColor = BgCard, ForeColor = Emerald4, FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Semibold", 9f), Cursor = Cursors.Hand
+            };
+            btnProbarNodo.FlatAppearance.BorderSize  = 1;
+            btnProbarNodo.FlatAppearance.BorderColor = Emerald9;
+            btnProbarNodo.Click += async (_, _) => await ProbarNodoIndividual();
+
             lblScriptStatus = new Label { Text = "", ForeColor = TextMuted, Font = new Font("Segoe UI", 7.5f), Size = new Size(fw, 16) };
             lblResultadoNodo = new Label { Text = "", ForeColor = Emerald4, Font = new Font("Segoe UI", 7.5f), Size = new Size(fw, 36), AutoEllipsis = true };
 
@@ -497,7 +524,7 @@ namespace OPENGIOAI.Vistas
                 L("Descripción"), edtDescripcion,
                 L("Instrucción NL"), edtInstruccion,
                 lblConexiones, chkConexiones,
-                btnGenScript, lblScriptStatus, lblResultadoNodo,
+                btnGenScript, btnProbarNodo, lblScriptStatus, lblResultadoNodo,
                 btnSaveN, btnElimNodo
             });
 
@@ -1093,11 +1120,11 @@ namespace OPENGIOAI.Vistas
             btnAplicarSchedule = new Button
             {
                 Text = "✔  Activar programación", Location = new Point(8, 4), Size = new Size(172, 28),
-                BackColor = ColorTranslator.FromHtml("#064e3b"), ForeColor = Emerald4,
+                BackColor = ColorTranslator.FromHtml("#1E4545"), ForeColor = Emerald4,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 8.5f), Cursor = Cursors.Hand
             };
             btnAplicarSchedule.FlatAppearance.BorderSize = 1;
-            btnAplicarSchedule.FlatAppearance.BorderColor = ColorTranslator.FromHtml("#10b981");
+            btnAplicarSchedule.FlatAppearance.BorderColor = ColorTranslator.FromHtml("#3660C9");
             btnAplicarSchedule.Click += (_, _) => AplicarSchedule();
 
             btnDesactivarSched = new Button
@@ -2409,6 +2436,125 @@ Devuelve el JSON de modificación.";
         };
 
         // ══════════════════════════════════════════════════════════════════════
+        //  VALIDACIÓN DEL GRAFO (botón ✓ Validar)
+        // ══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Ejecuta <see cref="Automatizacion.ValidarGrafo"/> sobre la
+        /// automatización actual y muestra los errores en el log + un MessageBox.
+        /// No requiere ejecutar Python, así que es instantáneo.
+        /// </summary>
+        private void ValidarGrafoActual()
+        {
+            if (_autoActual == null)
+            {
+                MessageBox.Show(this, "No hay automatización seleccionada.",
+                    "Validar grafo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var errores = _autoActual.ValidarGrafo();
+            if (errores.Count == 0)
+            {
+                LogW($"\n✔ Grafo válido: {_autoActual.Nodos.Count} nodo(s), sin ciclos ni entradas faltantes.\n", Emerald4);
+                EstadoIA("✔ Grafo válido", Emerald4);
+                MessageBox.Show(this,
+                    $"Grafo válido.\n\nNodos: {_autoActual.Nodos.Count}\nCiclos: 0\nEntradas faltantes: 0",
+                    "Validación OK", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // Mostrar todos los errores en el log
+            AbrirLog();
+            LogW($"\n✖ Grafo inválido — {errores.Count} error(es):\n", ErrorColor);
+            foreach (var e in errores)
+                LogW($"  · {e}\n", ErrorColor);
+
+            EstadoIA($"✖ {errores.Count} error(es) de validación", ErrorColor);
+            MessageBox.Show(this,
+                "Grafo inválido:\n\n" + string.Join("\n", errores.Take(10)) +
+                (errores.Count > 10 ? $"\n... y {errores.Count - 10} más (ver log)." : ""),
+                "Validación fallida", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  PROBAR NODO INDIVIDUAL (dry-run)
+        // ══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Ejecuta el script Python del nodo seleccionado en el editor sin
+        /// regenerarlo y sin disparar predecesores ni sucesores. Útil para
+        /// iterar rápido sobre un solo paso de la cadena.
+        ///
+        /// Pasa <c>AUTO_VARIABLES</c> con las variables globales de la
+        /// automatización para que el contrato de entradas sea coherente con
+        /// la ejecución completa, pero <c>NODO_CONTEXTO</c> queda vacío
+        /// (no hay predecesores en un dry-run aislado).
+        /// </summary>
+        private async Task ProbarNodoIndividual()
+        {
+            if (_autoActual == null || _nodoEditando == null)
+            {
+                EstadoIA("Selecciona un nodo para probar.", WarnColor);
+                return;
+            }
+
+            var nodo = _nodoEditando.Datos;
+            string carpeta = AutomatizacionScheduler.ObtenerCarpetaAuto(_autoActual);
+
+            if (string.IsNullOrWhiteSpace(nodo.NombreScript))
+            {
+                EstadoIA("Este nodo aún no tiene script. Genera uno antes.", WarnColor);
+                return;
+            }
+            string ruta = Path.Combine(carpeta, nodo.NombreScript);
+            if (!File.Exists(ruta))
+            {
+                EstadoIA($"Script no encontrado: {nodo.NombreScript}", ErrorColor);
+                return;
+            }
+
+            AbrirLog();
+            LogW($"\n🧪 Dry-run de nodo: {nodo.Titulo}\n", WarnColor);
+            _nodoEditando.ActualizarEstado(EstadoNodo.Ejecutando);
+            btnProbarNodo.Enabled = false;
+
+            _cts?.Cancel();
+            _cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            var ct = _cts.Token;
+
+            string autoVarsJson =
+                Newtonsoft.Json.JsonConvert.SerializeObject(_autoActual.Variables ?? new());
+
+            try
+            {
+                string resultado = await EjecutarScriptDirecto(
+                    ruta, carpeta, contextoAnterior: null, ct,
+                    onLinea: linea => LogAppend("  " + linea),
+                    autoVariablesJson: autoVarsJson,
+                    nodoContextoJson: null);
+
+                nodo.UltimaRespuesta = resultado;
+                lblResultadoNodo.Text = "Resultado:\n" + Truncar(resultado, 300);
+                _nodoEditando.ActualizarEstado(EstadoNodo.Completado);
+                LogW($"✔ Resultado: {Truncar(resultado, 200)}\n", Emerald4);
+                EstadoIA("✔ Dry-run OK", Emerald4);
+            }
+            catch (OperationCanceledException)
+            {
+                _nodoEditando.ActualizarEstado(EstadoNodo.Pendiente);
+                EstadoIA("Cancelado.", WarnColor);
+            }
+            catch (Exception ex)
+            {
+                _nodoEditando.ActualizarEstado(EstadoNodo.Error);
+                LogW($"✖ {ex.Message}\n", ErrorColor);
+                EstadoIA("✖ Error en dry-run", ErrorColor);
+            }
+            finally { btnProbarNodo.Enabled = true; }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
         //  EJECUCIÓN (manual desde botón ▶ o desde scheduler)
         // ══════════════════════════════════════════════════════════════════════
         private async Task EjecutarAutomatizacionCompleta()
@@ -2757,10 +2903,14 @@ Devuelve el JSON de modificación.";
         // ══════════════════════════════════════════════════════════════════════
         private static async Task<string> EjecutarScriptDirecto(
             string rutaScript, string carpeta, string? contextoAnterior,
-            CancellationToken ct, Action<string>? onLinea = null)
+            CancellationToken ct, Action<string>? onLinea = null,
+            string? autoVariablesJson = null,
+            string? nodoContextoJson  = null)
         {
             string respTxt = Path.Combine(carpeta, "respuesta.txt");
-            try { File.WriteAllText(respTxt, "", Encoding.UTF8); } catch { }
+            try { File.WriteAllText(respTxt, "", Encoding.UTF8); }
+            catch (IOException)        { /* archivo bloqueado: caeremos a stdout */ }
+            catch (UnauthorizedAccessException) { /* sin permisos: idem */ }
 
             var psi = new ProcessStartInfo
             {
@@ -2780,6 +2930,10 @@ Devuelve el JSON de modificación.";
             psi.EnvironmentVariables["PYTHONUTF8"]       = "1";
             if (!string.IsNullOrWhiteSpace(contextoAnterior))
                 psi.EnvironmentVariables["NODO_ANTERIOR_RESULTADO"] = contextoAnterior;
+            if (!string.IsNullOrWhiteSpace(autoVariablesJson) && autoVariablesJson != "{}")
+                psi.EnvironmentVariables["AUTO_VARIABLES"] = autoVariablesJson;
+            if (!string.IsNullOrWhiteSpace(nodoContextoJson))
+                psi.EnvironmentVariables["NODO_CONTEXTO"] = nodoContextoJson;
 
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var sbOut = new StringBuilder();
@@ -4363,18 +4517,18 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
             bool isSuccess = bc == Emerald9;
             bool isDanger  = bc == ErrorColor;
 
-            Color bg  = isPrimary ? ColorTranslator.FromHtml("#064e3b")
+            Color bg  = isPrimary ? ColorTranslator.FromHtml("#1E4545")
                       : isDanger  ? Color.FromArgb(30, 10, 10)
-                      : isSuccess ? Color.FromArgb(8, 28, 18)
-                      : Color.FromArgb(18, 24, 32);
+                      : isSuccess ? Color.FromArgb(10, 30, 50)
+                      : Color.FromArgb(0, 30, 58);
             Color fg  = isPrimary ? Emerald4
                       : isDanger  ? Color.FromArgb(252, 129, 129)
                       : isSuccess ? Emerald4
-                      : Color.FromArgb(170, 190, 200);
-            Color brd = isPrimary ? ColorTranslator.FromHtml("#10b981")
+                      : Color.FromArgb(170, 210, 230);
+            Color brd = isPrimary ? ColorTranslator.FromHtml("#3660C9")
                       : isDanger  ? Color.FromArgb(110, 248, 113, 113)
-                      : isSuccess ? Color.FromArgb(70, 16, 185, 129)
-                      : Color.FromArgb(45, 120, 150, 180);
+                      : isSuccess ? Color.FromArgb(70, 54, 96, 201)
+                      : Color.FromArgb(45, 54, 96, 201);
 
             var b = new Button
             {

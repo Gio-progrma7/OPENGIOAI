@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="OPENGIOAI/OPENGIOAI.csproj" />
-  <Project Path="OPENGIOAI/Tests/ConversationWindowTests/ConversationWindowTests.csproj" />
+  <Project Path="OPENGIOAI/Tests/ConversationWindowTests/ConversationWindowTests.csproj">
+    <Build Solution="Debug|*" Project="false" />
+  </Project>
 </Solution>
