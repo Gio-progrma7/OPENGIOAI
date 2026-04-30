@@ -32,6 +32,20 @@ namespace OPENGIOAI.Entidades
         public int CanvasY { get; set; } = 50;
         public List<string> ConexionesSalida { get; set; } = new();
 
+        /// <summary>
+        /// Variables que este nodo espera recibir en el contexto (de un
+        /// predecesor o de las variables globales de la automatización).
+        /// El scheduler valida que existan antes de ejecutar.
+        /// </summary>
+        public List<VariableNodo> Entradas { get; set; } = new();
+
+        /// <summary>
+        /// Variables que este nodo expone al ejecutarse. El script Python
+        /// debe imprimir un JSON con estas claves al final del stdout
+        /// (o escribirlas en respuesta.txt).
+        /// </summary>
+        public List<VariableNodo> Salidas { get; set; } = new();
+
         [System.Text.Json.Serialization.JsonIgnore]
         public EstadoNodo Estado { get; set; } = EstadoNodo.Pendiente;
     }

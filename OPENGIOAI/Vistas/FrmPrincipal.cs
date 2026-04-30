@@ -14,20 +14,24 @@ namespace OPENGIOAI.Vistas
 {
     public partial class FrmPrincipal : Form
     {
-        // ── Paleta Emerald (consistente con el resto de la app) ───────────────
-        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#050505");
-        private static readonly Color BgSurface = ColorTranslator.FromHtml("#0a0a0a");
-        private static readonly Color BgCard    = ColorTranslator.FromHtml("#0f1117");
-        private static readonly Color BgHover   = ColorTranslator.FromHtml("#141826");
-        private static readonly Color BgActive  = ColorTranslator.FromHtml("#0b2920");
-        private static readonly Color Emerald   = ColorTranslator.FromHtml("#10b981");
-        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#34d399");
-        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#064e3b");
-        private static readonly Color TextMain  = ColorTranslator.FromHtml("#f0fdf4");
-        private static readonly Color TextSub   = ColorTranslator.FromHtml("#a7f3d0");
-        private static readonly Color TextMuted = ColorTranslator.FromHtml("#6ee7b7");
-        private static readonly Color Border    = ColorTranslator.FromHtml("#1f2937");
-        private static readonly Color DangerCol = ColorTranslator.FromHtml("#f87171");
+        // ── Paleta dinámica (sigue a EmeraldTheme.IsDark) ────────────────────
+        private static Color BgDeep    => EmeraldTheme.BgDeep;
+        private static Color BgSurface => EmeraldTheme.BgSurface;
+        private static Color BgCard    => EmeraldTheme.BgCard;
+        private static Color BgHover   => EmeraldTheme.IsDark
+                                            ? ColorTranslator.FromHtml("#003d73")
+                                            : ColorTranslator.FromHtml("#CBD8FF");
+        private static Color BgActive  => EmeraldTheme.Emerald900;
+        private static Color Emerald   => EmeraldTheme.Emerald500;
+        private static Color Emerald4  => EmeraldTheme.Emerald400;
+        private static Color Emerald9  => EmeraldTheme.Emerald900;
+        private static Color TextMain  => EmeraldTheme.TextPrimary;
+        private static Color TextSub   => EmeraldTheme.TextSecondary;
+        private static Color TextMuted => EmeraldTheme.TextMuted;
+        private static Color Border    => EmeraldTheme.IsDark
+                                            ? ColorTranslator.FromHtml("#1a3a5c")
+                                            : ColorTranslator.FromHtml("#C5D8F0");
+        private static Color DangerCol => EmeraldTheme.Error;
 
         private const int SidebarExpanded  = 240;
         private const int SidebarCollapsed = 72;
@@ -86,6 +90,7 @@ namespace OPENGIOAI.Vistas
         private ToolStripMenuItem? _trayItemSegundoPlano;
         private bool _saliendoDeVerdad = false;
         private MenuItemBoton? _itemSegundoPlano;
+        // private MenuItemBoton? _btnTema; // botón de tema eliminado
 
         public FrmPrincipal(IServiceProvider services)
         {
@@ -98,6 +103,10 @@ namespace OPENGIOAI.Vistas
             ConstruirUI();
             InicializarBandeja();
 
+            // ── Modo claro/oscuro ────────────────────────────────────────────
+            EmeraldTheme.ThemeChanged += AplicarTemaActual;
+
+            FormClosing += (_, __) => EmeraldTheme.ThemeChanged -= AplicarTemaActual;
             FormClosing += FrmPrincipal_FormClosing;
             KeyPreview = true;
             KeyDown += FrmPrincipal_KeyDown;
@@ -118,6 +127,13 @@ namespace OPENGIOAI.Vistas
             {
                 Miconfiguracion = new ConfiguracionClient();
             }
+
+            // Activar la ruta de trabajo del usuario para que TODOS los archivos
+            // del workspace (ListApis, ListAutomatizaciones, prompts, etc.) se
+            // lean y guarden ahí. La primera vez también migra los archivos
+            // existentes en AppDir (preserva credenciales/automatizaciones viejas).
+            RutasProyecto.EstablecerRutaTrabajo(Miconfiguracion?.MiArchivo?.Ruta);
+
             IniciarScheduler();
         }
 
@@ -244,7 +260,7 @@ namespace OPENGIOAI.Vistas
             pnlSidebarFooter = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 110,
+                Height = 155,
                 BackColor = BgSurface,
                 Padding = new Padding(0, 8, 0, 8)
             };
@@ -303,7 +319,7 @@ namespace OPENGIOAI.Vistas
             pnlSidebar.Controls.Add(pnlLogoArea);
 
             // Timer para animar collapse
-            _timerColapsar = new System.Windows.Forms.Timer { Interval = 12 };
+            _timerColapsar = new System.Windows.Forms.Timer { Interval = 8 };
             _timerColapsar.Tick += AnimarColapsar;
         }
 
@@ -475,14 +491,14 @@ namespace OPENGIOAI.Vistas
         {
             int actual = pnlSidebar.Width;
             int delta = _anchoObjetivo - actual;
-            if (Math.Abs(delta) <= 4)
+            if (Math.Abs(delta) <= 6)
             {
                 pnlSidebar.Width = _anchoObjetivo;
                 _timerColapsar.Stop();
                 return;
             }
-            // Easing: avanzar 30% del delta cada tick → suave
-            pnlSidebar.Width = actual + (int)Math.Round(delta * 0.30);
+            // Easing rápido: 55% del delta cada tick → ágil pero todavía suave
+            pnlSidebar.Width = actual + (int)Math.Round(delta * 0.55);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -566,6 +582,63 @@ namespace OPENGIOAI.Vistas
                 else { t.Stop(); t.Dispose(); }
             };
             t.Start();
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  TEMA CLARO / OSCURO
+        // ════════════════════════════════════════════════════════════════════
+
+        private void AplicarTemaActual()
+        {
+            if (InvokeRequired) { Invoke(AplicarTemaActual); return; }
+
+            // Fondos principales
+            BackColor               = BgDeep;
+            pnlContenedor.BackColor = BgDeep;
+            pnlHome?.BackColor.Equals(Color.Empty); // fuerza recalculo
+            if (pnlHome != null) pnlHome.BackColor = BgDeep;
+
+            // Sidebar
+            pnlSidebar.BackColor      = BgSurface;
+            pnlLogoArea.BackColor     = BgSurface;
+            pnlSidebarFooter.BackColor= BgSurface;
+            flpItems.BackColor        = BgSurface;
+            lblLogo.ForeColor         = Emerald4;
+
+            // Topbar
+            pnlTopbar.BackColor = BgSurface;
+            btnAtras.ForeColor  = TextMuted;
+            btnAtras.FlatAppearance.MouseOverBackColor  = BgHover;
+            btnCerrarForm.ForeColor = TextMuted;
+
+            // Separadores y botones
+            btnToggleColapsar.ForeColor = TextMuted;
+            btnToggleColapsar.FlatAppearance.MouseOverBackColor = BgHover;
+
+            // Etiquetas de grupo en sidebar
+            foreach (Control c in flpItems.Controls)
+            {
+                if (c is Label lbl && lbl.Tag?.ToString() == "GRUPO")
+                    lbl.ForeColor = Border;
+            }
+
+            // Refrescar todos los MenuItemBoton (usan OnPaint que ya lee las props)
+            foreach (var item in _todosItems) item.Invalidate();
+            _itemSegundoPlano?.Invalidate();
+
+            // Home labels
+            if (pnlHome != null)
+            {
+                pnlHome.BackColor = BgDeep;
+                foreach (Control c in pnlHome.Controls)
+                    if (c is Label l) l.ForeColor = (l.Font.Bold || l.Font.Size > 16) ? TextMain : TextSub;
+            }
+
+            // Propagar a formularios hijos abiertos
+            foreach (Form hijo in pnlContenedor.Controls.OfType<Form>())
+                EmeraldTheme.ApplyTheme(hijo);
+
+            Invalidate(true);
         }
 
         // ── Breadcrumb ────────────────────────────────────────────────────────

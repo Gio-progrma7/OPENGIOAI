@@ -11,21 +11,25 @@ namespace OPENGIOAI.Vistas
 {
     public partial class FrmApis : Form
     {
-        // ── Paleta Emerald (consistente con FrmAutomatizaciones) ──────────────
-        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#050505");
-        private static readonly Color BgSurface = ColorTranslator.FromHtml("#0a0a0a");
-        private static readonly Color BgCard    = ColorTranslator.FromHtml("#0f1117");
-        private static readonly Color BgCardHi  = ColorTranslator.FromHtml("#141826");
-        private static readonly Color BgInput   = ColorTranslator.FromHtml("#0b0e16");
-        private static readonly Color Emerald   = ColorTranslator.FromHtml("#10b981");
-        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#34d399");
-        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#064e3b");
-        private static readonly Color TextMain  = ColorTranslator.FromHtml("#f0fdf4");
-        private static readonly Color TextSub   = ColorTranslator.FromHtml("#a7f3d0");
-        private static readonly Color TextMuted = ColorTranslator.FromHtml("#6ee7b7");
-        private static readonly Color Border    = ColorTranslator.FromHtml("#1f2937");
-        private static readonly Color DangerCol = ColorTranslator.FromHtml("#f87171");
-        private static readonly Color WarnCol   = ColorTranslator.FromHtml("#fbbf24");
+        // ── Paleta dinámica ───────────────────────────────────────────────────
+        private static Color BgDeep    => EmeraldTheme.BgDeep;
+        private static Color BgSurface => EmeraldTheme.BgSurface;
+        private static Color BgCard    => EmeraldTheme.BgCard;
+        private static Color BgCardHi  => EmeraldTheme.IsDark
+                                            ? ColorTranslator.FromHtml("#003d73")
+                                            : ColorTranslator.FromHtml("#D6E8FF");
+        private static Color BgInput   => EmeraldTheme.BgDeep;
+        private static Color Emerald   => EmeraldTheme.Emerald500;
+        private static Color Emerald4  => EmeraldTheme.Emerald400;
+        private static Color Emerald9  => EmeraldTheme.Emerald900;
+        private static Color TextMain  => EmeraldTheme.TextPrimary;
+        private static Color TextSub   => EmeraldTheme.TextSecondary;
+        private static Color TextMuted => EmeraldTheme.TextMuted;
+        private static Color Border    => EmeraldTheme.IsDark
+                                            ? ColorTranslator.FromHtml("#1a3a5c")
+                                            : ColorTranslator.FromHtml("#C5D8F0");
+        private static Color DangerCol => EmeraldTheme.Error;
+        private static readonly Color WarnCol = ColorTranslator.FromHtml("#fbbf24");
 
         // ── Datos ─────────────────────────────────────────────────────────────
         private List<Api> _misApis = new();
@@ -59,7 +63,17 @@ namespace OPENGIOAI.Vistas
         public FrmApis()
         {
             InitializeComponent();
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
             ConstruirUI();
+        }
+
+        private void OnTemaChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnTemaChanged); return; }
+            ConstruirUI();
+            Invalidate(true);
         }
 
         private void FrmApis_Load(object sender, EventArgs e)

@@ -38,6 +38,7 @@ namespace OPENGIOAI.Skills
 
             var sb = new StringBuilder();
             sb.AppendLine($"SKILLS DISPONIBLES ({skills.Count}) — Llamar con: skill_run(\"id\", param=valor)");
+            sb.AppendLine("Firma de params: nombre: tipo* (* = requerido, =X = default, ∈[a|b] = opciones)");
 
             // Agrupar por categoría para legibilidad
             var grupos = skills
@@ -74,15 +75,21 @@ namespace OPENGIOAI.Skills
             if (skill.Parametros == null || skill.Parametros.Count == 0)
                 return string.Empty;
 
-            var requeridos = skill.Parametros
-                .Where(p => p.Requerido)
-                .Select(p => p.Nombre)
-                .ToList();
+            // Firma completa: nombre: tipo* (=default | enum)
+            // El * marca requeridos. Es compacto pero permite al LLM saber
+            // exactamente qué pasarle al skill sin necesidad de leer el .md.
+            var partes = skill.Parametros.Select(p =>
+            {
+                string sufijo = p.Requerido ? "*" : "";
+                string extra  = "";
+                if (p.Opciones != null && p.Opciones.Count > 0)
+                    extra = $"∈[{string.Join("|", p.Opciones)}]";
+                else if (!string.IsNullOrWhiteSpace(p.ValorPorDefecto))
+                    extra = $"={p.ValorPorDefecto}";
+                return $"{p.Nombre}: {p.Tipo}{sufijo}{extra}";
+            });
 
-            if (requeridos.Count == 0)
-                return string.Empty;
-
-            return $"  | params: {string.Join(", ", requeridos)}";
+            return $"  | ({string.Join(", ", partes)})";
         }
     }
 }

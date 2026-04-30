@@ -15,12 +15,14 @@ namespace OPENGIOAI.Themas
         // ── Colores por tipo de nodo ──────────────────────────────────────────
         private static readonly Color ColorDisparador  = ColorTranslator.FromHtml("#3b82f6"); // azul
         private static readonly Color ColorCondicion   = ColorTranslator.FromHtml("#f59e0b"); // ámbar
-        private static readonly Color ColorAccion      = ColorTranslator.FromHtml("#10b981"); // emerald
-        private static readonly Color ColorFin         = ColorTranslator.FromHtml("#f87171"); // rojo
+        private static readonly Color ColorAccion = ColorTranslator.FromHtml("#3660C9"); // blue
+        private static readonly Color ColorFin   = ColorTranslator.FromHtml("#f87171"); // rojo
 
-        private static readonly Color BgCard     = ColorTranslator.FromHtml("#111827");
-        private static readonly Color BgCardHov  = ColorTranslator.FromHtml("#1f2937");
-        private static readonly Color TextMain   = ColorTranslator.FromHtml("#f0fdf4");
+        private static Color BgCard    => EmeraldTheme.BgCard;
+        private static Color BgCardHov => EmeraldTheme.IsDark
+                                            ? ColorTranslator.FromHtml("#003d73")
+                                            : ColorTranslator.FromHtml("#D6E8FF");
+        private static Color TextMain  => EmeraldTheme.TextPrimary;
         private static readonly Color TextSub    = ColorTranslator.FromHtml("#9ca3af");
 
         // ── Tamaño base (sin zoom) ────────────────────────────────────────────
@@ -109,8 +111,8 @@ namespace OPENGIOAI.Themas
             // Franja de color (borde superior = tipo / estado)
             Color franjaColor = Datos.Estado switch
             {
-                EstadoNodo.Ejecutando  => ColorTranslator.FromHtml("#34d399"),
-                EstadoNodo.Completado  => ColorTranslator.FromHtml("#10b981"),
+                EstadoNodo.Ejecutando  => ColorTranslator.FromHtml("#94E6EC"),
+                EstadoNodo.Completado  => ColorTranslator.FromHtml("#3660C9"),
                 EstadoNodo.Error       => ColorTranslator.FromHtml("#f87171"),
                 _                      => tipoColor
             };
@@ -122,8 +124,8 @@ namespace OPENGIOAI.Themas
             float borderW = (_seleccionado || Datos.Estado == EstadoNodo.Ejecutando) ? 2.5f : 1.5f;
             Color borderColor = Datos.Estado switch
             {
-                EstadoNodo.Ejecutando  => ColorTranslator.FromHtml("#34d399"),
-                EstadoNodo.Completado  => ColorTranslator.FromHtml("#10b981"),
+                EstadoNodo.Ejecutando  => ColorTranslator.FromHtml("#94E6EC"),
+                EstadoNodo.Completado  => ColorTranslator.FromHtml("#3660C9"),
                 EstadoNodo.Error       => ColorTranslator.FromHtml("#f87171"),
                 _                      => _seleccionado ? tipoColor : Color.FromArgb(50, tipoColor)
             };

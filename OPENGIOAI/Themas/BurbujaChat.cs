@@ -6,6 +6,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -41,31 +42,49 @@ namespace OPENGIOAI.Themas
         private const int TamañoBtnCopiar  = 22;
 
         // ─────────────────────────────────────────────────────────────
-        //  Paleta Emerald (consistente con FrmPrincipal / FrmApis)
+        //  Paleta dinámica (sigue a EmeraldTheme.IsDark)
         // ─────────────────────────────────────────────────────────────
-        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#050505");
-        private static readonly Color BgCard    = ColorTranslator.FromHtml("#0f1117");
-        private static readonly Color BgCardHi  = ColorTranslator.FromHtml("#141826");
-        private static readonly Color Emerald   = ColorTranslator.FromHtml("#10b981");
-        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#34d399");
-        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#064e3b");
-        private static readonly Color Emerald12 = ColorTranslator.FromHtml("#022c22");
-        private static readonly Color TextMain  = ColorTranslator.FromHtml("#f0fdf4");
-        private static readonly Color TextSub   = ColorTranslator.FromHtml("#a7f3d0");
-        private static readonly Color BorderCol = ColorTranslator.FromHtml("#1f2937");
+        private static Color BgDeep   => EmeraldTheme.BgDeep;
+        private static Color BgCard   => EmeraldTheme.BgCard;
+        private static Color BgCardHi => EmeraldTheme.IsDark
+                                           ? ColorTranslator.FromHtml("#003d73")
+                                           : ColorTranslator.FromHtml("#D6E8FF");
+        private static Color Emerald  => EmeraldTheme.Emerald500;
+        private static Color Emerald4 => EmeraldTheme.Emerald400;
+        private static Color Emerald9 => EmeraldTheme.Emerald900;
+        // Bubble usuario: siempre teal oscuro para contraste
+        private static readonly Color Emerald12 = ColorTranslator.FromHtml("#0f2a2a");
+        private static Color TextMain  => EmeraldTheme.TextPrimary;
+        private static Color TextSub   => EmeraldTheme.TextSecondary;
+        private static Color BorderCol => EmeraldTheme.IsDark
+                                            ? ColorTranslator.FromHtml("#1a3a5c")
+                                            : ColorTranslator.FromHtml("#C5D8F0");
 
-        // Fondos por remitente
-        private static readonly Color BgUsuario  = Emerald9;     // verde profundo
-        private static readonly Color BgUsuario2 = Emerald12;    // gradiente
-        private static readonly Color BgIA       = BgCard;
-        private static readonly Color BgIA2      = BgCardHi;
+        // Fondos por remitente (calculados desde las propiedades anteriores)
+        private static Color BgUsuario  => Emerald9;    // teal profundo (contrasta en ambos modos)
+        private static Color BgUsuario2 => Emerald12;
+        private static Color BgIA       => BgCard;
+        private static Color BgIA2      => BgCardHi;
 
         // ─────────────────────────────────────────────────────────────
-        //  Regex para rutas y URLs
+        //  Regex para rutas, URLs y bloques de código
         // ─────────────────────────────────────────────────────────────
         private static readonly Regex RegexRuta = new Regex(
             @"([A-Za-z]:\\(?:[^\n""'<>|*?\r\\/:]+\\)*[^\n""'<>|*?\r\/:\\]*)|(https?:\/\/[^\s\n""'<>]+)",
             RegexOptions.Compiled);
+
+        // Bloques cercados con triple backtick: ``` ... ``` (multiline)
+        private static readonly Regex RegexCodeBlock = new Regex(
+            @"```[a-zA-Z0-9_\-]*\n([\s\S]*?)\n?```",
+            RegexOptions.Compiled);
+
+        // Inline code con backtick simple: `texto`
+        private static readonly Regex RegexInlineCode = new Regex(
+            @"`([^`\n]+)`",
+            RegexOptions.Compiled);
+
+        // Fuente monoespaciada para bloques de código
+        private static readonly Color BgCode = ColorTranslator.FromHtml("#020617");
 
         private static readonly string[] ExtensionesImagen =
             { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp" };
@@ -99,6 +118,13 @@ namespace OPENGIOAI.Themas
         private System.Windows.Forms.Timer _timerTyping;
         private int _typingTick;
 
+        // Debounce del formateo durante streaming (rutas/code blocks)
+        private System.Windows.Forms.Timer _timerFormatoDebounce;
+
+        // Zoom global compartido por todas las burbujas (controlado desde FrmMandos)
+        public static float ZoomGlobal { get; set; } = 1.0f;
+        private const float FontSizeBase = 9.5F;
+
         // ─────────────────────────────────────────────────────────────
         //  Constructor
         // ─────────────────────────────────────────────────────────────
@@ -115,7 +141,7 @@ namespace OPENGIOAI.Themas
                      ControlStyles.SupportsTransparentBackColor, true);
 
             DoubleBuffered = true;
-            Font           = new Font("Segoe UI Emoji", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            Font           = new Font("Segoe UI Emoji", FontSizeBase * ZoomGlobal, FontStyle.Regular, GraphicsUnit.Point);
             BackColor      = BgDeep;
             Margin         = new Padding(0, 4, 0, 4);
 
@@ -323,13 +349,49 @@ namespace OPENGIOAI.Themas
         // ─────────────────────────────────────────────────────────────
         private void AplicarFormatoEnlaces()
         {
+            // Reset previo: color base y back base (por si era código antes)
+            int oldStart  = _txtMensaje.SelectionStart;
+            int oldLength = _txtMensaje.SelectionLength;
+            _txtMensaje.SelectAll();
+            _txtMensaje.SelectionColor    = TextMain;
+            _txtMensaje.SelectionBackColor = _txtMensaje.BackColor;
+            _txtMensaje.SelectionFont     = Font;
+
+            // 1) Bloques de código triple backtick (ej. ```py\nprint()\n```)
+            var fuenteMono = new Font("Cascadia Mono", 9F, FontStyle.Regular);
+            foreach (Match m in RegexCodeBlock.Matches(_txtMensaje.Text))
+            {
+                _txtMensaje.Select(m.Index, m.Length);
+                _txtMensaje.SelectionColor     = Emerald4;
+                _txtMensaje.SelectionBackColor = BgCode;
+                _txtMensaje.SelectionFont      = fuenteMono;
+            }
+
+            // 2) Inline code `palabra`
+            foreach (Match m in RegexInlineCode.Matches(_txtMensaje.Text))
+            {
+                // No re-aplicar dentro de un code block ya pintado (su back ya es BgCode)
+                _txtMensaje.Select(m.Index, 1);
+                if (_txtMensaje.SelectionBackColor.ToArgb() == BgCode.ToArgb()) continue;
+
+                _txtMensaje.Select(m.Index, m.Length);
+                _txtMensaje.SelectionColor     = Emerald4;
+                _txtMensaje.SelectionBackColor = BgCode;
+                _txtMensaje.SelectionFont      = fuenteMono;
+            }
+
+            // 3) Rutas y URLs (no pisar si ya es código)
             foreach (Match m in RegexRuta.Matches(_txtMensaje.Text))
             {
+                _txtMensaje.Select(m.Index, 1);
+                if (_txtMensaje.SelectionBackColor.ToArgb() == BgCode.ToArgb()) continue;
+
                 _txtMensaje.Select(m.Index, m.Length);
                 _txtMensaje.SelectionColor = Emerald4;
                 _txtMensaje.SelectionFont  = new Font(_txtMensaje.Font, FontStyle.Underline);
             }
-            _txtMensaje.SelectionStart  = 0;
+
+            _txtMensaje.SelectionStart  = oldStart;
             _txtMensaje.SelectionLength = 0;
         }
 
@@ -507,12 +569,29 @@ namespace OPENGIOAI.Themas
             Invalidate();
         }
 
+        /// <summary>
+        /// Aplica un factor de zoom (ej. 1.0, 1.25, 0.85) a la burbuja:
+        /// recalcula la fuente del control y del RichTextBox y dispara el layout.
+        /// </summary>
+        public void AplicarZoom(float factor)
+        {
+            float size = FontSizeBase * factor;
+            var nuevaFont = new Font("Segoe UI Emoji", size, FontStyle.Regular, GraphicsUnit.Point);
+            Font = nuevaFont;
+            if (_txtMensaje != null) _txtMensaje.Font = nuevaFont;
+            // El timestamp y el botón "ver más" mantienen tamaño fijo (no zoom).
+            CalcularTamaño();
+            AplicarFormatoEnlaces();  // re-pinta links/code con la nueva fuente
+            Invalidate();
+        }
+
         public void ActualizarTexto(string nuevoTexto)
         {
             if (IsDisposed) return;
             if (InvokeRequired) { BeginInvoke(() => ActualizarTexto(nuevoTexto)); return; }
 
             if (nuevoTexto == _textoCompleto) return;
+            string textoPrevio = _textoCompleto ?? string.Empty;
             _textoCompleto = nuevoTexto ?? string.Empty;
             Text           = _textoCompleto;
 
@@ -545,11 +624,113 @@ namespace OPENGIOAI.Themas
                 _expandido = true;
             }
 
+            // ── Streaming: si el nuevo texto es una extensión del anterior ──
+            //    sólo agregamos el delta con AppendText (no reemplaza todo
+            //    el contenido, conserva la posición del cursor y NO llama
+            //    a SelectAll que es lo que hacía parpadear el caret).
+            bool esStreaming = !_puedeColapsar
+                            && !string.IsNullOrEmpty(textoPrevio)
+                            && _textoCompleto.StartsWith(textoPrevio, StringComparison.Ordinal)
+                            && _textoCompleto.Length > textoPrevio.Length;
+
+            if (esStreaming)
+            {
+                string delta = _textoCompleto.Substring(textoPrevio.Length);
+
+                // Suspender redraw del RichTextBox para que el AppendText no
+                // dispare repaint visible (cierre y reapertura del caret +
+                // scroll interno). Es la causa real del parpadeo.
+                SuspendDrawing(_txtMensaje);
+                try
+                {
+                    _txtMensaje.AppendText(delta);
+                    // No movemos SelectionStart aquí — AppendText ya lo deja
+                    // al final; tocarlo dispara más repaint sin valor.
+                }
+                finally
+                {
+                    ResumeDrawing(_txtMensaje);
+                }
+
+                // El gradiente del control padre solo se redibuja cada 80 ms
+                // (debounce) — corta el parpadeo de fondo / sombra / borde.
+                ProgramarFormatoDebounce();
+                ProgramarLayoutDebounce();
+                ActualizarAnimacionTyping();
+                return;
+            }
+
             _txtMensaje.Text = TextoVisible();
             AplicarFormatoEnlaces();
             CalcularTamaño();
             ActualizarAnimacionTyping();
             Invalidate();
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        //  WIN32: suspender/reanudar redraw de un control
+        //  Es la única forma de evitar que un RichTextBox parpadee al
+        //  recibir AppendText() en streaming — sin esto, cada llamada
+        //  dispara repaint del scroll interno + caret.
+        // ─────────────────────────────────────────────────────────────
+        private const int WM_SETREDRAW = 0x000B;
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int SendMessage(IntPtr hWnd, int wMsg, int wParam, int lParam);
+
+        private static void SuspendDrawing(Control c)
+        {
+            if (c == null || !c.IsHandleCreated) return;
+            SendMessage(c.Handle, WM_SETREDRAW, 0, 0);
+        }
+
+        private static void ResumeDrawing(Control c)
+        {
+            if (c == null || !c.IsHandleCreated) return;
+            SendMessage(c.Handle, WM_SETREDRAW, 1, 0);
+            c.Invalidate();
+        }
+
+        /// <summary>
+        /// Debounce 80 ms: una sola llamada a CalcularTamaño + Invalidate
+        /// agrupando ráfagas de tokens. Evita el parpadeo del gradiente.
+        /// </summary>
+        private System.Windows.Forms.Timer _timerLayoutDebounce;
+        private void ProgramarLayoutDebounce()
+        {
+            if (_timerLayoutDebounce == null)
+            {
+                _timerLayoutDebounce = new System.Windows.Forms.Timer { Interval = 80 };
+                _timerLayoutDebounce.Tick += (_, __) =>
+                {
+                    _timerLayoutDebounce.Stop();
+                    if (IsDisposed) return;
+                    CalcularTamaño();
+                    Invalidate();
+                };
+            }
+            _timerLayoutDebounce.Stop();
+            _timerLayoutDebounce.Start();
+        }
+
+        /// <summary>
+        /// Durante streaming, agrupar el reformateo de enlaces/código en
+        /// un único pase 250 ms después del último token. Evita N llamadas
+        /// a SelectAll por cada token (causa principal del parpadeo).
+        /// </summary>
+        private void ProgramarFormatoDebounce()
+        {
+            if (_timerFormatoDebounce == null)
+            {
+                _timerFormatoDebounce = new System.Windows.Forms.Timer { Interval = 250 };
+                _timerFormatoDebounce.Tick += (_, __) =>
+                {
+                    _timerFormatoDebounce.Stop();
+                    if (IsDisposed) return;
+                    AplicarFormatoEnlaces();
+                };
+            }
+            _timerFormatoDebounce.Stop();
+            _timerFormatoDebounce.Start();
         }
 
         protected override void OnCreateControl()
@@ -794,6 +975,10 @@ namespace OPENGIOAI.Themas
                 _btnCopiar?.Dispose();
                 _timerTyping?.Stop();
                 _timerTyping?.Dispose();
+                _timerFormatoDebounce?.Stop();
+                _timerFormatoDebounce?.Dispose();
+                _timerLayoutDebounce?.Stop();
+                _timerLayoutDebounce?.Dispose();
                 foreach (var p in _previews) p.Dispose();
             }
             base.Dispose(disposing);

@@ -1,4 +1,4 @@
-﻿using OPENGIOAI.Entidades;
+using OPENGIOAI.Entidades;
 using OPENGIOAI.Utilerias;
 using System;
 using System.Collections.Generic;
@@ -11,6 +11,13 @@ namespace OPENGIOAI.ServiciosSlack
 {
     public class SlackPollingService
     {
+        // Opciones de JSON con emojis literales (no \uXXXX), garantiza que los
+        // emojis salgan en el body sin ser escapados � Slack los renderiza bien.
+        private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
+        {
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
         private readonly string _botToken;
         private readonly string _channelId;
         private readonly HttpClient _http;
@@ -102,7 +109,7 @@ namespace OPENGIOAI.ServiciosSlack
                 }
                 catch
                 {
-                    // Puedes loggear aquí si quieres
+                    // Puedes loggear aqu� si quieres
                 }
 
                 await Task.Delay(2000, token);
@@ -119,7 +126,7 @@ namespace OPENGIOAI.ServiciosSlack
                 blocks = Utils.CrearBlocksDesdeTexto(text)
             };
 
-            var json = JsonSerializer.Serialize(payload);
+            var json = JsonSerializer.Serialize(payload, JsonOpts);
 
             var content = new StringContent(
                 json,
@@ -134,8 +141,8 @@ namespace OPENGIOAI.ServiciosSlack
         }
 
         /// <summary>
-        /// Envía texto plano con soporte mrkdwn (sin Blocks Kit).
-        /// Usar para código / triple backtick que Block Kit no renderiza bien.
+        /// Env�a texto plano con soporte mrkdwn (sin Blocks Kit).
+        /// Usar para c�digo / triple backtick que Block Kit no renderiza bien.
         /// </summary>
         public async Task EnviarCodigoAsync(string text)
         {
@@ -148,17 +155,17 @@ namespace OPENGIOAI.ServiciosSlack
                     mrkdwn  = true
                 };
                 var content = new StringContent(
-                    JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                    JsonSerializer.Serialize(payload, JsonOpts), Encoding.UTF8, "application/json");
                 await _http.PostAsync("https://slack.com/api/chat.postMessage", content);
             }
             catch { /* ignorar errores secundarios */ }
         }
 
         /// <summary>
-        /// Envía un mensaje temporal de "pensando..." en el canal y devuelve su timestamp (ts).
+        /// Env�a un mensaje temporal de "pensando..." en el canal y devuelve su timestamp (ts).
         /// Usa el ts devuelto para eliminar el mensaje con <see cref="EliminarMensajeAsync"/> cuando
         /// el procesamiento termine.
-        /// Devuelve null si el envío falla.
+        /// Devuelve null si el env�o falla.
         /// </summary>
         public async Task<string?> EnviarPensandoAsync()
         {
@@ -171,7 +178,7 @@ namespace OPENGIOAI.ServiciosSlack
                 };
 
                 var content = new StringContent(
-                    JsonSerializer.Serialize(payload),
+                    JsonSerializer.Serialize(payload, JsonOpts),
                     Encoding.UTF8, "application/json");
 
                 var resp = await _http.PostAsync(
@@ -184,7 +191,7 @@ namespace OPENGIOAI.ServiciosSlack
                     doc.RootElement.TryGetProperty("ts", out var ts))
                     return ts.GetString();
             }
-            catch { /* ignorar — indicador secundario */ }
+            catch { /* ignorar � indicador secundario */ }
             return null;
         }
 
@@ -233,7 +240,7 @@ namespace OPENGIOAI.ServiciosSlack
                 };
 
                 var content = new StringContent(
-                    JsonSerializer.Serialize(payload),
+                    JsonSerializer.Serialize(payload, JsonOpts),
                     Encoding.UTF8, "application/json");
 
                 await _http.PostAsync(

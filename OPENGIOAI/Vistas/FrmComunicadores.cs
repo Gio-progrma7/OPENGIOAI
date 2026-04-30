@@ -79,6 +79,17 @@ namespace OPENGIOAI.Vistas
             this.Resize                     += (s, e) => RefrescarTabActual();
 
             AplicarTema();
+
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
+        }
+
+        private void OnTemaChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnTemaChanged); return; }
+            AplicarTema();
+            Invalidate(true);
         }
 
         // ─────────────────────────────────────────────────────────────────────────
@@ -771,17 +782,31 @@ namespace OPENGIOAI.Vistas
         // ── Tema ─────────────────────────────────────────────────────────────────
         private void AplicarTema()
         {
-            Color borde = Color.FromArgb(51, 65, 85);
+            BackColor = EmeraldTheme.BgDeep;
+            ForeColor = EmeraldTheme.TextPrimary;
+
+            Color borde = EmeraldTheme.IsDark
+                ? ColorTranslator.FromHtml("#1a3a5c")
+                : ColorTranslator.FromHtml("#C5D8F0");
+
+            // Fondos base
+            if (pnlListaSlack != null) pnlListaSlack.BackColor = EmeraldTheme.BgDeep;
+            if (pnlListaTelegram != null) pnlListaTelegram.BackColor = EmeraldTheme.BgDeep;
+            if (tabControl != null) { tabControl.BackColor = EmeraldTheme.BgDeep; tabControl.ForeColor = EmeraldTheme.TextPrimary; }
+            if (tabSlack != null) { tabSlack.BackColor = EmeraldTheme.BgDeep; tabSlack.ForeColor = EmeraldTheme.TextPrimary; }
+            if (tabTelegram != null) { tabTelegram.BackColor = EmeraldTheme.BgDeep; tabTelegram.ForeColor = EmeraldTheme.TextPrimary; }
+            if (tabAudio != null) { tabAudio.BackColor = EmeraldTheme.BgDeep; tabAudio.ForeColor = EmeraldTheme.TextPrimary; }
+
             txtSlackToken.RedondearTextBox(10, borde);
             txtSlackCanal.RedondearTextBox(10, borde);
             txtSlackUsuarios.RedondearTextBox(10, borde);
-            btnGuardarSlack.AplicarEstiloOutline(Color.RoyalBlue, 9);
+            btnGuardarSlack.AplicarEstiloOutline(EmeraldTheme.Emerald500, 9);
             btnCancelarSlack.AplicarEstiloOutline(Color.DarkRed, 9);
             pnlFormSlack.RedondearPanel(10, borde);
 
             txtTelegramChatId.RedondearTextBox(10, borde);
             txtTelegramApikey.RedondearTextBox(10, borde);
-            btnGuardarTelegram.AplicarEstiloOutline(Color.RoyalBlue, 9);
+            btnGuardarTelegram.AplicarEstiloOutline(EmeraldTheme.Emerald500, 9);
             btnCancelarTelegram.AplicarEstiloOutline(Color.DarkRed, 9);
             pnlFormTelegram.RedondearPanel(10, borde);
 

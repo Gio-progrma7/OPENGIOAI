@@ -42,12 +42,12 @@ namespace OPENGIOAI.Vistas
             btnGuardarAntigravity = new Button();
             btnAutenticarAntigravity = new Button();
             lblGcloudStatus = new Label();
+            labelAntigravityApiKey = new Label();
             comboBoxApiAntigravity = new ModernComboBox();
+            labelAntigravityModelo = new Label();
             checkBoxAntigravity = new CheckBox();
             comboBoxMAntigravity = new ModernComboBox();
             labelAntigravityTitle = new Label();
-            labelAntigravityApiKey = new Label();
-            labelAntigravityModelo = new Label();
             pnlGem = new Panel();
             btnGuardaGem = new Button();
             label12 = new Label();
@@ -91,12 +91,12 @@ namespace OPENGIOAI.Vistas
             label17 = new Label();
             label20 = new Label();
             pnllChat.SuspendLayout();
+            pnlAntigravity.SuspendLayout();
             pnlGem.SuspendLayout();
             pnlOllla.SuspendLayout();
             pnlClau.SuspendLayout();
             pnlDeesp.SuspendLayout();
             pnlOpenroute.SuspendLayout();
-            pnlAntigravity.SuspendLayout();
             SuspendLayout();
             // 
             // pnllChat
@@ -204,6 +204,138 @@ namespace OPENGIOAI.Vistas
             label1.Size = new Size(47, 15);
             label1.TabIndex = 0;
             label1.Text = "OpenAI";
+            // 
+            // pnlAntigravity
+            // 
+            pnlAntigravity.BackColor = Color.FromArgb(30, 41, 59);
+            pnlAntigravity.Controls.Add(btnGuardarAntigravity);
+            pnlAntigravity.Controls.Add(btnAutenticarAntigravity);
+            pnlAntigravity.Controls.Add(lblGcloudStatus);
+            pnlAntigravity.Controls.Add(labelAntigravityApiKey);
+            pnlAntigravity.Controls.Add(comboBoxApiAntigravity);
+            pnlAntigravity.Controls.Add(labelAntigravityModelo);
+            pnlAntigravity.Controls.Add(checkBoxAntigravity);
+            pnlAntigravity.Controls.Add(comboBoxMAntigravity);
+            pnlAntigravity.Controls.Add(labelAntigravityTitle);
+            pnlAntigravity.Location = new Point(33, 576);
+            pnlAntigravity.Name = "pnlAntigravity";
+            pnlAntigravity.Size = new Size(221, 252);
+            pnlAntigravity.TabIndex = 8;
+            // 
+            // btnGuardarAntigravity
+            // 
+            btnGuardarAntigravity.FlatAppearance.BorderColor = Color.Blue;
+            btnGuardarAntigravity.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 0, 64);
+            btnGuardarAntigravity.FlatStyle = FlatStyle.Flat;
+            btnGuardarAntigravity.ForeColor = Color.White;
+            btnGuardarAntigravity.Location = new Point(118, 216);
+            btnGuardarAntigravity.Name = "btnGuardarAntigravity";
+            btnGuardarAntigravity.Size = new Size(75, 23);
+            btnGuardarAntigravity.TabIndex = 7;
+            btnGuardarAntigravity.Text = "Guardar";
+            btnGuardarAntigravity.UseVisualStyleBackColor = true;
+            btnGuardarAntigravity.Click += btnGuardarAntigravity_Click;
+            // 
+            // btnAutenticarAntigravity
+            // 
+            btnAutenticarAntigravity.FlatAppearance.BorderColor = Color.FromArgb(16, 185, 129);
+            btnAutenticarAntigravity.FlatAppearance.MouseOverBackColor = Color.FromArgb(5, 60, 44);
+            btnAutenticarAntigravity.FlatStyle = FlatStyle.Flat;
+            btnAutenticarAntigravity.ForeColor = Color.FromArgb(16, 185, 129);
+            btnAutenticarAntigravity.Location = new Point(19, 190);
+            btnAutenticarAntigravity.Name = "btnAutenticarAntigravity";
+            btnAutenticarAntigravity.Size = new Size(171, 23);
+            btnAutenticarAntigravity.TabIndex = 6;
+            btnAutenticarAntigravity.Text = "🔑  Autenticar gcloud";
+            btnAutenticarAntigravity.UseVisualStyleBackColor = false;
+            btnAutenticarAntigravity.Click += btnAutenticarAntigravity_Click;
+            // 
+            // lblGcloudStatus
+            // 
+            lblGcloudStatus.AutoSize = true;
+            lblGcloudStatus.BackColor = Color.Transparent;
+            lblGcloudStatus.ForeColor = Color.FromArgb(100, 116, 139);
+            lblGcloudStatus.Location = new Point(19, 170);
+            lblGcloudStatus.Name = "lblGcloudStatus";
+            lblGcloudStatus.Size = new Size(94, 15);
+            lblGcloudStatus.TabIndex = 5;
+            lblGcloudStatus.Text = "⬤  No verificado";
+            // 
+            // labelAntigravityApiKey
+            // 
+            labelAntigravityApiKey.AutoSize = true;
+            labelAntigravityApiKey.BackColor = Color.Transparent;
+            labelAntigravityApiKey.ForeColor = Color.White;
+            labelAntigravityApiKey.Location = new Point(19, 120);
+            labelAntigravityApiKey.Name = "labelAntigravityApiKey";
+            labelAntigravityApiKey.Size = new Size(102, 15);
+            labelAntigravityApiKey.TabIndex = 4;
+            labelAntigravityApiKey.Text = "PROJECT ID (GCP)";
+            // 
+            // comboBoxApiAntigravity
+            // 
+            comboBoxApiAntigravity.BackColor = Color.Black;
+            comboBoxApiAntigravity.DrawMode = DrawMode.OwnerDrawFixed;
+            comboBoxApiAntigravity.DropDownStyle = ComboBoxStyle.DropDownList;
+            comboBoxApiAntigravity.FlatStyle = FlatStyle.Flat;
+            comboBoxApiAntigravity.ForeColor = Color.White;
+            comboBoxApiAntigravity.FormattingEnabled = true;
+            comboBoxApiAntigravity.ItemHeight = 20;
+            comboBoxApiAntigravity.Location = new Point(19, 138);
+            comboBoxApiAntigravity.Name = "comboBoxApiAntigravity";
+            comboBoxApiAntigravity.Size = new Size(171, 26);
+            comboBoxApiAntigravity.TabIndex = 3;
+            comboBoxApiAntigravity.SelectedIndexChanged += comboBoxApiAntigravity_SelectedIndexChanged;
+            // 
+            // labelAntigravityModelo
+            // 
+            labelAntigravityModelo.AutoSize = true;
+            labelAntigravityModelo.BackColor = Color.Transparent;
+            labelAntigravityModelo.ForeColor = Color.White;
+            labelAntigravityModelo.Location = new Point(19, 63);
+            labelAntigravityModelo.Name = "labelAntigravityModelo";
+            labelAntigravityModelo.Size = new Size(160, 15);
+            labelAntigravityModelo.TabIndex = 2;
+            labelAntigravityModelo.Text = "MODELO PREDETERMINADO";
+            // 
+            // checkBoxAntigravity
+            // 
+            checkBoxAntigravity.AutoSize = true;
+            checkBoxAntigravity.BackColor = Color.Transparent;
+            checkBoxAntigravity.Font = new Font("Segoe UI", 11.25F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            checkBoxAntigravity.ForeColor = Color.Gray;
+            checkBoxAntigravity.Location = new Point(143, 3);
+            checkBoxAntigravity.Name = "checkBoxAntigravity";
+            checkBoxAntigravity.Size = new Size(75, 24);
+            checkBoxAntigravity.TabIndex = 1;
+            checkBoxAntigravity.Text = "Utilizar";
+            checkBoxAntigravity.UseVisualStyleBackColor = false;
+            checkBoxAntigravity.Visible = false;
+            // 
+            // comboBoxMAntigravity
+            // 
+            comboBoxMAntigravity.BackColor = Color.Black;
+            comboBoxMAntigravity.DrawMode = DrawMode.OwnerDrawFixed;
+            comboBoxMAntigravity.DropDownStyle = ComboBoxStyle.DropDownList;
+            comboBoxMAntigravity.FlatStyle = FlatStyle.Flat;
+            comboBoxMAntigravity.ForeColor = Color.White;
+            comboBoxMAntigravity.FormattingEnabled = true;
+            comboBoxMAntigravity.ItemHeight = 20;
+            comboBoxMAntigravity.Location = new Point(19, 81);
+            comboBoxMAntigravity.Name = "comboBoxMAntigravity";
+            comboBoxMAntigravity.Size = new Size(171, 26);
+            comboBoxMAntigravity.TabIndex = 0;
+            // 
+            // labelAntigravityTitle
+            // 
+            labelAntigravityTitle.AutoSize = true;
+            labelAntigravityTitle.BackColor = Color.Transparent;
+            labelAntigravityTitle.ForeColor = Color.White;
+            labelAntigravityTitle.Location = new Point(17, 13);
+            labelAntigravityTitle.Name = "labelAntigravityTitle";
+            labelAntigravityTitle.Size = new Size(122, 15);
+            labelAntigravityTitle.TabIndex = 0;
+            labelAntigravityTitle.Text = "Antigravity (Vertex AI)";
             // 
             // pnlGem
             // 
@@ -736,137 +868,8 @@ namespace OPENGIOAI.Vistas
             label18.TabIndex = 0;
             label18.Text = "OpenRouter";
             // 
-            //
-            // pnlAntigravity
-            //
-            pnlAntigravity.BackColor = Color.FromArgb(30, 41, 59);
-            pnlAntigravity.Controls.Add(btnGuardarAntigravity);
-            pnlAntigravity.Controls.Add(btnAutenticarAntigravity);
-            pnlAntigravity.Controls.Add(lblGcloudStatus);
-            pnlAntigravity.Controls.Add(labelAntigravityApiKey);
-            pnlAntigravity.Controls.Add(comboBoxApiAntigravity);
-            pnlAntigravity.Controls.Add(labelAntigravityModelo);
-            pnlAntigravity.Controls.Add(checkBoxAntigravity);
-            pnlAntigravity.Controls.Add(comboBoxMAntigravity);
-            pnlAntigravity.Controls.Add(labelAntigravityTitle);
-            pnlAntigravity.Location = new Point(33, 576);
-            pnlAntigravity.Name = "pnlAntigravity";
-            pnlAntigravity.Size = new Size(221, 252);
-            pnlAntigravity.TabIndex = 8;
-            //
-            // btnGuardarAntigravity
-            //
-            btnGuardarAntigravity.FlatAppearance.BorderColor = Color.Blue;
-            btnGuardarAntigravity.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 0, 64);
-            btnGuardarAntigravity.FlatStyle = FlatStyle.Flat;
-            btnGuardarAntigravity.ForeColor = Color.White;
-            btnGuardarAntigravity.Location = new Point(118, 216);
-            btnGuardarAntigravity.Name = "btnGuardarAntigravity";
-            btnGuardarAntigravity.Size = new Size(75, 23);
-            btnGuardarAntigravity.TabIndex = 7;
-            btnGuardarAntigravity.Text = "Guardar";
-            btnGuardarAntigravity.UseVisualStyleBackColor = true;
-            btnGuardarAntigravity.Click += btnGuardarAntigravity_Click;
-            //
-            // btnAutenticarAntigravity
-            //
-            btnAutenticarAntigravity.FlatAppearance.BorderColor = Color.FromArgb(16, 185, 129);
-            btnAutenticarAntigravity.FlatAppearance.MouseOverBackColor = Color.FromArgb(5, 60, 44);
-            btnAutenticarAntigravity.FlatStyle = FlatStyle.Flat;
-            btnAutenticarAntigravity.ForeColor = Color.FromArgb(16, 185, 129);
-            btnAutenticarAntigravity.Location = new Point(19, 190);
-            btnAutenticarAntigravity.Name = "btnAutenticarAntigravity";
-            btnAutenticarAntigravity.Size = new Size(171, 23);
-            btnAutenticarAntigravity.TabIndex = 6;
-            btnAutenticarAntigravity.Text = "🔑  Autenticar gcloud";
-            btnAutenticarAntigravity.UseVisualStyleBackColor = false;
-            btnAutenticarAntigravity.Click += btnAutenticarAntigravity_Click;
-            //
-            // lblGcloudStatus
-            //
-            lblGcloudStatus.AutoSize = true;
-            lblGcloudStatus.BackColor = Color.Transparent;
-            lblGcloudStatus.ForeColor = Color.FromArgb(100, 116, 139);
-            lblGcloudStatus.Location = new Point(19, 170);
-            lblGcloudStatus.Name = "lblGcloudStatus";
-            lblGcloudStatus.TabIndex = 5;
-            lblGcloudStatus.Text = "⬤  No verificado";
-            //
-            // labelAntigravityApiKey
-            //
-            labelAntigravityApiKey.AutoSize = true;
-            labelAntigravityApiKey.BackColor = Color.Transparent;
-            labelAntigravityApiKey.ForeColor = Color.White;
-            labelAntigravityApiKey.Location = new Point(19, 120);
-            labelAntigravityApiKey.Name = "labelAntigravityApiKey";
-            labelAntigravityApiKey.TabIndex = 4;
-            labelAntigravityApiKey.Text = "PROJECT ID (GCP)";
-            //
-            // comboBoxApiAntigravity
-            //
-            comboBoxApiAntigravity.BackColor = Color.Black;
-            comboBoxApiAntigravity.DrawMode = DrawMode.OwnerDrawFixed;
-            comboBoxApiAntigravity.DropDownStyle = ComboBoxStyle.DropDownList;
-            comboBoxApiAntigravity.FlatStyle = FlatStyle.Flat;
-            comboBoxApiAntigravity.ForeColor = Color.White;
-            comboBoxApiAntigravity.FormattingEnabled = true;
-            comboBoxApiAntigravity.ItemHeight = 20;
-            comboBoxApiAntigravity.Location = new Point(19, 138);
-            comboBoxApiAntigravity.Name = "comboBoxApiAntigravity";
-            comboBoxApiAntigravity.Size = new Size(171, 26);
-            comboBoxApiAntigravity.TabIndex = 3;
-            comboBoxApiAntigravity.SelectedIndexChanged += comboBoxApiAntigravity_SelectedIndexChanged;
-            //
-            // labelAntigravityModelo
-            //
-            labelAntigravityModelo.AutoSize = true;
-            labelAntigravityModelo.BackColor = Color.Transparent;
-            labelAntigravityModelo.ForeColor = Color.White;
-            labelAntigravityModelo.Location = new Point(19, 63);
-            labelAntigravityModelo.Name = "labelAntigravityModelo";
-            labelAntigravityModelo.TabIndex = 2;
-            labelAntigravityModelo.Text = "MODELO PREDETERMINADO";
-            //
-            // checkBoxAntigravity
-            //
-            checkBoxAntigravity.AutoSize = true;
-            checkBoxAntigravity.BackColor = Color.Transparent;
-            checkBoxAntigravity.Font = new Font("Segoe UI", 11.25F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            checkBoxAntigravity.ForeColor = Color.Gray;
-            checkBoxAntigravity.Location = new Point(143, 3);
-            checkBoxAntigravity.Name = "checkBoxAntigravity";
-            checkBoxAntigravity.Size = new Size(75, 24);
-            checkBoxAntigravity.TabIndex = 1;
-            checkBoxAntigravity.Text = "Utilizar";
-            checkBoxAntigravity.UseVisualStyleBackColor = false;
-            checkBoxAntigravity.Visible = false;
-            //
-            // comboBoxMAntigravity
-            //
-            comboBoxMAntigravity.BackColor = Color.Black;
-            comboBoxMAntigravity.DrawMode = DrawMode.OwnerDrawFixed;
-            comboBoxMAntigravity.DropDownStyle = ComboBoxStyle.DropDownList;
-            comboBoxMAntigravity.FlatStyle = FlatStyle.Flat;
-            comboBoxMAntigravity.ForeColor = Color.White;
-            comboBoxMAntigravity.FormattingEnabled = true;
-            comboBoxMAntigravity.ItemHeight = 20;
-            comboBoxMAntigravity.Location = new Point(19, 81);
-            comboBoxMAntigravity.Name = "comboBoxMAntigravity";
-            comboBoxMAntigravity.Size = new Size(171, 26);
-            comboBoxMAntigravity.TabIndex = 0;
-            //
-            // labelAntigravityTitle
-            //
-            labelAntigravityTitle.AutoSize = true;
-            labelAntigravityTitle.BackColor = Color.Transparent;
-            labelAntigravityTitle.ForeColor = Color.White;
-            labelAntigravityTitle.Location = new Point(17, 13);
-            labelAntigravityTitle.Name = "labelAntigravityTitle";
-            labelAntigravityTitle.TabIndex = 0;
-            labelAntigravityTitle.Text = "Antigravity (Vertex AI)";
-            //
             // label17
-            //
+            // 
             label17.AutoSize = true;
             label17.Font = new Font("Segoe UI", 14.25F, FontStyle.Regular, GraphicsUnit.Point, 0);
             label17.ForeColor = Color.White;
@@ -892,7 +895,7 @@ namespace OPENGIOAI.Vistas
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             AutoScroll = true;
-            BackColor = Color.FromArgb(15, 23, 42);
+            BackColor = Color.Black;
             ClientSize = new Size(910, 850);
             Controls.Add(label20);
             Controls.Add(label17);
@@ -908,6 +911,8 @@ namespace OPENGIOAI.Vistas
             Load += FrmModelos_Load;
             pnllChat.ResumeLayout(false);
             pnllChat.PerformLayout();
+            pnlAntigravity.ResumeLayout(false);
+            pnlAntigravity.PerformLayout();
             pnlGem.ResumeLayout(false);
             pnlGem.PerformLayout();
             pnlOllla.ResumeLayout(false);
@@ -918,8 +923,6 @@ namespace OPENGIOAI.Vistas
             pnlDeesp.PerformLayout();
             pnlOpenroute.ResumeLayout(false);
             pnlOpenroute.PerformLayout();
-            pnlAntigravity.ResumeLayout(false);
-            pnlAntigravity.PerformLayout();
             ResumeLayout(false);
             PerformLayout();
         }

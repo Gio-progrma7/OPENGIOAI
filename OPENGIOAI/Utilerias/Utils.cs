@@ -250,6 +250,19 @@ namespace OPENGIOAI.Utilerias
                 if (corte <= 0)
                     corte = limite;
 
+                // ── Fix de surrogate pairs ──────────────────────────────
+                //  Los emojis fuera del BMP (🔍 ⚙️ 🛡️ ✨ y todos los de
+                //  4 bytes UTF-8) son DOS chars en .NET (high+low surrogate).
+                //  Si `corte` cae justo entre ambos, partimos el emoji a la
+                //  mitad y Telegram renderiza un "?" o "??". Movemos el
+                //  corte una posición hacia atrás para no romper el par.
+                if (corte > 0
+                    && corte < mensaje.Length
+                    && char.IsHighSurrogate(mensaje[corte - 1]))
+                {
+                    corte -= 1;
+                }
+
                 partes.Add(mensaje.Substring(0, corte).Trim());
                 mensaje = mensaje.Substring(corte).Trim();
             }

@@ -23,7 +23,7 @@
 //  ```
 //
 //  ## Parámetros (opcional)
-//  - nombre: ruta | tipo: string | requerido: true
+//  - nombre: ruta | tipo: string | requerido: true | descripcion: ... | default: /tmp | opciones: a,b,c
 //  ─────────────────────────────────────────
 // ============================================================
 
@@ -165,6 +165,92 @@ namespace OPENGIOAI.Skills
             return (meta, cuerpo);
         }
 
+        // ── Serialización de parámetros (grid → markdown) ────────────────────
+
+        /// <summary>
+        /// Reescribe (o inserta) la sección <c>## Parámetros</c> del markdown
+        /// con la lista <paramref name="parametros"/>. Si la sección ya existe,
+        /// la reemplaza preservando el resto del documento; si no, la añade
+        /// al final. Si la lista está vacía, elimina la sección si existía.
+        /// </summary>
+        public static string ActualizarSeccionParametros(
+            string contenidoMd, List<SkillParametro> parametros)
+        {
+            string nuevaSeccion = SerializarParametros(parametros);
+
+            if (string.IsNullOrEmpty(contenidoMd)) contenidoMd = "";
+
+            // Buscar la sección ## Parámetros existente
+            var match = Regex.Match(contenidoMd,
+                @"(?m)^##\s*(?:Parámetros|Parametros|Parameters)\s*\r?\n",
+                RegexOptions.IgnoreCase);
+
+            if (!match.Success)
+            {
+                if (string.IsNullOrEmpty(nuevaSeccion)) return contenidoMd;
+                // Insertar al final
+                string sep = contenidoMd.EndsWith("\n") ? "\n" : "\n\n";
+                return contenidoMd + sep + nuevaSeccion;
+            }
+
+            // Encontrar dónde acaba la sección (siguiente '##' o EOF)
+            int inicio = match.Index;
+            int finBusqueda = match.Index + match.Length;
+            var matchSiguiente = Regex.Match(contenidoMd[finBusqueda..],
+                @"(?m)^##\s+\S", RegexOptions.IgnoreCase);
+
+            int fin = matchSiguiente.Success
+                ? finBusqueda + matchSiguiente.Index
+                : contenidoMd.Length;
+
+            string antes   = contenidoMd[..inicio];
+            string despues = contenidoMd[fin..];
+
+            if (string.IsNullOrEmpty(nuevaSeccion))
+            {
+                // Eliminar la sección
+                return (antes.TrimEnd('\n', '\r') + "\n\n" + despues.TrimStart('\n', '\r'))
+                    .TrimEnd() + "\n";
+            }
+
+            return antes.TrimEnd('\n', '\r') + "\n\n" +
+                   nuevaSeccion +
+                   (string.IsNullOrEmpty(despues) ? "" : "\n\n" + despues.TrimStart('\n', '\r'));
+        }
+
+        /// <summary>
+        /// Serializa la lista de parámetros al formato textual que parsea
+        /// <see cref="ParsearParametros"/>. Devuelve string vacío si no hay
+        /// parámetros (caller decide si elimina la sección o no).
+        /// </summary>
+        public static string SerializarParametros(List<SkillParametro> parametros)
+        {
+            if (parametros == null || parametros.Count == 0) return "";
+
+            var sb = new StringBuilder();
+            sb.AppendLine("## Parámetros");
+            foreach (var p in parametros)
+            {
+                if (string.IsNullOrWhiteSpace(p.Nombre)) continue;
+
+                var partes = new List<string>
+                {
+                    $"nombre: {p.Nombre}",
+                    $"tipo: {p.Tipo}",
+                    $"requerido: {(p.Requerido ? "true" : "false")}",
+                };
+                if (!string.IsNullOrWhiteSpace(p.Descripcion))
+                    partes.Add($"descripcion: {p.Descripcion}");
+                if (!string.IsNullOrWhiteSpace(p.ValorPorDefecto))
+                    partes.Add($"default: {p.ValorPorDefecto}");
+                if (p.Opciones != null && p.Opciones.Count > 0)
+                    partes.Add($"opciones: {string.Join(", ", p.Opciones)}");
+
+                sb.AppendLine($"- {string.Join(" | ", partes)}");
+            }
+            return sb.ToString().TrimEnd();
+        }
+
         // ── Parseo de parámetros del cuerpo ──────────────────────────────────
 
         private static List<SkillParametro> ParsearParametros(string cuerpo)
@@ -200,13 +286,26 @@ namespace OPENGIOAI.Skills
 
                 if (!partes.ContainsKey("nombre")) continue;
 
+                var opciones = new List<string>();
+                string opcionesRaw = partes.GetValueOrDefault("opciones", "");
+                if (!string.IsNullOrWhiteSpace(opcionesRaw))
+                {
+                    opciones = opcionesRaw.Split(',')
+                        .Select(o => o.Trim())
+                        .Where(o => !string.IsNullOrWhiteSpace(o))
+                        .ToList();
+                }
+
                 result.Add(new SkillParametro
                 {
-                    Nombre      = partes.GetValueOrDefault("nombre", ""),
-                    Tipo        = partes.GetValueOrDefault("tipo", "string"),
-                    Descripcion = partes.GetValueOrDefault("descripcion", ""),
-                    Requerido   = partes.GetValueOrDefault("requerido", "true")
-                                    .Equals("true", StringComparison.OrdinalIgnoreCase),
+                    Nombre          = partes.GetValueOrDefault("nombre", ""),
+                    Tipo            = partes.GetValueOrDefault("tipo", "string"),
+                    Descripcion     = partes.GetValueOrDefault("descripcion", ""),
+                    Requerido       = partes.GetValueOrDefault("requerido", "true")
+                                        .Equals("true", StringComparison.OrdinalIgnoreCase),
+                    ValorPorDefecto = partes.GetValueOrDefault("default",
+                                        partes.GetValueOrDefault("valor_por_defecto", "")),
+                    Opciones        = opciones,
                 });
             }
 

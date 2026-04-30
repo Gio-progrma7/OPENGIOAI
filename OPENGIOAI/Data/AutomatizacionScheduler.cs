@@ -54,7 +54,19 @@ namespace OPENGIOAI.Data
         public void Detener()
         {
             _cts.Cancel();
-            try { _tarea?.Wait(3000); } catch { }
+            try
+            {
+                _tarea?.Wait(3000);
+            }
+            catch (AggregateException ae)
+                when (ae.InnerExceptions.All(e => e is OperationCanceledException))
+            {
+                // Cancelación esperada — no es un error.
+            }
+            catch (Exception ex)
+            {
+                OnLog?.Invoke("SCHEDULER", $"Error al detener: {ex.Message}");
+            }
         }
 
         // ── Bucle principal — se ejecuta cada 30 segundos ─────────────────
@@ -69,7 +81,7 @@ namespace OPENGIOAI.Data
 
                     var ahora = DateTime.Now;
 
-                    foreach (var auto in lista.Where(a => a.Activa && a.TipoProgramacion != "manual"))
+                    foreach (var auto in lista.Where(a => a.Activa && a.TipoScheduleEnum != TipoSchedule.Manual))
                     {
                         if (ct.IsCancellationRequested) break;
                         if (!DebeEjecutarse(auto, ahora)) continue;
@@ -103,10 +115,10 @@ namespace OPENGIOAI.Data
             if (auto.DiasActivos.Count > 0 && !auto.DiasActivos.Contains((int)ahora.DayOfWeek))
                 return false;
 
-            switch (auto.TipoProgramacion.ToLowerInvariant())
+            switch (auto.TipoScheduleEnum)
             {
-                case "diaria":
-                case "unica":
+                case TipoSchedule.Diaria:
+                case TipoSchedule.Unica:
                     // Ejecutar si la hora actual coincide con HoraEjecucion (±1 min)
                     if (TimeSpan.TryParse(auto.HoraEjecucion, out var he))
                     {
@@ -115,7 +127,7 @@ namespace OPENGIOAI.Data
                     }
                     return false;
 
-                case "intervalo":
+                case TipoSchedule.Intervalo:
                     if (auto.IntervaloMinutos <= 0) return false;
                     // Verificar si estamos dentro del rango horario (si se definió)
                     if (!string.IsNullOrEmpty(auto.HoraInicio) && !string.IsNullOrEmpty(auto.HoraFin))
@@ -134,13 +146,54 @@ namespace OPENGIOAI.Data
                     }
                     return true; // Primera vez
 
-                case "siempre":
+                case TipoSchedule.Siempre:
                     // Se ejecuta en cada ciclo del scheduler (cada 30s)
                     return true;
 
+                case TipoSchedule.Manual:
                 default:
                     return false;
             }
+        }
+
+        // ── Validación del grafo: ciclos y nodos huérfanos ────────────────
+        /// <summary>
+        /// Detecta ciclos en el grafo de nodos vía Kahn (topological sort).
+        /// Devuelve la lista de IDs de nodos involucrados en al menos un ciclo;
+        /// vacía si el grafo es un DAG válido.
+        /// </summary>
+        public static List<string> DetectarCiclos(Automatizacion auto)
+        {
+            if (auto.Nodos == null || auto.Nodos.Count == 0)
+                return new List<string>();
+
+            var inDegree = auto.Nodos.ToDictionary(n => n.Id, _ => 0);
+            var idsValidos = new HashSet<string>(inDegree.Keys);
+
+            foreach (var nodo in auto.Nodos)
+                foreach (var sucId in nodo.ConexionesSalida)
+                    if (idsValidos.Contains(sucId))
+                        inDegree[sucId]++;
+
+            var cola = new Queue<string>(inDegree.Where(kv => kv.Value == 0).Select(kv => kv.Key));
+            int procesados = 0;
+            var nodosPorId = auto.Nodos.ToDictionary(n => n.Id);
+
+            while (cola.Count > 0)
+            {
+                string id = cola.Dequeue();
+                procesados++;
+                foreach (var sucId in nodosPorId[id].ConexionesSalida)
+                {
+                    if (!inDegree.ContainsKey(sucId)) continue;
+                    if (--inDegree[sucId] == 0) cola.Enqueue(sucId);
+                }
+            }
+
+            // Los nodos con in-degree restante > 0 forman parte de un ciclo
+            return procesados == auto.Nodos.Count
+                ? new List<string>()
+                : inDegree.Where(kv => kv.Value > 0).Select(kv => kv.Key).ToList();
         }
 
         // ── Ejecutar todos los nodos respetando el grafo de dependencias ──────
@@ -148,7 +201,28 @@ namespace OPENGIOAI.Data
         {
             OnLog?.Invoke(auto.Id, $"⏰ Scheduler arrancando: {auto.Nombre}");
 
+            // Validar grafo (ciclos + entradas requeridas) antes de arrancar procesos
+            var erroresGrafo = auto.ValidarGrafo();
+            if (erroresGrafo.Count > 0)
+            {
+                auto.UltimoEstado = $"✖ Grafo inválido ({erroresGrafo.Count} error(es))";
+                foreach (var e in erroresGrafo)
+                    OnLog?.Invoke(auto.Id, $"  ✖ {e}");
+                PersistirEstado(auto);
+                return;
+            }
+
             string carpeta = ObtenerCarpeta(auto);
+
+            // Variables globales serializadas — disponibles a todos los nodos
+            string autoVariablesJson =
+                Newtonsoft.Json.JsonConvert.SerializeObject(auto.Variables ?? new());
+
+            // Token combinado: cancelación externa + timeout configurable
+            using var ctsTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            if (auto.TimeoutMinutos > 0)
+                ctsTimeout.CancelAfter(TimeSpan.FromMinutes(auto.TimeoutMinutos));
+            var ctEjec = ctsTimeout.Token;
 
             // Si existe el orquestador Python generado, usarlo directamente
             string rutaOrq = Path.Combine(carpeta, "_orquestador.py");
@@ -157,10 +231,16 @@ namespace OPENGIOAI.Data
                 OnLog?.Invoke(auto.Id, "▶ Usando orquestador Python (grafo completo)");
                 try
                 {
-                    string logOrq = await EjecutarScriptPython(rutaOrq, carpeta, null, ct);
+                    string logOrq = await EjecutarScriptPython(
+                        rutaOrq, carpeta, null, autoVariablesJson, ctEjec);
                     auto.UltimoEstado    = "✔ Completado";
                     auto.UltimaEjecucion = DateTime.Now;
                     OnLog?.Invoke(auto.Id, $"✔ Completado\n{Truncar(logOrq, 500)}");
+                }
+                catch (OperationCanceledException) when (ctsTimeout.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    auto.UltimoEstado = $"✖ Timeout ({auto.TimeoutMinutos} min) en orquestador";
+                    OnLog?.Invoke(auto.Id, auto.UltimoEstado);
                 }
                 catch (Exception ex)
                 {
@@ -192,7 +272,7 @@ namespace OPENGIOAI.Data
                     if (preds.Count > 0)
                         await Task.WhenAll(preds.Select(pid => tcs[pid].Task));
 
-                    ct.ThrowIfCancellationRequested();
+                    ctEjec.ThrowIfCancellationRequested();
 
                     string rutaScript = Path.Combine(carpeta, nodo.NombreScript);
                     if (!File.Exists(rutaScript))
@@ -203,15 +283,20 @@ namespace OPENGIOAI.Data
                         return;
                     }
 
-                    // Contexto combinado de padres
+                    // Contexto plano (backward compat: NODO_ANTERIOR_RESULTADO)
                     string ctx = preds.Count == 0 ? ""
                                : preds.Count == 1 ? resultados.GetValueOrDefault(preds[0], "")
                                : string.Join("\n", preds
                                    .Where(p => resultados.ContainsKey(p) && !string.IsNullOrEmpty(resultados[p]))
                                    .Select(p => $"=== {nodosById[p].Titulo} ===\n{resultados[p]}"));
 
+                    // Contexto estructurado (NODO_CONTEXTO): JSON con la salida de
+                    // cada predecesor parseada cuando es JSON válido, o crudo si no.
+                    string ctxJson = ConstruirContextoJson(preds, resultados, nodosById, nodo);
+
                     OnLog?.Invoke(auto.Id, $"  ▶ {nodo.Titulo}");
-                    string resultado = await EjecutarScriptPython(rutaScript, carpeta, ctx, ct);
+                    string resultado = await EjecutarScriptPython(
+                        rutaScript, carpeta, ctx, autoVariablesJson, ctEjec, ctxJson);
                     resultados[nodo.Id] = resultado;
                     nodo.UltimaRespuesta = resultado;
                     OnLog?.Invoke(auto.Id, $"  ✔ {nodo.Titulo}: {Truncar(resultado, 100)}");
@@ -233,6 +318,12 @@ namespace OPENGIOAI.Data
                 auto.UltimaEjecucion = DateTime.Now;
                 OnLog?.Invoke(auto.Id, $"✔ {auto.Nombre}: {auto.UltimoEstado}");
             }
+            catch (OperationCanceledException) when (ctsTimeout.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                foreach (var t in tcs.Values) t.TrySetResult(false);
+                auto.UltimoEstado = $"✖ Timeout ({auto.TimeoutMinutos} min)";
+                OnLog?.Invoke(auto.Id, $"✖ {auto.Nombre}: {auto.UltimoEstado}");
+            }
             catch (Exception ex)
             {
                 // Señalizar todos los TCS restantes para no dejar tareas bloqueadas
@@ -244,7 +335,7 @@ namespace OPENGIOAI.Data
             PersistirEstado(auto);
         }
 
-        private static void PersistirEstado(Automatizacion auto)
+        private void PersistirEstado(Automatizacion auto)
         {
             try
             {
@@ -258,17 +349,84 @@ namespace OPENGIOAI.Data
                     JsonManager.Guardar(RutasProyecto.ObtenerRutaListAutomatizaciones(), lista);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // No-fatal: solo afecta a la persistencia del último estado.
+                // Antes se silenciaba — ahora al menos lo logueamos para diagnóstico.
+                OnLog?.Invoke(auto.Id, $"⚠ No se pudo persistir estado: {ex.Message}");
+            }
+        }
+
+        // ── Construcción del contexto JSON entre nodos ────────────────────
+        /// <summary>
+        /// Construye el JSON que se inyecta en NODO_CONTEXTO. Estructura:
+        ///   {
+        ///     "predecesores": { "<titulo_predecesor>": <salida_parseada_o_string>, ... },
+        ///     "anterior": <salida_directa_si_solo_hay_un_predecesor>,
+        ///     "esperadas": ["nombre1", "nombre2", ...]
+        ///   }
+        /// El script Python puede `json.loads(os.environ["NODO_CONTEXTO"])` y
+        /// trabajar con las salidas tipadas en vez de parsear texto plano.
+        /// </summary>
+        private static string ConstruirContextoJson(
+            List<string> predIds,
+            ConcurrentDictionary<string, string> resultados,
+            Dictionary<string, NodoAutomatizacion> nodosById,
+            NodoAutomatizacion nodoActual)
+        {
+            var predecesores = new Dictionary<string, object?>();
+            foreach (var pid in predIds)
+            {
+                if (!nodosById.TryGetValue(pid, out var pred)) continue;
+                string salida = resultados.GetValueOrDefault(pid, "");
+                predecesores[pred.Titulo] = ParsearSalidaSiJson(salida);
+            }
+
+            object? anterior = predIds.Count == 1
+                ? ParsearSalidaSiJson(resultados.GetValueOrDefault(predIds[0], ""))
+                : null;
+
+            var esperadas = (nodoActual.Entradas ?? new List<VariableNodo>())
+                .Select(e => e.Nombre).ToList();
+
+            var paquete = new
+            {
+                predecesores,
+                anterior,
+                esperadas,
+            };
+            return Newtonsoft.Json.JsonConvert.SerializeObject(paquete);
+        }
+
+        /// <summary>
+        /// Si la salida del nodo predecesor es un JSON válido, devuelve el
+        /// JToken parseado para que el receptor pueda navegarlo. Si no, lo
+        /// devuelve como string crudo.
+        /// </summary>
+        private static object? ParsearSalidaSiJson(string salida)
+        {
+            string s = (salida ?? "").Trim();
+            if (string.IsNullOrEmpty(s)) return "";
+            if (s.StartsWith('{') || s.StartsWith('['))
+            {
+                try { return Newtonsoft.Json.Linq.JToken.Parse(s); }
+                catch { /* no es JSON, caer al string */ }
+            }
+            return s;
         }
 
         // ── Ejecutar un script .py específico ─────────────────────────────
         private static async Task<string> EjecutarScriptPython(
             string rutaScript, string carpeta, string? contextoAnterior,
-            CancellationToken ct)
+            string autoVariablesJson, CancellationToken ct,
+            string? nodoContextoJson = null)
         {
-            // Limpiar respuesta.txt antes
+            // Limpiar respuesta.txt antes (best-effort: archivo bloqueado o permisos
+            // no son fatales — el script siempre puede caer al stdout como fallback).
             string respTxtPath = Path.Combine(carpeta, "respuesta.txt");
-            try { File.WriteAllText(respTxtPath, "", Encoding.UTF8); } catch { }
+            try { File.WriteAllText(respTxtPath, "", Encoding.UTF8); }
+            catch (IOException)        { /* el archivo está siendo usado, lo veremos vacío */ }
+            catch (UnauthorizedAccessException) { /* sin permisos: usaremos stdout */ }
 
             var psi = new ProcessStartInfo
             {
@@ -284,11 +442,21 @@ namespace OPENGIOAI.Data
                 StandardErrorEncoding  = Encoding.UTF8
             };
 
-            // Variables de entorno: UTF-8 + contexto anterior
+            // Variables de entorno: UTF-8 + contexto anterior + contexto estructurado
             psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
             psi.EnvironmentVariables["PYTHONUTF8"]       = "1";
+
+            // Backward compat: salida cruda del último predecesor
             if (!string.IsNullOrWhiteSpace(contextoAnterior))
                 psi.EnvironmentVariables["NODO_ANTERIOR_RESULTADO"] = contextoAnterior;
+
+            // Variables globales de la automatización (JSON serializado)
+            if (!string.IsNullOrWhiteSpace(autoVariablesJson) && autoVariablesJson != "{}")
+                psi.EnvironmentVariables["AUTO_VARIABLES"] = autoVariablesJson;
+
+            // Contexto estructurado de los predecesores (JSON serializado)
+            if (!string.IsNullOrWhiteSpace(nodoContextoJson))
+                psi.EnvironmentVariables["NODO_CONTEXTO"] = nodoContextoJson;
 
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var sbOut = new StringBuilder();
@@ -360,7 +528,10 @@ namespace OPENGIOAI.Data
                     }
                 }
             }
-            catch { }
+            catch
+            {
+                // 'where' puede no existir o bloquearse; caemos a candidatos hardcoded.
+            }
 
             string[] candidatos =
             {

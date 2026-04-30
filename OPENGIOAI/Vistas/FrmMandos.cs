@@ -199,25 +199,19 @@ namespace OPENGIOAI.Vistas
         }
 
         /// <summary>
-        /// Alinea btnEnviar y btnCancelar al borde derecho del wrapper del textbox.
-        /// Se invoca en ConfigurarUI() y en cada FrmMandos_Resize para que los botones
-        /// siempre queden pegados al cuadro de instrucci�n sin importar el tama�o del form.
+        /// Alinea btnEnviar y btnCancelar al borde derecho del textbox plano.
+        /// Se invoca en ConfigurarUI() y en cada FrmMandos_Resize.
         /// </summary>
         private void AjustarBotonesInput()
         {
-            foreach (Control c in pnlContenedorTxt.Controls)
-            {
-                if (c is Panel wrapper && wrapper.Controls.Contains(textBoxInstrucion))
-                {
-                    int xBtn = wrapper.Right + 6;
-                    btnEnviar.Left   = xBtn;
-                    btnCancelar.Left = xBtn;
-                    // Alinear verticalmente: enviar al tope del wrapper, cancelar debajo
-                    btnEnviar.Top   = wrapper.Top;
-                    btnCancelar.Top = wrapper.Top + btnEnviar.Height + 4;
-                    return;
-                }
-            }
+            if (textBoxInstrucion == null) return;
+
+            int xBtn = textBoxInstrucion.Right + 6;
+            btnEnviar.Left   = xBtn;
+            btnCancelar.Left = xBtn;
+            // Vertical: enviar arriba, cancelar debajo
+            btnEnviar.Top   = textBoxInstrucion.Top;
+            btnCancelar.Top = textBoxInstrucion.Top + btnEnviar.Height + 4;
         }
 
         private void FrmMandos_FormClosing(object sender, FormClosingEventArgs e)
@@ -238,33 +232,66 @@ namespace OPENGIOAI.Vistas
 
         private void textBoxInstrucion_DragEnter(object sender, DragEventArgs e)
         {
-            e.Effect = (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
-                ? DragDropEffects.Copy
-                : DragDropEffects.None;
+            if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+            {
+                e.Effect = DragDropEffects.Copy;
+                return;
+            }
+
+            if (e.Data?.GetDataPresent(DataFormats.UnicodeText) == true
+                || e.Data?.GetDataPresent(DataFormats.Text) == true)
+            {
+                e.Effect = DragDropEffects.Copy;
+                return;
+            }
+
+            e.Effect = DragDropEffects.None;
         }
 
         private void textBoxInstrucion_DragDrop(object sender, DragEventArgs e)
         {
-            if (e.Data?.GetData(DataFormats.FileDrop) is not string[] files) return;
-
-            _ajustandoAltura = true;
-            try
+            if (e.Data?.GetData(DataFormats.FileDrop) is string[] files)
             {
-                foreach (string file in files.Where(File.Exists))
+                _ajustandoAltura = true;
+                try
                 {
-                    Image img = Utils.ObtenerTipoArchivo(file);
-                    AgregarImagenAlPanel(file, img);
-                    _rutasAgregadas += $"[Ruta]: {file} ,";
+                    foreach (string file in files.Where(File.Exists))
+                    {
+                        Image img = Utils.ObtenerTipoArchivo(file);
+                        AgregarImagenAlPanel(file, img);
+                        _rutasAgregadas += $"[Ruta]: {file} ,";
+                    }
                 }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error al procesar imagen: " + ex.Message);
+                }
+                finally
+                {
+                    _ajustandoAltura = false;
+                }
+                return;
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Error al procesar imagen: " + ex.Message);
-            }
-            finally
-            {
-                _ajustandoAltura = false;
-            }
+
+            string? texto = e.Data?.GetData(DataFormats.UnicodeText) as string
+                         ?? e.Data?.GetData(DataFormats.Text) as string;
+
+            if (string.IsNullOrWhiteSpace(texto)) return;
+
+            // Insertar texto de credencial en el caret (o reemplazar selección)
+            int selStart = textBoxInstrucion.SelectionStart;
+            int selLen   = textBoxInstrucion.SelectionLength;
+            string actual = textBoxInstrucion.Text ?? string.Empty;
+
+            string nuevo = selLen > 0
+                ? actual.Remove(selStart, selLen).Insert(selStart, texto)
+                : actual.Insert(selStart, texto);
+
+            textBoxInstrucion.Text = nuevo;
+            textBoxInstrucion.SelectionStart = selStart + texto.Length;
+            textBoxInstrucion.SelectionLength = 0;
+            textBoxInstrucion.Focus();
+            return;
         }
 
         private void textBoxInstrucion_TextChanged(object sender, EventArgs e)
@@ -272,7 +299,7 @@ namespace OPENGIOAI.Vistas
             if (_ajustandoAltura) return;
             //ConsultasApis(textBoxInstrucion);
             MostrarPreview(textBoxInstrucion, labelSugerencia);
-            TextBoxRounder.AjustarAlturaConRedondeo(textBoxInstrucion);
+            //TextBoxRounder.AjustarAlturaConRedondeo(textBoxInstrucion);
         }
 
         private void textBoxInstrucion_KeyDown(object sender, KeyEventArgs e)
@@ -449,6 +476,7 @@ namespace OPENGIOAI.Vistas
         {
             pnlChat.Controls.Clear();
             _ultimaBurbujaComunicador = null;
+            _ultimaFechaInsertada     = null;
             MostrarEmptyState();
         }
 
@@ -659,7 +687,7 @@ namespace OPENGIOAI.Vistas
                     && !string.IsNullOrWhiteSpace(msg)
                     && msg != "Analizando tu instrucci�n...")
                 {
-                    _ = EjecutarDifusionAsync($"?? {msg}", usarTelegram, usarSlack);
+                    _ = EjecutarDifusionAsync($"🔍 {msg}", usarTelegram, usarSlack);
                 }
             };
 
@@ -736,7 +764,7 @@ namespace OPENGIOAI.Vistas
                         string nombre = System.IO.Path.GetFileName(archivo);
 
                         if (_enviarArchivosTelegram && usarTelegram)
-                            _ = _telegramService.EnviarArchivoAsync(archivo, $"?? {nombre}");
+                            _ = _telegramService.EnviarArchivoAsync(archivo, $"📎 {nombre}");
 
                         if (_enviarArchivosSlack && usarSlack && _slackService.IsConfigured)
                             _ = _slackService.EnviarArchivoAsync(archivo, nombre);
@@ -872,8 +900,9 @@ namespace OPENGIOAI.Vistas
 
             _burbujaFaseActual = burbuja;
             OcultarEmptyState();
+            InsertarSeparadorFechaSiCorresponde();
             pnlChat.Controls.Add(burbuja);
-            pnlChat.ScrollControlIntoView(burbuja);
+            ScrollSuaveAlFinal();
         }
 
         /// <summary>
@@ -897,7 +926,7 @@ namespace OPENGIOAI.Vistas
             };
 
             pnlChat.Controls.Add(_burbujaScriptActual);
-            pnlChat.ScrollControlIntoView(_burbujaScriptActual);
+            ScrollSuaveAlFinal();
 
             _burbujaFaseActual = null; // Pr�ximo OnFaseIniciada de este agente crea nueva burbuja
             _streaming.Apuntar(_burbujaScriptActual);
@@ -940,12 +969,13 @@ namespace OPENGIOAI.Vistas
                 "…", false, anchoMax, Properties.Resources.iconos1)
             {
                 Tag    = FaseAgente.Comunicador.ToString(),
-                Margin = new Padding(250, 5, 80, 5)
+                Margin = ObtenerMargenFase(FaseAgente.Comunicador)
             };
 
             OcultarEmptyState();
+            InsertarSeparadorFechaSiCorresponde();
             pnlChat.Controls.Add(burbuja);
-            pnlChat.ScrollControlIntoView(burbuja);
+            ScrollSuaveAlFinal();
 
             _streaming.Apuntar(burbuja);
             _ultimaBurbujaComunicador = burbuja;
@@ -964,14 +994,17 @@ namespace OPENGIOAI.Vistas
 
         private static Padding ObtenerMargenFase(FaseAgente fase) => fase switch
         {
-            // Analista: margen izquierdo grande ? burbuja peque�a a la izquierda
-            FaseAgente.Analista    => new Padding(10, 5, 350, 5),
-            // Constructor/Guardi�n: centrado, cuerpo t�cnico
-            FaseAgente.Constructor => new Padding(60, 5, 200, 5),
-            FaseAgente.Guardian    => new Padding(60, 5, 200, 5),
-            // Comunicador: margen derecho peque�o ? burbuja principal (respuesta)
-            FaseAgente.Comunicador => new Padding(250, 5, 80, 5),
-            _ => new Padding(250, 5, 80, 5)
+            // Margen unificado por fase. La burbuja se alinea internamente
+            // (IA → izquierda, Usuario → derecha) — los márgenes anteriores
+            // por fase chocaban con esa alineación interna y causaban que el
+            // Comunicador apareciera muy a la derecha respecto del Constructor.
+            // Las fases se distinguen por su emoji prefijo (🔍 ⚙️ 🛡️ ✨)
+            // y los colores/elementos internos de la burbuja.
+            FaseAgente.Analista    => new Padding(0, 4, 0, 2),
+            FaseAgente.Constructor => new Padding(0, 2, 0, 2),
+            FaseAgente.Guardian    => new Padding(0, 2, 0, 2),
+            FaseAgente.Comunicador => new Padding(0, 4, 0, 6),
+            _                      => new Padding(0, 3, 0, 3)
         };
 
         /// <summary>
@@ -1009,13 +1042,13 @@ namespace OPENGIOAI.Vistas
             _bufferScript.Clear();
             int anchoMax = Math.Max(80, (pnlChat.ClientSize.Width - 28));
             _burbujaScriptActual = new BurbujaChat(
-                "? Ejecutando script...", false, anchoMax, Properties.Resources.iconos1)
+                "▶ Ejecutando script...", false, anchoMax, Properties.Resources.iconos1)
             {
                 Tag = "10",
                 Margin = new Padding(250, 5, 80, 5)
             };
             pnlChat.Controls.Add(_burbujaScriptActual);
-            pnlChat.ScrollControlIntoView(_burbujaScriptActual);
+            ScrollSuaveAlFinal();
 
             _streaming.Apuntar(_burbujaScriptActual);
         }
@@ -1082,13 +1115,13 @@ namespace OPENGIOAI.Vistas
             _bufferScript.Clear();
             int anchoMax = Math.Max(80, (pnlChat.ClientSize.Width - 28));
             _burbujaScriptActual = new BurbujaChat(
-                "?? Agente 2 verificando...", false, anchoMax, Properties.Resources.iconos1)
+                "🛡 Agente 2 verificando...", false, anchoMax, Properties.Resources.iconos1)
             {
                 Tag = "10",
                 Margin = new Padding(250, 5, 80, 5)
             };
             pnlChat.Controls.Add(_burbujaScriptActual);
-            pnlChat.ScrollControlIntoView(_burbujaScriptActual);
+            ScrollSuaveAlFinal();
             _streaming.Apuntar(_burbujaScriptActual);
         }
 
@@ -1124,7 +1157,7 @@ namespace OPENGIOAI.Vistas
                     var tareasAudio = new List<Task>();
 
                     if (usarTelegram && _telegramService.IsConfigured)
-                        tareasAudio.Add(_telegramService.EnviarArchivoAsync(tmpFile, "?? Audio"));
+                        tareasAudio.Add(_telegramService.EnviarArchivoAsync(tmpFile, "🎤 Audio"));
 
                     if (usarSlack && _slackService.IsConfigured)
                         tareasAudio.Add(_slackService.EnviarArchivoAsync(tmpFile, "Audio"));
@@ -1146,7 +1179,7 @@ namespace OPENGIOAI.Vistas
         private static string FormatearConstructorParaTelegram(string rawOutput)
         {
             if (string.IsNullOrWhiteSpace(rawOutput))
-                return "?? <b>Constructor</b>\n<i>(sin salida)</i>";
+                return "⚙️ <b>Constructor</b>\n<i>(sin salida)</i>";
 
             string contenido = rawOutput.Trim();
 
@@ -1175,7 +1208,7 @@ namespace OPENGIOAI.Vistas
 
             // -- Construir mensaje con bloque de c�digo monoespacio -----------
             // <pre><code> en Telegram HTML = bloque con fondo gris, fuente mono
-            return $"?? <b>Constructor � resultado t�cnico</b>\n\n<pre><code>{contenido}</code></pre>";
+            return $"⚙️ <b>Constructor — resultado técnico</b>\n\n<pre><code>{contenido}</code></pre>";
         }
 
         /// <summary>
@@ -1186,7 +1219,7 @@ namespace OPENGIOAI.Vistas
         private static string FormatearConstructorParaSlack(string rawOutput)
         {
             if (string.IsNullOrWhiteSpace(rawOutput))
-                return "?? *Constructor* � _(sin salida)_";
+                return "⚙️ *Constructor* — _(sin salida)_";
 
             string contenido = rawOutput.Trim();
 
@@ -1206,7 +1239,7 @@ namespace OPENGIOAI.Vistas
                 contenido = contenido[..MaxChars] + "\n� (truncado)";
 
             // Slack usa triple backtick para bloques de c�digo monoespaciado
-            return $"?? *Constructor � resultado t�cnico*\n```\n{contenido}\n```";
+            return $"⚙️ *Constructor — resultado técnico*\n```\n{contenido}\n```";
         }
 
         /// <summary>
@@ -1335,7 +1368,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             };
 
             pnlChat.Controls.Add(burbuja);
-            pnlChat.ScrollControlIntoView(burbuja);
+            ScrollSuaveAlFinal();
         }
 
         /// <summary>
@@ -1861,6 +1894,11 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             Utils.GuardarConfig<ConfiguracionClient>(
                 RutasProyecto.ObtenerRutaConfiguracion(), _configuracionClient);
 
+            // Si el usuario cambió la ruta de trabajo desde el comboBox, redirigir
+            // todos los archivos del workspace a la nueva carpeta y migrar los
+            // que existieran en AppDir (no-destructivo).
+            RutasProyecto.EstablecerRutaTrabajo(_configuracionClient.MiArchivo?.Ruta);
+
             MostrarMensaje("�Configuraci�n guardada!", false);
         }
 
@@ -1939,8 +1977,27 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
 
             RestaurarPreferencias();
             AplicarTemaEmerald();
-            ConstruirTokenCounter();
+            //ConstruirTokenCounter();
+            ConstruirControlesZoom();
+            ConstruirPanelCredenciales();
+            ConstruirToggleScroll();
             MostrarEmptyState();
+
+            // Suscribir cambio de tema
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
+        }
+
+        private void OnTemaChanged()
+        {
+            if (InvokeRequired) { Invoke(OnTemaChanged); return; }
+            AplicarTemaEmerald();
+            // Actualizar colores del textbox (hardcoded en ConfigurarUI)
+            textBoxInstrucion.BackColor = EmeraldTheme.BgDeep;
+            textBoxInstrucion.ForeColor = EmeraldTheme.TextPrimary;
+            // Forzar repintado de burbujas
+            foreach (Control c in pnlChat.Controls)
+                c.Invalidate();
         }
 
         private void RestaurarPreferencias()
@@ -1978,7 +2035,6 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                 comboBoxAgentes.ValueMember = "ApiKey";
 
                 textBoxInstrucion.Multiline = true;
-                textBoxInstrucion.Height = 80;
                 textBoxInstrucion.AllowDrop = true;
                 textBoxInstrucion.AcceptsTab = true;
 
@@ -1995,38 +2051,19 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                 Controls.Add(_panelAgentes);
                 Controls.SetChildIndex(_panelAgentes, Controls.IndexOf(panelHead));
 
-                pnlContenedorTxt.Redondear();
-                pnlChat.Redondear();
-                pnlContenedorArchivos.Redondear();
+                // ── Estilo plano y minimalista (sin redondeos, sin wrappers) ──
+                //  Eficiencia primero: cero OnPaint custom, cero reparenting.
+                //  El textbox vive directamente en pnlContenedorTxt como
+                //  Designer lo creó. Aplicamos colores del tema y borde fino.
+                textBoxInstrucion.BorderStyle = BorderStyle.FixedSingle;
+                textBoxInstrucion.BackColor   = ColorTranslator.FromHtml("#002647"); // BgInput
+                textBoxInstrucion.ForeColor   = ColorTranslator.FromHtml("#FFFFFF"); // TextMain
 
-                labelSugerencia.Parent = textBoxInstrucion;
+                labelSugerencia.Parent    = textBoxInstrucion;
                 labelSugerencia.BackColor = Color.Transparent;
-                labelSugerencia.AutoSize = true;
-                labelSugerencia.Enabled = false;
-                labelSugerencia.Font = textBoxInstrucion.Font;
-
-                btnEnviar.AplicarEstiloOutline(colorBorde: Color.FromArgb(64, 158, 255), borderRadius: 7);
-                btnCancelar.AplicarEstiloOutline(colorBorde: Color.FromArgb(255, 0, 0), borderRadius: 7);
-
-                textBoxInstrucion.RedondearRichTextBox(
-                    borderRadius: 12,
-                    borderColor: Color.FromArgb(64, 158, 255),
-                    borderSize: 2,
-                    focusColor: Color.FromArgb(41, 128, 185),
-                    agregarSombra: true);
-
-                // -- Propagar Anchor al wrapper creado por RedondearRichTextBox ----------
-                // RedondearRichTextBox reparenta textBoxInstrucion dentro de un Panel nuevo
-                // que no hereda el Anchor original (Left|Right). Sin este fix el wrapper
-                // no se expande al redimensionar y btnEnviar/btnCancelar quedan sueltos.
-                foreach (Control c in pnlContenedorTxt.Controls)
-                {
-                    if (c is Panel rtbWrapper && rtbWrapper.Controls.Contains(textBoxInstrucion))
-                    {
-                        rtbWrapper.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-                        break;
-                    }
-                }
+                labelSugerencia.AutoSize  = true;
+                labelSugerencia.Enabled   = false;
+                labelSugerencia.Font      = textBoxInstrucion.Font;
 
                 // Llevar los botones al frente (z-order) y alinearlos al wrapper
                 btnEnviar.BringToFront();
@@ -2185,15 +2222,15 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             comboBoxModeloIA.SelectedValue = _modeloSeleccionado.Modelos;
         }
 
-        // -- Paleta Emerald (consistente con FrmPrincipal / FrmApis / FrmModelos) --
-        private static readonly Color _emBgDeep    = ColorTranslator.FromHtml("#050505");
-        private static readonly Color _emBgCard    = ColorTranslator.FromHtml("#0f1117");
-        private static readonly Color _emBgInput   = ColorTranslator.FromHtml("#0b0e16");
-        private static readonly Color _emEmerald   = ColorTranslator.FromHtml("#10b981");
-        private static readonly Color _emEmerald4  = ColorTranslator.FromHtml("#34d399");
-        private static readonly Color _emEmerald9  = ColorTranslator.FromHtml("#064e3b");
-        private static readonly Color _emTextMain  = ColorTranslator.FromHtml("#f0fdf4");
-        private static readonly Color _emTextSub   = ColorTranslator.FromHtml("#a7f3d0");
+        // -- Paleta dinámica (sigue a EmeraldTheme.IsDark) --------------------
+        private static Color _emBgDeep   => EmeraldTheme.BgDeep;
+        private static Color _emBgCard   => EmeraldTheme.BgCard;
+        private static Color _emBgInput  => EmeraldTheme.BgDeep;
+        private static Color _emEmerald  => EmeraldTheme.Emerald500;
+        private static Color _emEmerald4 => EmeraldTheme.Emerald400;
+        private static Color _emEmerald9 => EmeraldTheme.Emerald900;
+        private static Color _emTextMain => EmeraldTheme.TextPrimary;
+        private static Color _emTextSub  => EmeraldTheme.TextSecondary;
 
         /// <summary>
         /// Aplica la paleta Emerald a todo el �rbol de controles del chat.
@@ -2341,7 +2378,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
 
             var lblTitulo = new Label
             {
-                Text      = "✦  ¿En qué te ayudo hoy?",
+                Text      = "  ¿En qué te ayudo hoy?",
                 Font      = new Font("Segoe UI Semibold", 16F, FontStyle.Bold),
                 ForeColor = _emTextMain,
                 BackColor = Color.Transparent,
@@ -2546,7 +2583,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
 
             pnlChat.Controls.Add(pnlAcciones);
             pnlChat.Controls.SetChildIndex(pnlAcciones, idx + 1);
-            pnlChat.ScrollControlIntoView(pnlAcciones);
+            ScrollSuaveAlFinal();
         }
 
         private void AccionRegenerar()
@@ -2571,6 +2608,507 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             // Solo feedback visual; sin persistencia
             string msg = positivo ? "👍 Gracias por tu feedback" : "👎 Anotado";
             _toolTipArchivos.Show(msg, this, PointToClient(MousePosition), 1400);
+        }
+
+        // ── SEPARADORES CON FECHA ────────────────────────────────────
+        private DateTime? _ultimaFechaInsertada;
+
+        /// <summary>
+        /// Inserta un separador "Hoy / Ayer / DD MMM" si la fecha actual
+        /// no coincide con la última insertada. Llamar antes de cada
+        /// pnlChat.Controls.Add(burbuja).
+        /// </summary>
+        private void InsertarSeparadorFechaSiCorresponde()
+        {
+            DateTime hoy = DateTime.Now.Date;
+            if (_ultimaFechaInsertada == hoy) return;
+            _ultimaFechaInsertada = hoy;
+
+            string etiqueta;
+            if (hoy == DateTime.Today)                   etiqueta = "Hoy";
+            else if (hoy == DateTime.Today.AddDays(-1))  etiqueta = "Ayer";
+            else if ((DateTime.Today - hoy).TotalDays < 7)
+                etiqueta = hoy.ToString("dddd",
+                    System.Globalization.CultureInfo.GetCultureInfo("es-ES"));
+            else
+                etiqueta = hoy.ToString("dd MMM",
+                    System.Globalization.CultureInfo.GetCultureInfo("es-ES"));
+
+            var separador = new Label
+            {
+                Text       = $"───────  {etiqueta}  ───────",
+                AutoSize   = false,
+                Width      = pnlChat.ClientSize.Width - 28,
+                Height     = 24,
+                TextAlign  = ContentAlignment.MiddleCenter,
+                Font       = new Font("Segoe UI", 8F, FontStyle.Regular),
+                ForeColor  = ColorTranslator.FromHtml("#475569"),
+                BackColor  = Color.Transparent,
+                Margin     = new Padding(8, 12, 8, 6),
+                Tag        = "DateSeparator"
+            };
+            pnlChat.Controls.Add(separador);
+        }
+
+        // ── AUTO-SCROLL ─────────────────────────────────────────────
+        // Sistema simple: toggle on/off. Cuando está ON, cada llamada a
+        // ScrollSuaveAlFinal salta directo al fondo sin animación ni
+        // tracking de eventos de scroll del usuario (eso era la fuente
+        // del bug "el scroll sube"). Cuando está OFF el chat no se mueve.
+        private bool _autoScrollActivado = true;
+        private Label _btnToggleScroll;
+
+        // ── ZOOM +/- (Ctrl++ / Ctrl-- / Ctrl+0) ──────────────────────
+        private float _zoomActual = 1.0f;
+        private const float ZoomMin = 0.7f, ZoomMax = 1.6f, ZoomStep = 0.1f;
+        private Label _lblZoomNivel;
+
+        private void ConstruirControlesZoom()
+        {
+            if (panelHead == null) return;
+
+            var pnlZoom = new Panel
+            {
+                Width     = 110,
+                Height    = 28,
+                BackColor = _emBgCard,
+                Anchor    = AnchorStyles.Top | AnchorStyles.Right,
+                Location  = new Point(panelHead.ClientSize.Width - 220, 11),
+                Tag       = "ZoomCtrl"
+            };
+
+            var btnMinus = NuevoBotonZoom("−", () => CambiarZoom(-ZoomStep));
+            btnMinus.Location = new Point(0, 0);
+
+            _lblZoomNivel = new Label
+            {
+                Text       = "100%",
+                AutoSize   = false,
+                Width      = 46,
+                Height     = 28,
+                TextAlign  = ContentAlignment.MiddleCenter,
+                Font       = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
+                ForeColor  = _emTextSub,
+                BackColor  = _emBgCard,
+                Cursor     = Cursors.Hand,
+                Location   = new Point(32, 0),
+            };
+            _lblZoomNivel.Click += (_, __) => ResetZoom();
+            _toolTipArchivos.SetToolTip(_lblZoomNivel, "Click: 100% · Ctrl++ / Ctrl-- / Ctrl+0");
+
+            var btnPlus = NuevoBotonZoom("+", () => CambiarZoom(+ZoomStep));
+            btnPlus.Location = new Point(80, 0);
+
+            pnlZoom.Controls.Add(btnMinus);
+            pnlZoom.Controls.Add(_lblZoomNivel);
+            pnlZoom.Controls.Add(btnPlus);
+            panelHead.Controls.Add(pnlZoom);
+
+            // Atajos de teclado: form-level
+            this.KeyPreview = true;
+            this.KeyDown += (_, e) =>
+            {
+                if (!e.Control) return;
+                if (e.KeyCode == Keys.Oemplus || e.KeyCode == Keys.Add)        { CambiarZoom(+ZoomStep); e.Handled = true; }
+                else if (e.KeyCode == Keys.OemMinus || e.KeyCode == Keys.Subtract) { CambiarZoom(-ZoomStep); e.Handled = true; }
+                else if (e.KeyCode == Keys.D0 || e.KeyCode == Keys.NumPad0)    { ResetZoom();             e.Handled = true; }
+            };
+        }
+
+        private Label NuevoBotonZoom(string texto, Action accion)
+        {
+            var btn = new Label
+            {
+                Text       = texto,
+                AutoSize   = false,
+                Width      = 32,
+                Height     = 28,
+                TextAlign  = ContentAlignment.MiddleCenter,
+                Font       = new Font("Segoe UI Semibold", 11F, FontStyle.Bold),
+                ForeColor  = _emEmerald4,
+                BackColor  = _emBgCard,
+                Cursor     = Cursors.Hand
+            };
+            btn.MouseEnter += (_, __) => { btn.BackColor = _emEmerald9; btn.ForeColor = _emTextMain; };
+            btn.MouseLeave += (_, __) => { btn.BackColor = _emBgCard;   btn.ForeColor = _emEmerald4; };
+            btn.Click      += (_, __) => accion();
+            return btn;
+        }
+
+        private void CambiarZoom(float delta)
+        {
+            float nuevo = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomActual + delta));
+            if (Math.Abs(nuevo - _zoomActual) < 0.001f) return;
+            _zoomActual = nuevo;
+            AplicarZoomGlobal();
+        }
+
+        private void ResetZoom()
+        {
+            if (Math.Abs(_zoomActual - 1.0f) < 0.001f) return;
+            _zoomActual = 1.0f;
+            AplicarZoomGlobal();
+        }
+
+        private void AplicarZoomGlobal()
+        {
+            BurbujaChat.ZoomGlobal = _zoomActual;
+            if (_lblZoomNivel != null)
+                _lblZoomNivel.Text = $"{(int)Math.Round(_zoomActual * 100)}%";
+
+            // Aplicar a las burbujas existentes
+            foreach (Control c in pnlChat.Controls)
+                if (c is BurbujaChat b && !b.IsDisposed)
+                    b.AplicarZoom(_zoomActual);
+
+            ScrollSuaveAlFinal();
+        }
+
+        // ── PANEL DE CREDENCIALES ARRASTRABLES ───────────────────────
+        private Panel _pnlCredenciales;
+        private Label _btnToggleCredenciales;
+        private FlowLayoutPanel _flowCredenciales;
+
+        private void ConstruirPanelCredenciales()
+        {
+            if (panelHead == null || pnlChat == null) return;
+
+            // ── Botón flotante (FAB) sobre el chat, esquina superior derecha.
+            //    Lejos del header → cero colisiones con comboboxes / btnGuardar. ──
+            _btnToggleCredenciales = new Label
+            {
+                Text       = "🔑",
+                AutoSize   = false,
+                Width      = 36,
+                Height     = 36,
+                TextAlign  = ContentAlignment.MiddleCenter,
+                Font       = new Font("Segoe UI Emoji", 13F, FontStyle.Regular),
+                ForeColor  = _emEmerald4,
+                BackColor  = _emBgCard,
+                Cursor     = Cursors.Hand,
+                BorderStyle = BorderStyle.FixedSingle,
+                Tag        = "ToggleCredenciales"
+            };
+            _btnToggleCredenciales.MouseEnter += (_, __) => { _btnToggleCredenciales.BackColor = _emEmerald9; _btnToggleCredenciales.ForeColor = _emTextMain; };
+            _btnToggleCredenciales.MouseLeave += (_, __) => { _btnToggleCredenciales.BackColor = _emBgCard;   _btnToggleCredenciales.ForeColor = _emEmerald4; };
+            _btnToggleCredenciales.Click      += (_, __) => ToggleCredenciales();
+            _toolTipArchivos.SetToolTip(_btnToggleCredenciales, "Credenciales — abre el panel para arrastrar al chat");
+
+            // Insertar en el mismo parent que pnlChat para flotar encima
+            var parentChat = pnlChat.Parent;
+            if (parentChat != null)
+            {
+                parentChat.Controls.Add(_btnToggleCredenciales);
+                _btnToggleCredenciales.BringToFront();
+            }
+
+            void Reubicar()
+            {
+                if (pnlChat == null || _btnToggleCredenciales == null) return;
+                _btnToggleCredenciales.Location = new Point(
+                    pnlChat.Right - _btnToggleCredenciales.Width - 12,
+                    pnlChat.Top + 10);
+                _btnToggleCredenciales.BringToFront();
+            }
+            Reubicar();
+            pnlChat.Resize        += (_, __) => Reubicar();
+            pnlChat.LocationChanged += (_, __) => Reubicar();
+            if (parentChat != null) parentChat.Resize += (_, __) => Reubicar();
+
+            // ── Panel flotante: se posiciona MANUALMENTE encima del pnlChat
+            //    (no usar Dock para no pelearse con el Dock.Fill del chat) ──
+            _pnlCredenciales = new Panel
+            {
+                Width     = 240,
+                BackColor = _emBgCard,
+                Padding   = new Padding(10, 14, 10, 12),
+                Visible   = false,
+                Tag       = "CredencialesPanel",
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            var lblTitulo = new Label
+            {
+                Text       = "🔑  Credenciales",
+                Font       = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
+                ForeColor  = _emTextMain,
+                BackColor  = Color.Transparent,
+                AutoSize   = true,
+                Location   = new Point(10, 6)
+            };
+
+            var lblTip = new Label
+            {
+                Text       = "Arrastra una al chat  ↓",
+                Font       = new Font("Segoe UI", 7.5F, FontStyle.Italic),
+                ForeColor  = _emTextSub,
+                BackColor  = Color.Transparent,
+                AutoSize   = true,
+                Location   = new Point(10, 28)
+            };
+
+            var btnCerrar = new Label
+            {
+                Text       = "✕",
+                AutoSize   = false,
+                Width      = 22, Height = 22,
+                TextAlign  = ContentAlignment.MiddleCenter,
+                Font       = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor  = _emTextSub,
+                BackColor  = Color.Transparent,
+                Cursor     = Cursors.Hand,
+                Anchor     = AnchorStyles.Top | AnchorStyles.Right
+            };
+            btnCerrar.MouseEnter += (_, __) => btnCerrar.ForeColor = _emEmerald4;
+            btnCerrar.MouseLeave += (_, __) => btnCerrar.ForeColor = _emTextSub;
+            btnCerrar.Click      += (_, __) => ToggleCredenciales();
+
+            _flowCredenciales = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents  = false,
+                AutoScroll    = true,
+                BackColor     = _emBgCard,
+                Tag           = "CredencialesFlow"
+            };
+
+            _pnlCredenciales.Controls.Add(_flowCredenciales);
+            _pnlCredenciales.Controls.Add(btnCerrar);
+            _pnlCredenciales.Controls.Add(lblTip);
+            _pnlCredenciales.Controls.Add(lblTitulo);
+
+            // ── Insertar al MISMO contenedor que pnlChat, posicionado encima ──
+            var parent = pnlChat.Parent;
+            if (parent == null) return;
+            parent.Controls.Add(_pnlCredenciales);
+
+            // Reposicionar el panel y su contenido manualmente
+            void RecolocarPanel()
+            {
+                if (_pnlCredenciales == null || pnlChat == null) return;
+                _pnlCredenciales.Bounds = new Rectangle(
+                    pnlChat.Right - _pnlCredenciales.Width - 8,
+                    pnlChat.Top + 8,
+                    _pnlCredenciales.Width,
+                    pnlChat.Height - 16);
+
+                btnCerrar.Location = new Point(_pnlCredenciales.ClientSize.Width - btnCerrar.Width - 6, 6);
+                _flowCredenciales.SetBounds(
+                    8, 52,
+                    _pnlCredenciales.ClientSize.Width - 16,
+                    _pnlCredenciales.ClientSize.Height - 60);
+            }
+            RecolocarPanel();
+            pnlChat.Resize += (_, __) => RecolocarPanel();
+            parent.Resize  += (_, __) => RecolocarPanel();
+
+            RellenarChipsCredenciales(_flowCredenciales);
+            HabilitarDropCredenciales();
+        }
+
+        private void RellenarChipsCredenciales(FlowLayoutPanel flow)
+        {
+            flow.Controls.Clear();
+            if (_listaApisDisponibles == null) return;
+
+            foreach (var api in _listaApisDisponibles)
+            {
+                var chip = new Panel
+                {
+                    Width     = 196,
+                    Height    = 50,
+                    Margin    = new Padding(0, 0, 0, 8),
+                    BackColor = _emBgInput,
+                    Cursor    = Cursors.Hand,
+                    Tag       = api
+                };
+
+                var lblNombre = new Label
+                {
+                    Text       = "🔑  " + (api.Nombre ?? "(sin nombre)"),
+                    Font       = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                    ForeColor  = _emTextMain,
+                    BackColor  = Color.Transparent,
+                    AutoSize   = false,
+                    Width      = 190,
+                    Height     = 22,
+                    Location   = new Point(6, 4),
+                    TextAlign  = ContentAlignment.MiddleLeft
+                };
+
+                string previewKey = string.IsNullOrEmpty(api.key)
+                    ? "(sin clave)"
+                    : (api.key.Length > 8 ? new string('•', 6) + api.key.Substring(api.key.Length - 4) : "•••");
+
+                var lblKey = new Label
+                {
+                    Text       = previewKey,
+                    Font       = new Font("Cascadia Mono", 8F),
+                    ForeColor  = _emTextSub,
+                    BackColor  = Color.Transparent,
+                    AutoSize   = false,
+                    Width      = 190,
+                    Height     = 18,
+                    Location   = new Point(6, 26),
+                    TextAlign  = ContentAlignment.MiddleLeft
+                };
+
+                chip.Controls.Add(lblNombre);
+                chip.Controls.Add(lblKey);
+
+                // Drag handlers — al iniciar arrastre, soltar el nombre como string
+                MouseEventHandler iniciarDrag = (_, __) =>
+                {
+                    DoDragDrop("@" + (api.Nombre ?? ""), DragDropEffects.Copy);
+                };
+                chip.MouseDown      += iniciarDrag;
+                lblNombre.MouseDown += iniciarDrag;
+                lblKey.MouseDown    += iniciarDrag;
+
+                // Hover
+                EventHandler enter = (_, __) => chip.BackColor = _emEmerald9;
+                EventHandler leave = (_, __) => chip.BackColor = _emBgInput;
+                chip.MouseEnter      += enter;
+                chip.MouseLeave      += leave;
+                lblNombre.MouseEnter += enter; lblNombre.MouseLeave += leave;
+                lblKey.MouseEnter    += enter; lblKey.MouseLeave    += leave;
+
+                flow.Controls.Add(chip);
+            }
+
+            if (_listaApisDisponibles.Count == 0)
+            {
+                var vacio = new Label
+                {
+                    Text       = "(sin credenciales — agrégalas en Credenciales)",
+                    Font       = new Font("Segoe UI", 8.5F, FontStyle.Italic),
+                    ForeColor  = _emTextSub,
+                    BackColor  = Color.Transparent,
+                    AutoSize   = true,
+                    Margin     = new Padding(0, 8, 0, 0)
+                };
+                flow.Controls.Add(vacio);
+            }
+        }
+
+        private void HabilitarDropCredenciales()
+        {
+            if (textBoxInstrucion == null) return;
+
+            // textBoxInstrucion ya tiene AllowDrop=true por configuración previa.
+            textBoxInstrucion.DragOver += (_, e) =>
+            {
+                if (e.Data?.GetDataPresent(DataFormats.StringFormat) == true)
+                {
+                    var s = e.Data.GetData(DataFormats.StringFormat) as string;
+                    if (s != null && s.StartsWith("@"))
+                        e.Effect = DragDropEffects.Copy;
+                }
+            };
+        }
+
+        private void ToggleCredenciales()
+        {
+            if (_pnlCredenciales == null) return;
+            _pnlCredenciales.Visible = !_pnlCredenciales.Visible;
+            if (_pnlCredenciales.Visible)
+            {
+                if (_flowCredenciales != null) RellenarChipsCredenciales(_flowCredenciales);
+                _pnlCredenciales.BringToFront();
+                _pnlCredenciales.Parent?.PerformLayout();
+                _pnlCredenciales.Refresh();
+            }
+        }
+
+        // ── BOTÓN TOGGLE de auto-scroll ──────────────────────────────
+        private void ConstruirToggleScroll()
+        {
+            if (pnlChat == null) return;
+            var parentChat = pnlChat.Parent;
+            if (parentChat == null) return;
+
+            _btnToggleScroll = new Label
+            {
+                Text        = "🔒",
+                AutoSize    = false,
+                Width       = 36,
+                Height      = 36,
+                TextAlign   = ContentAlignment.MiddleCenter,
+                Font        = new Font("Segoe UI Emoji", 13F, FontStyle.Regular),
+                ForeColor   = _emEmerald4,
+                BackColor   = _emBgCard,
+                Cursor      = Cursors.Hand,
+                BorderStyle = BorderStyle.FixedSingle,
+                Tag         = "ToggleScroll"
+            };
+            _btnToggleScroll.MouseEnter += (_, __) =>
+            {
+                _btnToggleScroll.BackColor = _emEmerald9;
+                _btnToggleScroll.ForeColor = _emTextMain;
+            };
+            _btnToggleScroll.MouseLeave += (_, __) =>
+            {
+                _btnToggleScroll.BackColor = _emBgCard;
+                _btnToggleScroll.ForeColor = _autoScrollActivado ? _emEmerald4 : _emTextSub;
+            };
+            _btnToggleScroll.Click += (_, __) => ToggleAutoScroll();
+            _toolTipArchivos.SetToolTip(_btnToggleScroll,
+                "Auto-scroll al fondo · activado");
+
+            parentChat.Controls.Add(_btnToggleScroll);
+            _btnToggleScroll.BringToFront();
+
+            void Reubicar()
+            {
+                if (_btnToggleScroll == null || pnlChat == null) return;
+                // Pegado debajo del botón de credenciales (esquina sup. derecha)
+                _btnToggleScroll.Location = new Point(
+                    pnlChat.Right - _btnToggleScroll.Width - 12,
+                    pnlChat.Top + 10 + 36 + 8);
+                _btnToggleScroll.BringToFront();
+            }
+            Reubicar();
+            pnlChat.Resize          += (_, __) => Reubicar();
+            pnlChat.LocationChanged += (_, __) => Reubicar();
+            parentChat.Resize       += (_, __) => Reubicar();
+        }
+
+        private void ToggleAutoScroll()
+        {
+            _autoScrollActivado = !_autoScrollActivado;
+            if (_btnToggleScroll != null)
+            {
+                _btnToggleScroll.Text      = _autoScrollActivado ? "🔒" : "🔓";
+                _btnToggleScroll.ForeColor = _autoScrollActivado ? _emEmerald4 : _emTextSub;
+                _toolTipArchivos.SetToolTip(_btnToggleScroll,
+                    _autoScrollActivado
+                        ? "Auto-scroll al fondo · activado (click para pausar)"
+                        : "Auto-scroll pausado (click para reactivar)");
+            }
+            // Si se reactiva, saltar inmediatamente al fondo
+            if (_autoScrollActivado) ScrollSuaveAlFinal();
+        }
+
+        /// <summary>
+        /// Salta el scroll del chat al fondo si el toggle de auto-scroll
+        /// está activado. Sin animación, sin tracking, sin cálculos exotéricos:
+        /// usa AutoScrollPosition con un Y enorme y deja que WinForms haga el clamp.
+        /// </summary>
+        private void ScrollSuaveAlFinal()
+        {
+            if (pnlChat == null || pnlChat.Controls.Count == 0) return;
+            if (!_autoScrollActivado) return;
+            if (InvokeRequired) { BeginInvoke(ScrollSuaveAlFinal); return; }
+
+            try
+            {
+                // Truco WinForms: AutoScrollPosition ignora valores fuera de
+                // rango y lo clampa al máximo posible — saltamos al final
+                // sin tener que calcular alturas a mano (que era la fuente
+                // de los bugs anteriores).
+                pnlChat.AutoScrollPosition = new Point(0, int.MaxValue);
+            }
+            catch { /* tolerar */ }
         }
     }
 }

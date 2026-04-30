@@ -6,7 +6,9 @@
 //  porque todos los campos nuevos tienen valores por defecto.
 // ============================================================
 
+using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace OPENGIOAI.Entidades
 {
@@ -94,6 +96,79 @@ namespace OPENGIOAI.Entidades
                 ? Nombre
                 : System.Globalization.CultureInfo.InvariantCulture
                         .TextInfo.ToTitleCase(IdEfectivo.Replace("_", " "));
+
+        // ── Helpers de parámetros ────────────────────────────────────────────
+
+        /// <summary>
+        /// Valida un objeto JSON con los valores de parámetros contra <see cref="Parametros"/>.
+        /// Devuelve la lista de errores legibles (vacía si todo es válido).
+        /// Reusable por la UI (botón Probar) y el agente (HerramientaSkill).
+        /// </summary>
+        public List<string> ValidarParametros(JObject? valores)
+        {
+            var errores = new List<string>();
+            if (Parametros == null || Parametros.Count == 0) return errores;
+
+            valores ??= new JObject();
+
+            foreach (var p in Parametros)
+            {
+                bool presente = valores.TryGetValue(p.Nombre, out var token)
+                                && token != null
+                                && token.Type != JTokenType.Null;
+
+                bool vacio = presente
+                             && token!.Type == JTokenType.String
+                             && string.IsNullOrWhiteSpace(token.ToString());
+
+                if (p.Requerido && (!presente || vacio))
+                {
+                    string desc = string.IsNullOrWhiteSpace(p.Descripcion)
+                        ? ""
+                        : $" — {p.Descripcion}";
+                    errores.Add($"Falta parámetro requerido: '{p.Nombre}' ({p.Tipo}){desc}");
+                    continue;
+                }
+
+                if (!presente) continue;
+
+                // Validar opciones (enum)
+                if (p.Opciones != null && p.Opciones.Count > 0)
+                {
+                    string actual = token!.ToString();
+                    bool ok = p.Opciones.Any(o =>
+                        o.Equals(actual, System.StringComparison.OrdinalIgnoreCase));
+                    if (!ok)
+                        errores.Add(
+                            $"Parámetro '{p.Nombre}' debe ser uno de: " +
+                            $"{string.Join(", ", p.Opciones)} (recibido: '{actual}')");
+                }
+
+                // Validar tipo numérico
+                if (p.Tipo.Equals("number", System.StringComparison.OrdinalIgnoreCase) ||
+                    p.Tipo.Equals("integer", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    string actual = token!.ToString();
+                    if (!double.TryParse(actual,
+                            System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out _))
+                        errores.Add(
+                            $"Parámetro '{p.Nombre}' debe ser numérico (recibido: '{actual}')");
+                }
+
+                // Validar tipo booleano
+                if (p.Tipo.Equals("boolean", System.StringComparison.OrdinalIgnoreCase) ||
+                    p.Tipo.Equals("bool", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    string actual = token!.ToString().Trim().ToLowerInvariant();
+                    if (actual != "true" && actual != "false")
+                        errores.Add(
+                            $"Parámetro '{p.Nombre}' debe ser true/false (recibido: '{actual}')");
+                }
+            }
+
+            return errores;
+        }
     }
 
     /// <summary>Parámetro de un skill — define nombre, tipo y si es obligatorio.</summary>
@@ -102,7 +177,7 @@ namespace OPENGIOAI.Entidades
         /// <summary>Nombre del parámetro tal como se usa en la llamada Python.</summary>
         public string Nombre { get; set; } = "";
 
-        /// <summary>Tipo JSON Schema: "string" · "number" · "boolean" · "array"</summary>
+        /// <summary>Tipo JSON Schema: "string" · "number" · "integer" · "boolean" · "array"</summary>
         public string Tipo { get; set; } = "string";
 
         /// <summary>Descripción breve del parámetro.</summary>
@@ -110,5 +185,17 @@ namespace OPENGIOAI.Entidades
 
         /// <summary>Indica si el parámetro es obligatorio. Por defecto true.</summary>
         public bool Requerido { get; set; } = true;
+
+        /// <summary>
+        /// Valor por defecto (string). Se usa para prellenar el diálogo de prueba
+        /// y para sugerir al LLM. Vacío = sin default.
+        /// </summary>
+        public string ValorPorDefecto { get; set; } = "";
+
+        /// <summary>
+        /// Lista cerrada de valores aceptados (enum). Vacía = libre.
+        /// Si tiene elementos, el diálogo lo mostrará como ComboBox.
+        /// </summary>
+        public List<string> Opciones { get; set; } = new();
     }
 }

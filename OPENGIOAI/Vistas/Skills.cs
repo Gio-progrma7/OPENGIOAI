@@ -6,6 +6,7 @@
 //  Python y lo escribe como .py listo para ejecutar.
 // ============================================================
 
+using Newtonsoft.Json.Linq;
 using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.ServiciosAI;
@@ -40,6 +41,17 @@ namespace OPENGIOAI.Vistas
 
         // ── Referencia al TabControl inferior ────────────────────────────────
         private TabControl     _tabInferior     = null!;
+
+        // ── Tab Parámetros (editor visual) ───────────────────────────────────
+        private TabPage          _tabParams      = null!;
+        private DataGridView     _gridParams     = null!;
+        private Label            _lblParamsHint  = null!;
+        private Button           _btnParamAdd    = null!;
+        private Button           _btnParamEdit   = null!;
+        private Button           _btnParamDelete = null!;
+        private Button           _btnParamUp     = null!;
+        private Button           _btnParamDown   = null!;
+        private List<SkillParametro> _paramsActuales = new();
 
         // ── Hub ───────────────────────────────────────────────────────────────
         private Panel          _pnlHub         = null!;
@@ -125,6 +137,9 @@ namespace OPENGIOAI.Vistas
             pnlContenedor.Dock = DockStyle.Fill;
             tabSkills.Controls.Add(pnlContenedor);
 
+            // ── Tab: 🔧 Parámetros ────────────────────────────────────────────
+            ConstruirTabParametros();
+
             // ── Tab: 📄 Output / Log ──────────────────────────────────────────
             var tabLog = new TabPage
             {
@@ -145,6 +160,7 @@ namespace OPENGIOAI.Vistas
                 Name      = "tabInferior"
             };
             tabInferior.TabPages.Add(tabSkills);
+            tabInferior.TabPages.Add(_tabParams);
             tabInferior.TabPages.Add(tabLog);
             Controls.Add(tabInferior);
             _tabInferior = tabInferior;
@@ -229,6 +245,296 @@ namespace OPENGIOAI.Vistas
 
             // ── Panel Agente Creador ──────────────────────────────────────────
             ConstruirPanelCreador();
+        }
+
+        // ── Tab Parámetros (editor visual) ───────────────────────────────────
+
+        /// <summary>
+        /// Construye el tab "🔧 Parámetros" con grid + toolbar.
+        /// El usuario edita los parámetros del skill activo sin tocar el markdown:
+        /// el grid es la fuente de verdad y al cambiar se reescribe la sección
+        /// ## Parámetros en txtCodigo automáticamente.
+        /// </summary>
+        private void ConstruirTabParametros()
+        {
+            _tabParams = new TabPage
+            {
+                Text      = "  🔧  Parámetros  ",
+                BackColor = ColorFondo,
+                Padding   = new Padding(0)
+            };
+
+            // ── Hint superior ────────────────────────────────────────────────
+            _lblParamsHint = new Label
+            {
+                Dock      = DockStyle.Top,
+                Height    = 36,
+                Text      = "Define aquí los parámetros que el skill aceptará. " +
+                            "Se sincronizan automáticamente con la sección " +
+                            "'## Parámetros' del markdown.",
+                Font      = new Font("Segoe UI", 8.5f),
+                ForeColor = ColorTextoSecundario,
+                BackColor = Color.FromArgb(22, 33, 52),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding   = new Padding(12, 0, 12, 0)
+            };
+
+            // ── Toolbar ──────────────────────────────────────────────────────
+            var toolbar = new Panel
+            {
+                Dock      = DockStyle.Top,
+                Height    = 40,
+                BackColor = ColorCard
+            };
+
+            _btnParamAdd    = CrearBtnToolbar("➕  Añadir",   ColorVerde);
+            _btnParamEdit   = CrearBtnToolbar("✏  Editar",   Color.FromArgb(96, 165, 250));
+            _btnParamDelete = CrearBtnToolbar("🗑  Eliminar", ColorRojo);
+            _btnParamUp     = CrearBtnToolbar("▲",            ColorTextoSecundario);
+            _btnParamDown   = CrearBtnToolbar("▼",            ColorTextoSecundario);
+
+            _btnParamAdd.Click    += (_, _) => OnParamAdd();
+            _btnParamEdit.Click   += (_, _) => OnParamEdit();
+            _btnParamDelete.Click += (_, _) => OnParamDelete();
+            _btnParamUp.Click     += (_, _) => OnParamMove(-1);
+            _btnParamDown.Click   += (_, _) => OnParamMove(+1);
+
+            int x = 8;
+            foreach (var b in new[] { _btnParamAdd, _btnParamEdit, _btnParamDelete })
+            {
+                b.Location = new Point(x, 6);
+                toolbar.Controls.Add(b);
+                x += b.Width + 6;
+            }
+            x += 12;
+            _btnParamUp.Width = 40;
+            _btnParamDown.Width = 40;
+            _btnParamUp.Location   = new Point(x, 6); x += 44;
+            _btnParamDown.Location = new Point(x, 6);
+            toolbar.Controls.Add(_btnParamUp);
+            toolbar.Controls.Add(_btnParamDown);
+
+            // ── Grid ─────────────────────────────────────────────────────────
+            _gridParams = new DataGridView
+            {
+                Dock                       = DockStyle.Fill,
+                BackgroundColor            = ColorFondo,
+                BorderStyle                = BorderStyle.None,
+                AllowUserToAddRows         = false,
+                AllowUserToDeleteRows      = false,
+                AllowUserToResizeRows      = false,
+                ReadOnly                   = true,
+                MultiSelect                = false,
+                SelectionMode              = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode        = DataGridViewAutoSizeColumnsMode.Fill,
+                RowHeadersVisible          = false,
+                EnableHeadersVisualStyles  = false,
+                GridColor                  = ColorBorde,
+                Font                       = new Font("Segoe UI", 9f),
+                ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor = ColorCard,
+                    ForeColor = ColorTextoPrincipal,
+                    Font      = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                    Alignment = DataGridViewContentAlignment.MiddleLeft,
+                    Padding   = new Padding(8, 0, 8, 0),
+                    SelectionBackColor = ColorCard,
+                    SelectionForeColor = ColorTextoPrincipal,
+                },
+                DefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor          = ColorFondo,
+                    ForeColor          = ColorTextoPrincipal,
+                    SelectionBackColor = Color.FromArgb(45, 58, 80),
+                    SelectionForeColor = ColorTextoPrincipal,
+                    Padding            = new Padding(8, 0, 8, 0),
+                },
+                ColumnHeadersHeight        = 30,
+                RowTemplate                = { Height = 26 },
+            };
+
+            _gridParams.Columns.AddRange(new DataGridViewColumn[]
+            {
+                new DataGridViewTextBoxColumn { HeaderText = "Nombre",      Name = "nombre",     FillWeight = 22 },
+                new DataGridViewTextBoxColumn { HeaderText = "Tipo",        Name = "tipo",       FillWeight = 12 },
+                new DataGridViewTextBoxColumn { HeaderText = "Req",         Name = "requerido",  FillWeight =  8 },
+                new DataGridViewTextBoxColumn { HeaderText = "Default",     Name = "default",    FillWeight = 14 },
+                new DataGridViewTextBoxColumn { HeaderText = "Opciones",    Name = "opciones",   FillWeight = 14 },
+                new DataGridViewTextBoxColumn { HeaderText = "Descripción", Name = "descripcion",FillWeight = 30 },
+            });
+
+            _gridParams.CellDoubleClick += (_, _) => OnParamEdit();
+
+            // ── Empty state ──────────────────────────────────────────────────
+            _tabParams.Controls.Add(_gridParams);
+            _tabParams.Controls.Add(toolbar);
+            _tabParams.Controls.Add(_lblParamsHint);
+        }
+
+        private static Button CrearBtnToolbar(string texto, Color color) => new Button
+        {
+            Text      = texto,
+            Size      = new Size(96, 28),
+            FlatStyle = FlatStyle.Flat,
+            ForeColor = color,
+            BackColor = Color.FromArgb(15, 23, 42),
+            Cursor    = Cursors.Hand,
+            Font      = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+            FlatAppearance = { BorderColor = Color.FromArgb(51, 65, 85), BorderSize = 1 }
+        };
+
+        // ── Acciones del tab Parámetros ──────────────────────────────────────
+
+        private void OnParamAdd()
+        {
+            if (_skillActual == null)
+            {
+                Log("Selecciona un skill para añadirle parámetros.", ColorAmbar);
+                return;
+            }
+            var nuevo = DialogoEditarParametro.Mostrar(null, this);
+            if (nuevo == null) return;
+
+            // Evitar duplicados por nombre
+            if (_paramsActuales.Any(p => p.Nombre.Equals(nuevo.Nombre, StringComparison.OrdinalIgnoreCase)))
+            {
+                Log($"Ya existe un parámetro con nombre '{nuevo.Nombre}'.", ColorRojo);
+                return;
+            }
+
+            _paramsActuales.Add(nuevo);
+            SincronizarParametros();
+        }
+
+        private void OnParamEdit()
+        {
+            if (_skillActual == null) return;
+            int idx = ParamSeleccionado();
+            if (idx < 0) return;
+
+            var existente = _paramsActuales[idx];
+            var editado = DialogoEditarParametro.Mostrar(existente, this);
+            if (editado == null) return;
+
+            // Si renombra, validar duplicado
+            if (!editado.Nombre.Equals(existente.Nombre, StringComparison.OrdinalIgnoreCase) &&
+                _paramsActuales.Any(p => p.Nombre.Equals(editado.Nombre, StringComparison.OrdinalIgnoreCase)))
+            {
+                Log($"Ya existe un parámetro con nombre '{editado.Nombre}'.", ColorRojo);
+                return;
+            }
+
+            _paramsActuales[idx] = editado;
+            SincronizarParametros(idx);
+        }
+
+        private void OnParamDelete()
+        {
+            if (_skillActual == null) return;
+            int idx = ParamSeleccionado();
+            if (idx < 0) return;
+
+            var p = _paramsActuales[idx];
+            var r = MessageBox.Show(
+                $"¿Eliminar el parámetro '{p.Nombre}'?",
+                "Confirmar",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (r != DialogResult.Yes) return;
+
+            _paramsActuales.RemoveAt(idx);
+            SincronizarParametros(Math.Min(idx, _paramsActuales.Count - 1));
+        }
+
+        private void OnParamMove(int delta)
+        {
+            if (_skillActual == null) return;
+            int idx = ParamSeleccionado();
+            if (idx < 0) return;
+
+            int dest = idx + delta;
+            if (dest < 0 || dest >= _paramsActuales.Count) return;
+
+            (_paramsActuales[idx], _paramsActuales[dest]) =
+                (_paramsActuales[dest], _paramsActuales[idx]);
+
+            SincronizarParametros(dest);
+        }
+
+        private int ParamSeleccionado()
+        {
+            if (_gridParams.SelectedRows.Count == 0)
+            {
+                if (_gridParams.CurrentRow != null) return _gridParams.CurrentRow.Index;
+                return -1;
+            }
+            return _gridParams.SelectedRows[0].Index;
+        }
+
+        /// <summary>
+        /// Refresca el grid desde <see cref="_paramsActuales"/> y reescribe la
+        /// sección ## Parámetros en txtCodigo. Llamar tras cualquier cambio.
+        /// </summary>
+        private void SincronizarParametros(int filaSeleccionada = -1)
+        {
+            // 1. Refrescar grid
+            RefrescarGridParametros();
+
+            if (filaSeleccionada >= 0 && filaSeleccionada < _gridParams.Rows.Count)
+            {
+                _gridParams.ClearSelection();
+                _gridParams.Rows[filaSeleccionada].Selected = true;
+                _gridParams.CurrentCell = _gridParams.Rows[filaSeleccionada].Cells[0];
+            }
+
+            // 2. Reescribir la sección ## Parámetros en el editor de markdown
+            string markdown = txtCodigo.Text ?? "";
+            string actualizado = SkillMdParser.ActualizarSeccionParametros(
+                markdown, _paramsActuales);
+
+            if (actualizado != markdown)
+            {
+                int caretAnterior = txtCodigo.SelectionStart;
+                txtCodigo.Text = actualizado;
+                // No reposicionar caret si el usuario no estaba editando
+                txtCodigo.SelectionStart = Math.Min(caretAnterior, txtCodigo.TextLength);
+            }
+
+            // 3. Actualizar resumen en la cabecera del editor
+            if (_skillActual != null)
+            {
+                _skillActual.Parametros = new List<SkillParametro>(_paramsActuales);
+                string firma = ConstruirFirmaParametros(_skillActual);
+                txtDescripcion.Text = $"Categoría: {_skillActual.Categoria}  |  " +
+                                      $"Estado: {(_skillActual.Activa ? "Activa" : "Inactiva")}  |  " +
+                                      $"ID: {_skillActual.IdEfectivo}" +
+                                      (string.IsNullOrEmpty(firma) ? "" : $"\r\nParámetros: {firma}");
+            }
+        }
+
+        private void RefrescarGridParametros()
+        {
+            _gridParams.Rows.Clear();
+            foreach (var p in _paramsActuales)
+            {
+                int rowIdx = _gridParams.Rows.Add(
+                    p.Nombre,
+                    p.Tipo,
+                    p.Requerido ? "✓" : "",
+                    p.ValorPorDefecto,
+                    p.Opciones != null && p.Opciones.Count > 0
+                        ? string.Join(", ", p.Opciones)
+                        : "",
+                    p.Descripcion);
+
+                // Resaltar requeridos
+                if (p.Requerido)
+                {
+                    _gridParams.Rows[rowIdx].Cells["nombre"].Style.ForeColor = ColorAmbar;
+                    _gridParams.Rows[rowIdx].Cells["nombre"].Style.Font =
+                        new Font("Segoe UI", 9f, FontStyle.Bold);
+                    _gridParams.Rows[rowIdx].Cells["requerido"].Style.ForeColor = ColorVerde;
+                }
+            }
         }
 
         /// <summary>
@@ -621,6 +927,22 @@ namespace OPENGIOAI.Vistas
                 AutoEllipsis = true
             };
 
+            // Badge de parámetros (cuántos y cuántos requeridos)
+            int totalParams = skill.Parametros?.Count ?? 0;
+            int reqParams   = skill.Parametros?.Count(p => p.Requerido) ?? 0;
+            var lblParams = new Label
+            {
+                Text      = totalParams == 0
+                            ? "🔧 sin parámetros"
+                            : $"🔧 {totalParams} param · {reqParams} req",
+                Font      = new Font("Segoe UI", 7.5f, FontStyle.Bold),
+                ForeColor = totalParams == 0
+                            ? ColorTextoSecundario
+                            : (reqParams > 0 ? ColorAmbar : ColorVerde),
+                Location  = new Point(12, lblDesc.Bottom + 2),
+                AutoSize  = true
+            };
+
             // Barra de botones
             var flow = new FlowLayoutPanel
             {
@@ -661,6 +983,7 @@ namespace OPENGIOAI.Vistas
             panel.Controls.Add(lblEstado);
             panel.Controls.Add(lblNombre);
             panel.Controls.Add(lblDesc);
+            panel.Controls.Add(lblParams);
             panel.Controls.Add(flow);
             panel.RedondearPanel(borderRadius: 10, borderColor: ColorBorde);
 
@@ -716,9 +1039,18 @@ namespace OPENGIOAI.Vistas
             txtRuta.Text        = string.IsNullOrWhiteSpace(skill.RutaMd)
                 ? skill.RutaScript
                 : skill.RutaMd;
+
+            // Resumen de parámetros: firma compacta para el usuario
+            string firma = ConstruirFirmaParametros(skill);
             txtDescripcion.Text = $"Categoría: {skill.Categoria}  |  " +
                                   $"Estado: {(skill.Activa ? "Activa" : "Inactiva")}  |  " +
-                                  $"ID: {skill.IdEfectivo}";
+                                  $"ID: {skill.IdEfectivo}" +
+                                  (string.IsNullOrEmpty(firma) ? "" : $"\r\nParámetros: {firma}");
+
+            // Refrescar el editor visual de parámetros (tab 🔧 Parámetros)
+            _paramsActuales = new List<SkillParametro>(
+                skill.Parametros ?? new List<SkillParametro>());
+            RefrescarGridParametros();
 
             txtCodigo.Focus();
             Log($"Skill cargado: {skill.NombreEfectivo}", ColorVerde);
@@ -851,7 +1183,7 @@ if __name__ == ""__main__"":
 ```
 
 ## Parámetros
-- nombre: ejemplo | tipo: string | requerido: false | descripcion: Parámetro de ejemplo
+- nombre: ejemplo | tipo: string | requerido: false | descripcion: Parámetro de ejemplo | default: hola
 ";
 
             File.WriteAllText(rutaMd, template, Encoding.UTF8);
@@ -876,12 +1208,21 @@ if __name__ == ""__main__"":
                 return;
             }
 
-            // Guardar antes de probar
+            // Guardar antes de probar (esto re-parsea el .md, así tomamos
+            // los parámetros más recientes del editor)
             btnGuardar_Click(sender, e);
             await Task.Delay(300); // dar tiempo al guardado async
 
+            // Re-parsear desde disco para tener los parámetros actualizados
+            Skill skillParaProbar = _skillActual;
+            if (!string.IsNullOrWhiteSpace(_skillActual.RutaMd) && File.Exists(_skillActual.RutaMd))
+            {
+                var fresco = SkillMdParser.Parsear(_skillActual.RutaMd);
+                if (fresco != null) skillParaProbar = fresco;
+            }
+
             // Resolver ruta del .py
-            string idSkill = _skillActual.IdEfectivo;
+            string idSkill = skillParaProbar.IdEfectivo;
             string rutaPy  = Path.Combine(RutaSkill, "skills", $"{idSkill}.py");
 
             if (!File.Exists(rutaPy))
@@ -890,10 +1231,51 @@ if __name__ == ""__main__"":
                 return;
             }
 
-            EjecutarScript("python", $"\"{rutaPy}\"");
+            // Pedir parámetros al usuario si el skill los define
+            string paramsJson = "{}";
+            if (skillParaProbar.Parametros != null && skillParaProbar.Parametros.Count > 0)
+            {
+                var valores = DialogoParametrosSkill.MostrarYObtener(skillParaProbar, this);
+                if (valores == null)
+                {
+                    Log("Prueba cancelada por el usuario.", ColorAmbar);
+                    return;
+                }
+                paramsJson = valores.ToString(Newtonsoft.Json.Formatting.None);
+
+                // Mostrar resumen en el log
+                int dados = valores.Properties().Count();
+                Log($"Probando con {dados} parámetro(s): {Truncar(paramsJson, 200)}", ColorAcento);
+            }
+
+            EjecutarScript("python", $"\"{rutaPy}\"", paramsJson);
         }
 
-        private void EjecutarScript(string ejecutable, string argumentos)
+        private static string Truncar(string s, int n)
+            => string.IsNullOrEmpty(s) || s.Length <= n ? s ?? "" : s[..n] + "…";
+
+        /// <summary>
+        /// Construye una firma legible con los parámetros del skill.
+        /// Formato: "ruta: string*, sheet: string, timeout: number=30"
+        /// (* = requerido; =valor = valor por defecto)
+        /// </summary>
+        private static string ConstruirFirmaParametros(Skill skill)
+        {
+            if (skill.Parametros == null || skill.Parametros.Count == 0)
+                return "";
+
+            var partes = skill.Parametros.Select(p =>
+            {
+                string sufijo = p.Requerido ? "*" : "";
+                string defecto = !string.IsNullOrWhiteSpace(p.ValorPorDefecto)
+                    ? $"={p.ValorPorDefecto}"
+                    : "";
+                return $"{p.Nombre}: {p.Tipo}{sufijo}{defecto}";
+            });
+            return string.Join(", ", partes);
+        }
+
+        private void EjecutarScript(string ejecutable, string argumentos, string skillParamsJson = "{}")
         {
             if (_procesoActual != null && !_procesoActual.HasExited)
             {
@@ -919,16 +1301,26 @@ if __name__ == ""__main__"":
                 StandardErrorEncoding  = Encoding.UTF8
             };
 
+            // Inyectar parámetros del usuario al script (mismo contrato que el agente)
+            info.Environment["SKILL_PARAMS"]    = skillParamsJson ?? "{}";
+            info.Environment["SKILL_RUTA_BASE"] = RutaSkill ?? "";
+
             _procesoActual = new Process
             {
                 StartInfo           = info,
                 EnableRaisingEvents = true
             };
 
+            // Buffer del stdout para intentar renderizar el JSON final del skill
+            var sbStdout = new StringBuilder();
+
             _procesoActual.OutputDataReceived += (s, e) =>
             {
                 if (e.Data != null)
+                {
+                    sbStdout.AppendLine(e.Data);
                     AppendOutput(e.Data + "\n", ColorTextoSecundario);
+                }
             };
 
             _procesoActual.ErrorDataReceived += (s, e) =>
@@ -944,6 +1336,10 @@ if __name__ == ""__main__"":
                     ? "Proceso terminado correctamente.\n"
                     : $"Proceso terminado con error (codigo {codigo})\n";
                 AppendOutput(msg, codigo == 0 ? ColorVerde : ColorRojo);
+
+                // Render JSON-aware del resultado, si el skill cumple el contrato
+                try { SkillResultRenderer.RenderizarAlFinal(_rtbOutput, sbStdout.ToString()); }
+                catch { /* render best-effort, no romper la UI por un parseo */ }
 
                 if (IsHandleCreated)
                     Invoke(() =>
@@ -1006,6 +1402,8 @@ if __name__ == ""__main__"":
                     txtNombre.Text  = "";
                     txtRuta.Text    = "";
                     txtDescripcion.Text = "";
+                    _paramsActuales.Clear();
+                    RefrescarGridParametros();
                 }
 
                 Log($"Skill eliminado: {nombre}", ColorAmbar);
@@ -1879,9 +2277,75 @@ if __name__ == ""__main__"":
             LogCreador($"  ✔ Script listo: {skillParsed.IdEfectivo}.py ({pyBytes / 1024.0:F1} KB)", ColorVerde);
             AvanzarProgreso(50);
 
+            // ── Fin de Fase 2: cargar el skill recién generado en el editor ──
+            // Así el usuario ve el código + los parámetros parseados en el tab
+            // 🔧 Parámetros antes de que arranque la prueba.
+            int totalParams = skillParsed.Parametros?.Count ?? 0;
+            int reqParams   = skillParsed.Parametros?.Count(p => p.Requerido) ?? 0;
+            LogCreador(
+                $"  ℹ Parámetros detectados: {totalParams} ({reqParams} requeridos)",
+                Color.FromArgb(100, 116, 139));
+
+            if (IsHandleCreated)
+            {
+                Invoke(() =>
+                {
+                    CargarDatos();
+                    var refrescado = SkillMdParser.Parsear(rutaMd) ?? skillParsed;
+                    CargarEnEditor(refrescado);
+                });
+            }
+
             // ── FASE 3: Prueba iterativa con corrección ───────────────────────
             MarcarFaseActiva(3);
             LogCreador("\n━━ FASE 3/4 — Probando el skill ━━", Color.FromArgb(167, 243, 208));
+
+            // Si el skill define parámetros requeridos, pedirlos al usuario
+            // ANTES de la primera ejecución. Sin esto, fase 3 fallaría siempre
+            // con KeyError aunque el código sea correcto.
+            string paramsPrueba = "{}";
+            if (totalParams > 0)
+            {
+                EstadoCreador("Esperando valores de prueba...", Color.FromArgb(129, 140, 248));
+                LogCreador(
+                    "  ⏸ Pidiendo valores de prueba al usuario para los parámetros...",
+                    Color.FromArgb(165, 180, 252));
+
+                JObject? valores = null;
+                if (IsHandleCreated)
+                {
+                    Invoke(() =>
+                    {
+                        valores = DialogoParametrosSkill.MostrarYObtener(skillParsed, this);
+                    });
+                }
+
+                if (valores == null)
+                {
+                    // Usuario canceló — saltamos fase 3 pero conservamos el skill
+                    LogCreador(
+                        "  ⏭ Prueba omitida por el usuario. El skill se guardó sin verificar.",
+                        ColorAmbar);
+                    EstadoCreador("⏭ Prueba omitida — skill guardado", ColorAmbar);
+                    MarcarFaseActiva(4);
+                    AvanzarProgreso(95);
+                    var todosSinProbar = SkillLoader.CargarTodas(RutaSkill);
+                    await SkillRunnerHelper.GenerarAsync(RutaSkill, todosSinProbar);
+                    LogCreador($"", Color.White);
+                    LogCreador($"  ⚠ SKILL GUARDADO SIN PROBAR", ColorAmbar);
+                    LogCreador($"  Archivo: {rutaMd}", Color.FromArgb(71, 85, 105));
+                    LogCreador(
+                        "  Pulsa 'Probar' en el editor cuando quieras ejecutarlo.",
+                        ColorAmbar);
+                    if (IsHandleCreated) Invoke(() => CargarDatos());
+                    return;
+                }
+
+                paramsPrueba = valores.ToString(Newtonsoft.Json.Formatting.None);
+                LogCreador(
+                    $"  ✔ Valores capturados: {Truncar(paramsPrueba, 200)}",
+                    Color.FromArgb(100, 200, 155));
+            }
 
             bool exitoso   = false;
             string? stdout = null;
@@ -1895,7 +2359,7 @@ if __name__ == ""__main__"":
                 LogCreador($"\n  ▶ Ejecución {intento}/{MAX_INTENTOS}", Color.FromArgb(148, 163, 184));
                 AvanzarProgreso(progBase + (intento - 1) * 12);
 
-                (stdout, stderr) = await EjecutarPythonAsync(rutaPy, ct);
+                (stdout, stderr) = await EjecutarPythonAsync(rutaPy, ct, paramsPrueba, RutaSkill);
 
                 // Mostrar salida recortada
                 if (!string.IsNullOrWhiteSpace(stdout))
@@ -2043,7 +2507,9 @@ if __name__ == ""__main__"":
 ```
 
 ## Parametros
-- nombre: param1 | tipo: string | requerido: false | descripcion: Descripcion
+- nombre: param1 | tipo: string | requerido: true | descripcion: Que hace este parametro
+- nombre: param2 | tipo: number | requerido: false | descripcion: ... | default: 30
+- nombre: formato | tipo: string | requerido: false | descripcion: ... | opciones: csv, json, yaml | default: json
 
 REGLAS ABSOLUTAS:
 1. Devuelve SOLO el bloque .md — sin texto antes ni después, sin explicaciones
@@ -2052,7 +2518,14 @@ REGLAS ABSOLUTAS:
 4. Lee params con: json.loads(os.environ.get(""SKILL_PARAMS"", ""{{}}""))
 5. Maneja errores y los incluye en el JSON de salida con status:error
 6. Lee credenciales de {rutaApis} si necesita APIs
-7. El resultado siempre tiene: status, timestamp, duracion, resumen";
+7. El resultado siempre tiene: status, timestamp, duracion, resumen
+8. Sección ## Parametros: incluye TODOS los parámetros que el código realmente usa.
+   Tipos válidos: string, number, integer, boolean, array, object.
+   Campos por línea: nombre, tipo, requerido (true/false), descripcion (corta),
+   default (opcional, valor que se usa si el caller no lo provee), y
+   opciones (opcional, lista cerrada de valores aceptados separados por coma).
+9. Marca como requerido:true SOLO los parámetros sin los que el skill no puede ejecutar.
+   Para los demás, define default: y márcalos requerido:false";
         }
 
         /// <summary>Prompt de sistema para el agente corrector.</summary>
@@ -2090,7 +2563,7 @@ Devuelve SOLO el Python corregido, completo y funcional.";
         /// Ejecuta un script Python y captura stdout y stderr.
         /// </summary>
         private static async Task<(string stdout, string stderr)> EjecutarPythonAsync(
-            string rutaPy, CancellationToken ct)
+            string rutaPy, CancellationToken ct, string paramsJson = "{}", string rutaBase = "")
         {
             var sbOut = new StringBuilder();
             var sbErr = new StringBuilder();
@@ -2106,6 +2579,9 @@ Devuelve SOLO el Python corregido, completo y funcional.";
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding  = Encoding.UTF8
             };
+
+            info.Environment["SKILL_PARAMS"]    = paramsJson ?? "{}";
+            info.Environment["SKILL_RUTA_BASE"] = rutaBase ?? "";
 
             using var proc = new Process { StartInfo = info, EnableRaisingEvents = true };
             var tcsExit    = new TaskCompletionSource<int>();

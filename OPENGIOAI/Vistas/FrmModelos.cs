@@ -34,6 +34,17 @@ namespace OPENGIOAI.Vistas
         {
             InitializeComponent();
             AplicarThema();
+
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
+        }
+
+        private void OnTemaChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnTemaChanged); return; }
+            AplicarThema();
+            Invalidate(true);
         }
 
         private async void FrmModelos_Load(object sender, EventArgs e)
@@ -532,18 +543,18 @@ namespace OPENGIOAI.Vistas
             pnlAntigravity.Enabled = estado;
         }
 
-        // ── Paleta Emerald (consistente con FrmPrincipal / FrmApis / FrmAutomatizaciones) ──
-        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#050505");
-        private static readonly Color BgSurface = ColorTranslator.FromHtml("#0a0a0a");
-        private static readonly Color BgCard    = ColorTranslator.FromHtml("#0f1117");
-        private static readonly Color BgCardHi  = ColorTranslator.FromHtml("#141826");
-        private static readonly Color BgInput   = ColorTranslator.FromHtml("#0b0e16");
-        private static readonly Color Emerald   = ColorTranslator.FromHtml("#10b981");
-        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#34d399");
-        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#064e3b");
-        private static readonly Color TextMain  = ColorTranslator.FromHtml("#f0fdf4");
-        private static readonly Color TextSub   = ColorTranslator.FromHtml("#a7f3d0");
-        private static readonly Color BorderCol = ColorTranslator.FromHtml("#1f2937");
+        // ── Paleta Blue/Teal (consistente con FrmPrincipal / FrmApis / FrmAutomatizaciones) ──
+        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#002647");
+        private static readonly Color BgSurface = ColorTranslator.FromHtml("#00305a");
+        private static readonly Color BgCard    = ColorTranslator.FromHtml("#00305a");
+        private static readonly Color BgCardHi  = ColorTranslator.FromHtml("#003d73");
+        private static readonly Color BgInput   = ColorTranslator.FromHtml("#002647");
+        private static readonly Color Emerald   = ColorTranslator.FromHtml("#3660C9");
+        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#94E6EC");
+        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#1E4545");
+        private static readonly Color TextMain  = ColorTranslator.FromHtml("#FFFFFF");
+        private static readonly Color TextSub   = ColorTranslator.FromHtml("#B6E3D4");
+        private static readonly Color BorderCol = ColorTranslator.FromHtml("#1a3a5c");
 
         /// <summary>
         /// Aplica la paleta Emerald al formulario completo: fondo, paneles, botones,

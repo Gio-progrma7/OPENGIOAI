@@ -34,7 +34,18 @@ namespace OPENGIOAI.Vistas
                 ?.SetValue(pnlContenedor, true);
             AplicarThema();
 
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
 
+
+        }
+
+        private void OnTemaChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnTemaChanged); return; }
+            AplicarThema();
+            Invalidate(true);
         }
 
         private void FrmRutas_Load(object sender, EventArgs e)
@@ -401,17 +412,38 @@ namespace OPENGIOAI.Vistas
 
         private void AplicarThema()
         {
-            textBoxRuta.RedondearTextBox(borderRadius: 10, borderColor: Color.RoyalBlue);
-            textBoxDescripcion.RedondearTextBox(borderRadius: 10, borderColor: Color.RoyalBlue);
+            BackColor = EmeraldTheme.BgDeep;
+            ForeColor = EmeraldTheme.TextPrimary;
+
+            if (pnlContenedor != null)
+            {
+                pnlContenedor.BackColor = EmeraldTheme.BgDeep;
+                pnlContenedor.ForeColor = EmeraldTheme.TextPrimary;
+            }
+
+            if (panelFormulario != null)
+            {
+                panelFormulario.BackColor = EmeraldTheme.BgCard;
+                panelFormulario.ForeColor = EmeraldTheme.TextPrimary;
+                panelFormulario.Redondear();
+            }
+
+            textBoxRuta.BackColor = EmeraldTheme.BgDeep;
+            textBoxRuta.ForeColor = EmeraldTheme.TextPrimary;
+            textBoxDescripcion.BackColor = EmeraldTheme.BgDeep;
+            textBoxDescripcion.ForeColor = EmeraldTheme.TextPrimary;
+
+            textBoxRuta.RedondearTextBox(borderRadius: 10, borderColor: EmeraldTheme.Emerald500);
+            textBoxDescripcion.RedondearTextBox(borderRadius: 10, borderColor: EmeraldTheme.Emerald500);
+
             btnAgregar.AplicarEstiloOutline(
-                colorBorde: Color.RoyalBlue,
+                colorBorde: EmeraldTheme.Emerald500,
                 borderRadius: 9
             );
             btnCancelar.AplicarEstiloOutline(
                 colorBorde: Color.DarkRed,
                 borderRadius: 9
             );
-            panelFormulario.Redondear();
 
         }
 

@@ -34,21 +34,31 @@ namespace OPENGIOAI.ServiciosTelegram
             {
                 var url = $"https://api.telegram.org/bot{token}/sendMessage";
 
-                var parameters = new Dictionary<string, string>
-                {
-                    { "chat_id", chatId.ToString() },
-                    { "text", mensaje ?? string.Empty },
-                    {"parse_mode", "HTML" }
-                };
+                // Usar JSON + UTF-8 explícito en lugar de FormUrlEncodedContent
+                // para que los emojis (🔍 ⚙️ 🛡️ ✨) lleguen intactos en lugar de "??".
+                object payload = inlineKeyboard != null
+                    ? new
+                    {
+                        chat_id      = chatId,
+                        text         = mensaje ?? string.Empty,
+                        parse_mode   = "HTML",
+                        reply_markup = inlineKeyboard
+                    }
+                    : new
+                    {
+                        chat_id    = chatId,
+                        text       = mensaje ?? string.Empty,
+                        parse_mode = "HTML"
+                    };
 
-                if (inlineKeyboard != null)
+                string jsonBody = JsonSerializer.Serialize(payload, new JsonSerializerOptions
                 {
-                    var replyMarkupJson = JsonSerializer.Serialize(inlineKeyboard);
-                    parameters.Add("reply_markup", replyMarkupJson);
-                }
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                });
 
-                using var client = new HttpClient();
-                using var content = new FormUrlEncodedContent(parameters);
+                using var client  = new HttpClient();
+                using var content = new StringContent(
+                    jsonBody, System.Text.Encoding.UTF8, "application/json");
 
                 var response = await client.PostAsync(url, content).ConfigureAwait(false);
 
@@ -328,10 +338,10 @@ namespace OPENGIOAI.ServiciosTelegram
                 using var client = new HttpClient();
                 using var form   = new MultipartFormDataContent();
 
-                form.Add(new StringContent(chatId.ToString()), "chat_id");
+                form.Add(new StringContent(chatId.ToString(), System.Text.Encoding.UTF8), "chat_id");
 
                 if (!string.IsNullOrWhiteSpace(caption))
-                    form.Add(new StringContent(caption), "caption");
+                    form.Add(new StringContent(caption, System.Text.Encoding.UTF8, "text/plain"), "caption");
 
                 var fileBytes   = await File.ReadAllBytesAsync(rutaArchivo);
                 var fileContent = new ByteArrayContent(fileBytes);
