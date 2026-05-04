@@ -179,7 +179,8 @@ namespace OPENGIOAI.Vistas
             _items.Add(new() { Icono = "🔎", Titulo = "Patrones",         Grupo = "INTELIGENCIA",  Accion = AbrirPatrones,        TipoForm = typeof(FrmPatrones) });
             _items.Add(new() { Icono = "🪡", Titulo = "Embeddings",       Grupo = "INTELIGENCIA",  Accion = AbrirEmbeddings,      TipoForm = typeof(FrmEmbeddings) });
 
-            // OBSERVABILIDAD — flotantes (no entran al stack)
+            // OBSERVABILIDAD — el dashboard entra al stack; los otros son flotantes
+            _items.Add(new() { Icono = "📈", Titulo = "Dashboard",        Grupo = "OBSERVABILIDAD", Accion = AbrirDashboard,                                    TipoForm = typeof(FrmDashboard) });
             _items.Add(new() { Icono = "📊", Titulo = "Tokens",           Grupo = "OBSERVABILIDAD", Accion = () => FrmConsumoTokens.MostrarOTraerAlFrente(this) });
             _items.Add(new() { Icono = "🔬", Titulo = "Traces",           Grupo = "OBSERVABILIDAD", Accion = () => FrmTraces.MostrarOTraerAlFrente(this) });
         }
@@ -260,7 +261,7 @@ namespace OPENGIOAI.Vistas
             pnlSidebarFooter = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 155,
+                Height = 97,
                 BackColor = BgSurface,
                 Padding = new Padding(0, 8, 0, 8)
             };
@@ -763,6 +764,9 @@ namespace OPENGIOAI.Vistas
             string ruta = Miconfiguracion?.MiArchivo?.Ruta ?? "";
             AbrirEnPanel(typeof(FrmEmbeddings), "Embeddings", "🪡", () => new FrmEmbeddings(ruta));
         }
+
+        private void AbrirDashboard() =>
+            AbrirEnPanel(typeof(FrmDashboard), "Dashboard", "📈", () => new FrmDashboard());
 
         // ════════════════════════════════════════════════════════════════════
         //  ATAJOS DE TECLADO

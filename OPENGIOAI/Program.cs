@@ -7,6 +7,7 @@ using OPENGIOAI.Utilerias;
 using OPENGIOAI.Vistas;
 using Serilog;
 using Serilog.Events;
+using System.IO;
 
 namespace OPENGIOAI
 {
@@ -25,13 +26,40 @@ namespace OPENGIOAI
             ApplicationConfiguration.Initialize();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            // Generar ícono de la app si aún no existe
+            string rutaIco = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OPENGIOAI.ico");
+            GeneradorIcono.GenerarSiNoExiste(rutaIco);
+
+            // También generar en el directorio fuente del proyecto para poder
+            // reemplazar logo.ico y que quede embebido en el exe en el próximo build.
+            string? dirFuente = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            string rutaIcoFuente = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "OPENGIOAI", "logo.ico");
+            try
+            {
+                string fullSource = Path.GetFullPath(rutaIcoFuente);
+                if (!File.Exists(fullSource))
+                    GeneradorIcono.Generar(fullSource);
+            }
+            catch { /* no crítico */ }
+
             ConfigurarSerilog();
 
             try
             {
                 var provider = ConstruirContenedor();
                 Log.Information("Aplicación iniciada");
-                Application.Run(provider.GetRequiredService<FrmPrincipal>());
+
+                var mainForm = provider.GetRequiredService<FrmPrincipal>();
+
+                // Aplicar el ícono generado a la ventana principal en runtime
+                if (File.Exists(rutaIco))
+                {
+                    try { mainForm.Icon = new System.Drawing.Icon(rutaIco); }
+                    catch { /* no crítico */ }
+                }
+
+                Application.Run(mainForm);
             }
             catch (Exception ex)
             {

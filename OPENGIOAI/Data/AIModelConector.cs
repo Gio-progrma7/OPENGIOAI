@@ -58,12 +58,13 @@ namespace OPENGIOAI.Data
         private static readonly SemaphoreSlim _antigravityTokenLock = new(1, 1);
 
         /// <summary>
-        /// Devuelve un token ADC vigente. Si expiró lo renueva.
-        /// Aprovecha la misma llamada para refrescar el Project ID cacheado.
+        /// Devuelve un token vigente para Vertex AI.
+        /// Usa AntigravityOAuthService (OAuth / Service Account / gcloud ADC).
+        /// Cachea el token 55 minutos para evitar requests repetidos.
         /// </summary>
         private static async Task<string> ObtenerTokenAntigravityAsync()
         {
-            // Fast-path: token vigente
+            // Fast-path: token cacheado y vigente
             if (!string.IsNullOrWhiteSpace(_antigravityToken) &&
                 DateTime.UtcNow < _antigravityTokenExpiry)
                 return _antigravityToken;
@@ -71,20 +72,19 @@ namespace OPENGIOAI.Data
             await _antigravityTokenLock.WaitAsync();
             try
             {
-                // Segunda comprobación dentro del lock (double-checked)
+                // Double-checked dentro del lock
                 if (!string.IsNullOrWhiteSpace(_antigravityToken) &&
                     DateTime.UtcNow < _antigravityTokenExpiry)
                     return _antigravityToken;
 
-                // Obtener token y project ID en paralelo
-                var tokenTask   = ServiciosAI.AIServicios.ObtenerTokenGcloudAsync();
+                // Obtener token vía OAuth / Service Account / gcloud (en paralelo con project ID)
+                var tokenTask   = ServiciosAI.AntigravityOAuthService.ObtenerTokenAsync();
                 var projectTask = ServiciosAI.AIServicios.ObtenerProyectoGcloudAsync();
                 await Task.WhenAll(tokenTask, projectTask);
 
                 _antigravityToken       = tokenTask.Result;
                 _antigravityTokenExpiry = DateTime.UtcNow.AddMinutes(55);
 
-                // Actualizar project ID solo si se obtuvo uno válido
                 if (!string.IsNullOrWhiteSpace(projectTask.Result))
                     _antigravityProjectId = projectTask.Result;
 
@@ -411,7 +411,8 @@ namespace OPENGIOAI.Data
                     // Antes era: return $"Error {resp.StatusCode}: {raw}";
                     // Con ese return, RetryPolicy nunca veía el error.
                     if (!resp.IsSuccessStatusCode)
-                       
+                        throw new LlmErrorException(
+                            $"API {(int)resp.StatusCode}: {raw}", resp.StatusCode);
 
                     await AIServicios.MostrarConsumoTokens(ctx.Servicio, raw, ctx.NombreFase, ctx.Modelo);
 

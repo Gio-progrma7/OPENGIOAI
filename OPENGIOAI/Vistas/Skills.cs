@@ -37,7 +37,9 @@ namespace OPENGIOAI.Vistas
         private string         RutaSkill   = "";
         private RichTextBox    _rtbOutput  = null!;
         private Button         _btnNuevo   = null!;
+        private Button         _btnToggleEditorPanel = null!;
         private Label          _lblEditor  = null!;
+        private bool           _editorPanelVisible = true;
 
         // ── Referencia al TabControl inferior ────────────────────────────────
         private TabControl     _tabInferior     = null!;
@@ -82,13 +84,15 @@ namespace OPENGIOAI.Vistas
         private Servicios Agente => _config?.Mimodelo?.Agente  ?? Servicios.Gemenni;
         private string ClavesApis => Utils.ObtenerNombresApis(_listaApis);
 
-        // ── Paleta ────────────────────────────────────────────────────────────
-        private readonly Color ColorFondo            = Color.FromArgb(15,  23,  42);
-        private readonly Color ColorCard             = Color.FromArgb(30,  41,  59);
-        private readonly Color ColorBorde            = Color.FromArgb(51,  65,  85);
-        private readonly Color ColorTextoPrincipal   = Color.FromArgb(241, 245, 249);
-        private readonly Color ColorTextoSecundario  = Color.FromArgb(148, 163, 184);
-        private readonly Color ColorAcento           = Color.FromArgb(37,  99,  235);
+        // ── Paleta (EmeraldTheme) ─────────────────────────────────────────────
+        private Color ColorFondo           => EmeraldTheme.BgDeep;
+        private Color ColorCard            => EmeraldTheme.BgCard;
+        private Color ColorBorde           => EmeraldTheme.IsDark
+                                                ? ColorTranslator.FromHtml("#1a3a5c")
+                                                : ColorTranslator.FromHtml("#C5D8F0");
+        private Color ColorTextoPrincipal  => EmeraldTheme.TextPrimary;
+        private Color ColorTextoSecundario => EmeraldTheme.TextSecondary;
+        private Color ColorAcento          => EmeraldTheme.Emerald500;
         private readonly Color ColorVerde            = Color.FromArgb(52,  211, 153);
         private readonly Color ColorRojo             = Color.FromArgb(248, 113, 113);
         private readonly Color ColorAmbar            = Color.FromArgb(251, 191,  36);
@@ -99,6 +103,17 @@ namespace OPENGIOAI.Vistas
             InitializeComponent();
             _config   = config ?? new ConfiguracionClient();
             RutaSkill = config?.MiArchivo?.Ruta ?? RutasProyecto.ObtenerRutaScripts();
+
+            EmeraldTheme.ThemeChanged += OnTemaChanged;
+            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
+        }
+
+        private void OnTemaChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnTemaChanged); return; }
+            AplicarThema();
+            Invalidate(true);
         }
 
         // ── Inicialización ────────────────────────────────────────────────────
@@ -118,7 +133,7 @@ namespace OPENGIOAI.Vistas
             _rtbOutput = new RichTextBox
             {
                 Dock        = DockStyle.Fill,
-                BackColor   = Color.FromArgb(2, 6, 23),
+                BackColor   = EmeraldTheme.BgDeep,
                 ForeColor   = ColorTextoSecundario,
                 Font        = new Font("Consolas", 9f),
                 ReadOnly    = true,
@@ -131,7 +146,7 @@ namespace OPENGIOAI.Vistas
             var tabSkills = new TabPage
             {
                 Text      = "  📋  Skills  ",
-                BackColor = Color.FromArgb(15, 23, 42),
+                BackColor = ColorFondo,
                 Padding   = new Padding(0)
             };
             pnlContenedor.Dock = DockStyle.Fill;
@@ -144,7 +159,7 @@ namespace OPENGIOAI.Vistas
             var tabLog = new TabPage
             {
                 Text      = "  📄  Output / Log  ",
-                BackColor = Color.FromArgb(2, 6, 18),
+                BackColor = ColorFondo,
                 Padding   = new Padding(0)
             };
             tabLog.Controls.Add(_rtbOutput);
@@ -197,6 +212,30 @@ namespace OPENGIOAI.Vistas
             };
             Controls.Add(_lblEditor);
 
+            _btnToggleEditorPanel = new Button
+            {
+                Text      = "Ocultar panel",
+                Size      = new Size(126, 28),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.FromArgb(167, 243, 208),
+                BackColor = Color.FromArgb(6, 78, 59),
+                Font      = new Font("Segoe UI", 8f, FontStyle.Bold),
+                Cursor    = Cursors.Hand,
+                Name      = "btnToggleEditorPanel",
+                Anchor    = AnchorStyles.Top | AnchorStyles.Right
+            };
+            _btnToggleEditorPanel.FlatAppearance.BorderColor = Color.FromArgb(52, 211, 153);
+            _btnToggleEditorPanel.FlatAppearance.BorderSize  = 1;
+            _btnToggleEditorPanel.MouseEnter += (_, _) =>
+                _btnToggleEditorPanel.BackColor = Color.FromArgb(5, 96, 75);
+            _btnToggleEditorPanel.MouseLeave += (_, _) =>
+                _btnToggleEditorPanel.BackColor = _editorPanelVisible
+                    ? Color.FromArgb(6, 78, 59)
+                    : Color.FromArgb(30, 41, 59);
+            _btnToggleEditorPanel.Click += (_, _) => AlternarPanelEditor();
+            Controls.Add(_btnToggleEditorPanel);
+            PosicionarBotonToggleEditor();
+
             // Actualizar label4 para indicar que es el editor md
             label4.Text = "Markdown completo (frontmatter + código)";
 
@@ -245,6 +284,8 @@ namespace OPENGIOAI.Vistas
 
             // ── Panel Agente Creador ──────────────────────────────────────────
             ConstruirPanelCreador();
+
+            Resize += (_, _) => ActualizarLayoutEditor();
         }
 
         // ── Tab Parámetros (editor visual) ───────────────────────────────────
@@ -794,6 +835,18 @@ namespace OPENGIOAI.Vistas
             // Label editor
             _lblEditor.ForeColor = ColorTextoSecundario;
 
+            if (_btnToggleEditorPanel != null)
+            {
+                _btnToggleEditorPanel.FlatStyle = FlatStyle.Flat;
+                _btnToggleEditorPanel.FlatAppearance.BorderColor = ColorAcento;
+                _btnToggleEditorPanel.ForeColor = Color.FromArgb(167, 243, 208);
+                _btnToggleEditorPanel.BackColor = _editorPanelVisible
+                    ? Color.FromArgb(6, 78, 59)
+                    : Color.FromArgb(30, 41, 59);
+                _btnToggleEditorPanel.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+                _btnToggleEditorPanel.Cursor = Cursors.Hand;
+            }
+
             // Cards container
             pnlContenedor.BackColor = ColorFondo;
 
@@ -830,6 +883,65 @@ namespace OPENGIOAI.Vistas
         }
 
         // ── Cargar datos ──────────────────────────────────────────────────────
+
+        private void AlternarPanelEditor()
+        {
+            _editorPanelVisible = !_editorPanelVisible;
+            ActualizarLayoutEditor();
+        }
+
+        private void ActualizarLayoutEditor()
+        {
+            if (_tabInferior == null || _btnToggleEditorPanel == null) return;
+
+            panel1.Visible = _editorPanelVisible;
+            _lblEditor.Visible = _editorPanelVisible;
+            label4.Visible = _editorPanelVisible;
+
+            int margenIzq = btnGuardar.Left;
+            int topAcciones = _editorPanelVisible
+                ? panel1.Bottom + 11
+                : panel1.Top + 6;
+
+            btnGuardar.Top = topAcciones;
+            btnEjecutar.Top = topAcciones;
+            _btnNuevo.Top = topAcciones;
+            _btnHub.Top = topAcciones;
+            _btnCrearIA.Top = topAcciones;
+
+            _tabInferior.Location = new Point(margenIzq, btnEjecutar.Bottom + 10);
+            _tabInferior.Size = new Size(
+                ClientSize.Width - margenIzq - 10,
+                ClientSize.Height - _tabInferior.Top - 20);
+
+            if (_pnlHub != null && _pnlHub.Visible)
+            {
+                _pnlHub.Location = _tabInferior.Location;
+                _pnlHub.Size = _tabInferior.Size;
+            }
+
+            if (_pnlCreador != null && _pnlCreador.Visible)
+            {
+                _pnlCreador.Location = _tabInferior.Location;
+                _pnlCreador.Size = _tabInferior.Size;
+            }
+
+            PosicionarBotonToggleEditor();
+            _btnToggleEditorPanel.Text = _editorPanelVisible ? "Ocultar panel" : "Ver panel";
+            _btnToggleEditorPanel.BackColor = _editorPanelVisible
+                ? Color.FromArgb(6, 78, 59)
+                : Color.FromArgb(30, 41, 59);
+            _btnToggleEditorPanel.BringToFront();
+        }
+
+        private void PosicionarBotonToggleEditor()
+        {
+            if (_btnToggleEditorPanel == null) return;
+
+            int x = Math.Max(panel1.Left, panel1.Right - _btnToggleEditorPanel.Width);
+            int y = Math.Max(6, panel1.Top - _btnToggleEditorPanel.Height - 4);
+            _btnToggleEditorPanel.Location = new Point(x, y);
+        }
 
         private void CargarDatos()
         {

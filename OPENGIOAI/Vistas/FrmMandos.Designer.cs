@@ -56,6 +56,7 @@ namespace OPENGIOAI.Vistas
             checkBoxArchivosSlack = new CheckBox();
             checkBoxAudio = new CheckBox();
             btnLimpiar = new Button();
+            btnHistorial = new Button();
             btnInfo = new Button();
             pnlChat = new FlowLayoutPanel();
             comboBoxRuta = new ModernComboBox();
@@ -104,6 +105,7 @@ namespace OPENGIOAI.Vistas
             pnlContenedorTxt.Controls.Add(checkBoxArchivosSlack);
             pnlContenedorTxt.Controls.Add(checkBoxAudio);
             pnlContenedorTxt.Controls.Add(btnLimpiar);
+            pnlContenedorTxt.Controls.Add(btnHistorial);
             pnlContenedorTxt.Controls.Add(btnInfo);
             pnlContenedorTxt.Dock = DockStyle.Bottom;
             pnlContenedorTxt.Location = new Point(0, 527);
@@ -448,9 +450,26 @@ namespace OPENGIOAI.Vistas
             btnLimpiar.TextAlign = ContentAlignment.MiddleRight;
             btnLimpiar.UseVisualStyleBackColor = true;
             btnLimpiar.Click += btnLimpiar_Click;
-            // 
+            //
+            // btnHistorial
+            //
+            btnHistorial.Anchor = AnchorStyles.Bottom;
+            btnHistorial.FlatAppearance.BorderColor = Color.FromArgb(50, 65, 90);
+            btnHistorial.FlatAppearance.MouseDownBackColor = Color.FromArgb(40, 55, 80);
+            btnHistorial.FlatAppearance.MouseOverBackColor = Color.FromArgb(35, 50, 75);
+            btnHistorial.FlatStyle = FlatStyle.Flat;
+            btnHistorial.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            btnHistorial.ForeColor = Color.FromArgb(148, 230, 236);
+            btnHistorial.Location = new Point(860, 110);
+            btnHistorial.Name = "btnHistorial";
+            btnHistorial.Size = new Size(44, 28);
+            btnHistorial.TabIndex = 22;
+            btnHistorial.Text = "📚";
+            btnHistorial.UseVisualStyleBackColor = true;
+            btnHistorial.Click += btnHistorial_Click;
+            //
             // btnInfo
-            // 
+            //
             btnInfo.Anchor = AnchorStyles.Bottom;
             btnInfo.FlatAppearance.BorderColor = Color.FromArgb(50, 65, 90);
             btnInfo.FlatAppearance.MouseDownBackColor = Color.FromArgb(40, 55, 80);
@@ -458,7 +477,7 @@ namespace OPENGIOAI.Vistas
             btnInfo.FlatStyle = FlatStyle.Flat;
             btnInfo.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point, 0);
             btnInfo.ForeColor = Color.FromArgb(120, 150, 200);
-            btnInfo.Location = new Point(866, 110);
+            btnInfo.Location = new Point(910, 110);
             btnInfo.Name = "btnInfo";
             btnInfo.Size = new Size(40, 28);
             btnInfo.TabIndex = 21;
@@ -654,6 +673,7 @@ namespace OPENGIOAI.Vistas
         private PictureBox ChkConver;
         private PictureBox ChkRes;
         private Button btnLimpiar;
+        private Button btnHistorial;
         private Button btnInfo;
     }
 }

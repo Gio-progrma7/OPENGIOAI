@@ -1,0 +1,9 @@
+{
+  "status": "error",
+  "accion": "listar_apps_abiertas",
+  "timestamp": "2026-05-02T18:02:17.731687+00:00",
+  "duracion_segundos": 10.524,
+  "nivel": "CRITICO",
+  "detalle": "'NoneType' object has no attribute 'strip'",
+  "sugerencia": "Revisa permisos o dependencias del sistema"
+}

@@ -340,7 +340,7 @@ namespace OPENGIOAI.Vistas
             btnCrearIA = new Button
             {
                 Text = "✨ Crear con IA", Size = new Size(130, 38), Dock = DockStyle.Right,
-                BackColor = Emerald, ForeColor = Color.Black, FlatStyle = FlatStyle.Flat,
+                BackColor = Emerald, ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI Semibold", 9.5f), Cursor = Cursors.Hand
             };
             btnCrearIA.FlatAppearance.BorderSize = 0;
