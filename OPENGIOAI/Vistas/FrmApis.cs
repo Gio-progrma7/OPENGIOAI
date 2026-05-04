@@ -87,6 +87,22 @@ namespace OPENGIOAI.Vistas
 
         private void ConstruirUI()
         {
+            SuspendLayout();
+            try
+            {
+                BackColor = BgDeep;
+                ForeColor = TextMain;
+
+                // Evitar duplicar controles si se reconstruye por cambio de tema
+                Controls.Clear();
+
+                // Limpieza de referencias de UI previas
+                pnlHeader = null!;
+                pnlEditor = null!;
+                pnlEmpty  = null!;
+                pnlApis   = null!;
+                pnlToast  = null!;
+            
             // ── Header (top) ──────────────────────────────────────────────────
             pnlHeader = new Panel
             {
@@ -200,6 +216,12 @@ namespace OPENGIOAI.Vistas
 
             pnlEmpty.BringToFront();
             pnlToast.BringToFront();
+
+            }
+            finally
+            {
+                ResumeLayout(true);
+            }
         }
 
         private void ConstruirEditor()

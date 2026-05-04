@@ -48,6 +48,15 @@ namespace OPENGIOAI.Vistas
             checkBoxAntigravity = new CheckBox();
             comboBoxMAntigravity = new ModernComboBox();
             labelAntigravityTitle = new Label();
+            lblAuthMode = new Label();
+            cmbAuthModeAntigravity = new ComboBox();
+            lblClientId = new Label();
+            txtClientId = new TextBox();
+            lblClientSecret = new Label();
+            txtClientSecret = new TextBox();
+            lblSvcAccountPath = new Label();
+            txtSvcAccountPath = new TextBox();
+            btnBrowseSvcAccount = new Button();
             pnlGem = new Panel();
             btnGuardaGem = new Button();
             label12 = new Label();
@@ -217,63 +226,73 @@ namespace OPENGIOAI.Vistas
             pnlAntigravity.Controls.Add(checkBoxAntigravity);
             pnlAntigravity.Controls.Add(comboBoxMAntigravity);
             pnlAntigravity.Controls.Add(labelAntigravityTitle);
+            pnlAntigravity.Controls.Add(lblAuthMode);
+            pnlAntigravity.Controls.Add(cmbAuthModeAntigravity);
+            pnlAntigravity.Controls.Add(lblClientId);
+            pnlAntigravity.Controls.Add(txtClientId);
+            pnlAntigravity.Controls.Add(lblClientSecret);
+            pnlAntigravity.Controls.Add(txtClientSecret);
+            pnlAntigravity.Controls.Add(lblSvcAccountPath);
+            pnlAntigravity.Controls.Add(txtSvcAccountPath);
+            pnlAntigravity.Controls.Add(btnBrowseSvcAccount);
             pnlAntigravity.Location = new Point(33, 576);
             pnlAntigravity.Name = "pnlAntigravity";
-            pnlAntigravity.Size = new Size(221, 252);
+            pnlAntigravity.Size = new Size(221, 360);
             pnlAntigravity.TabIndex = 8;
             // 
-            // btnGuardarAntigravity
-            // 
+            // btnGuardarAntigravity  (movido abajo)
+            //
             btnGuardarAntigravity.FlatAppearance.BorderColor = Color.Blue;
             btnGuardarAntigravity.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 0, 64);
             btnGuardarAntigravity.FlatStyle = FlatStyle.Flat;
             btnGuardarAntigravity.ForeColor = Color.White;
-            btnGuardarAntigravity.Location = new Point(118, 216);
+            btnGuardarAntigravity.Location = new Point(118, 325);
             btnGuardarAntigravity.Name = "btnGuardarAntigravity";
             btnGuardarAntigravity.Size = new Size(75, 23);
             btnGuardarAntigravity.TabIndex = 7;
             btnGuardarAntigravity.Text = "Guardar";
             btnGuardarAntigravity.UseVisualStyleBackColor = true;
             btnGuardarAntigravity.Click += btnGuardarAntigravity_Click;
-            // 
-            // btnAutenticarAntigravity
-            // 
+            //
+            // btnAutenticarAntigravity  (movido abajo, texto dinámico)
+            //
             btnAutenticarAntigravity.FlatAppearance.BorderColor = Color.FromArgb(16, 185, 129);
             btnAutenticarAntigravity.FlatAppearance.MouseOverBackColor = Color.FromArgb(5, 60, 44);
             btnAutenticarAntigravity.FlatStyle = FlatStyle.Flat;
             btnAutenticarAntigravity.ForeColor = Color.FromArgb(16, 185, 129);
-            btnAutenticarAntigravity.Location = new Point(19, 190);
+            btnAutenticarAntigravity.Location = new Point(19, 300);
             btnAutenticarAntigravity.Name = "btnAutenticarAntigravity";
             btnAutenticarAntigravity.Size = new Size(171, 23);
             btnAutenticarAntigravity.TabIndex = 6;
-            btnAutenticarAntigravity.Text = "🔑  Autenticar gcloud";
+            btnAutenticarAntigravity.Text = "🔑  Conectar / Autenticar";
             btnAutenticarAntigravity.UseVisualStyleBackColor = false;
             btnAutenticarAntigravity.Click += btnAutenticarAntigravity_Click;
-            // 
-            // lblGcloudStatus
-            // 
+            //
+            // lblGcloudStatus  (movido abajo)
+            //
             lblGcloudStatus.AutoSize = true;
             lblGcloudStatus.BackColor = Color.Transparent;
             lblGcloudStatus.ForeColor = Color.FromArgb(100, 116, 139);
-            lblGcloudStatus.Location = new Point(19, 170);
+            lblGcloudStatus.Location = new Point(19, 280);
             lblGcloudStatus.Name = "lblGcloudStatus";
             lblGcloudStatus.Size = new Size(94, 15);
             lblGcloudStatus.TabIndex = 5;
             lblGcloudStatus.Text = "⬤  No verificado";
-            // 
-            // labelAntigravityApiKey
-            // 
+            //
+            // labelAntigravityApiKey  (ahora oculto, usado solo internamente)
+            //
             labelAntigravityApiKey.AutoSize = true;
             labelAntigravityApiKey.BackColor = Color.Transparent;
-            labelAntigravityApiKey.ForeColor = Color.White;
+            labelAntigravityApiKey.ForeColor = Color.FromArgb(100, 116, 139);
             labelAntigravityApiKey.Location = new Point(19, 120);
             labelAntigravityApiKey.Name = "labelAntigravityApiKey";
             labelAntigravityApiKey.Size = new Size(102, 15);
             labelAntigravityApiKey.TabIndex = 4;
             labelAntigravityApiKey.Text = "PROJECT ID (GCP)";
-            // 
-            // comboBoxApiAntigravity
-            // 
+            labelAntigravityApiKey.Visible = false;
+            //
+            // comboBoxApiAntigravity  (sigue oculto)
+            //
             comboBoxApiAntigravity.BackColor = Color.Black;
             comboBoxApiAntigravity.DrawMode = DrawMode.OwnerDrawFixed;
             comboBoxApiAntigravity.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -285,14 +304,15 @@ namespace OPENGIOAI.Vistas
             comboBoxApiAntigravity.Name = "comboBoxApiAntigravity";
             comboBoxApiAntigravity.Size = new Size(171, 26);
             comboBoxApiAntigravity.TabIndex = 3;
+            comboBoxApiAntigravity.Visible = false;
             comboBoxApiAntigravity.SelectedIndexChanged += comboBoxApiAntigravity_SelectedIndexChanged;
-            // 
-            // labelAntigravityModelo
-            // 
+            //
+            // labelAntigravityModelo  (movido abajo)
+            //
             labelAntigravityModelo.AutoSize = true;
             labelAntigravityModelo.BackColor = Color.Transparent;
             labelAntigravityModelo.ForeColor = Color.White;
-            labelAntigravityModelo.Location = new Point(19, 63);
+            labelAntigravityModelo.Location = new Point(19, 225);
             labelAntigravityModelo.Name = "labelAntigravityModelo";
             labelAntigravityModelo.Size = new Size(160, 15);
             labelAntigravityModelo.TabIndex = 2;
@@ -312,8 +332,9 @@ namespace OPENGIOAI.Vistas
             checkBoxAntigravity.UseVisualStyleBackColor = false;
             checkBoxAntigravity.Visible = false;
             // 
-            // comboBoxMAntigravity
-            // 
+            //
+            // comboBoxMAntigravity  (movido abajo)
+            //
             comboBoxMAntigravity.BackColor = Color.Black;
             comboBoxMAntigravity.DrawMode = DrawMode.OwnerDrawFixed;
             comboBoxMAntigravity.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -321,13 +342,13 @@ namespace OPENGIOAI.Vistas
             comboBoxMAntigravity.ForeColor = Color.White;
             comboBoxMAntigravity.FormattingEnabled = true;
             comboBoxMAntigravity.ItemHeight = 20;
-            comboBoxMAntigravity.Location = new Point(19, 81);
+            comboBoxMAntigravity.Location = new Point(19, 243);
             comboBoxMAntigravity.Name = "comboBoxMAntigravity";
             comboBoxMAntigravity.Size = new Size(171, 26);
             comboBoxMAntigravity.TabIndex = 0;
-            // 
+            //
             // labelAntigravityTitle
-            // 
+            //
             labelAntigravityTitle.AutoSize = true;
             labelAntigravityTitle.BackColor = Color.Transparent;
             labelAntigravityTitle.ForeColor = Color.White;
@@ -336,6 +357,115 @@ namespace OPENGIOAI.Vistas
             labelAntigravityTitle.Size = new Size(122, 15);
             labelAntigravityTitle.TabIndex = 0;
             labelAntigravityTitle.Text = "Antigravity (Vertex AI)";
+            //
+            // lblAuthMode
+            //
+            lblAuthMode.AutoSize = true;
+            lblAuthMode.BackColor = Color.Transparent;
+            lblAuthMode.ForeColor = Color.White;
+            lblAuthMode.Location = new Point(19, 40);
+            lblAuthMode.Name = "lblAuthMode";
+            lblAuthMode.Size = new Size(70, 15);
+            lblAuthMode.TabIndex = 20;
+            lblAuthMode.Text = "MODO AUTH";
+            //
+            // cmbAuthModeAntigravity
+            //
+            cmbAuthModeAntigravity.BackColor = Color.FromArgb(15, 23, 42);
+            cmbAuthModeAntigravity.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbAuthModeAntigravity.FlatStyle = FlatStyle.Flat;
+            cmbAuthModeAntigravity.ForeColor = Color.White;
+            cmbAuthModeAntigravity.FormattingEnabled = true;
+            cmbAuthModeAntigravity.Items.AddRange(new object[] { "OAuth 2.0 (sin gcloud)", "Service Account JSON", "gcloud ADC (CLI)" });
+            cmbAuthModeAntigravity.Location = new Point(19, 57);
+            cmbAuthModeAntigravity.Name = "cmbAuthModeAntigravity";
+            cmbAuthModeAntigravity.Size = new Size(171, 23);
+            cmbAuthModeAntigravity.TabIndex = 21;
+            cmbAuthModeAntigravity.SelectedIndexChanged += cmbAuthModeAntigravity_SelectedIndexChanged;
+            //
+            // lblClientId
+            //
+            lblClientId.AutoSize = true;
+            lblClientId.BackColor = Color.Transparent;
+            lblClientId.ForeColor = Color.White;
+            lblClientId.Location = new Point(19, 92);
+            lblClientId.Name = "lblClientId";
+            lblClientId.Size = new Size(55, 15);
+            lblClientId.TabIndex = 22;
+            lblClientId.Text = "CLIENT ID";
+            //
+            // txtClientId
+            //
+            txtClientId.BackColor = Color.FromArgb(15, 23, 42);
+            txtClientId.BorderStyle = BorderStyle.FixedSingle;
+            txtClientId.ForeColor = Color.White;
+            txtClientId.Location = new Point(19, 109);
+            txtClientId.Name = "txtClientId";
+            txtClientId.PlaceholderText = "xxxxxx.apps.googleusercontent.com";
+            txtClientId.Size = new Size(171, 23);
+            txtClientId.TabIndex = 23;
+            //
+            // lblClientSecret
+            //
+            lblClientSecret.AutoSize = true;
+            lblClientSecret.BackColor = Color.Transparent;
+            lblClientSecret.ForeColor = Color.White;
+            lblClientSecret.Location = new Point(19, 138);
+            lblClientSecret.Name = "lblClientSecret";
+            lblClientSecret.Size = new Size(80, 15);
+            lblClientSecret.TabIndex = 24;
+            lblClientSecret.Text = "CLIENT SECRET";
+            //
+            // txtClientSecret
+            //
+            txtClientSecret.BackColor = Color.FromArgb(15, 23, 42);
+            txtClientSecret.BorderStyle = BorderStyle.FixedSingle;
+            txtClientSecret.ForeColor = Color.White;
+            txtClientSecret.Location = new Point(19, 155);
+            txtClientSecret.Name = "txtClientSecret";
+            txtClientSecret.PasswordChar = '●';
+            txtClientSecret.PlaceholderText = "GOCSPX-...";
+            txtClientSecret.Size = new Size(171, 23);
+            txtClientSecret.TabIndex = 25;
+            //
+            // lblSvcAccountPath
+            //
+            lblSvcAccountPath.AutoSize = true;
+            lblSvcAccountPath.BackColor = Color.Transparent;
+            lblSvcAccountPath.ForeColor = Color.White;
+            lblSvcAccountPath.Location = new Point(19, 92);
+            lblSvcAccountPath.Name = "lblSvcAccountPath";
+            lblSvcAccountPath.Size = new Size(100, 15);
+            lblSvcAccountPath.TabIndex = 26;
+            lblSvcAccountPath.Text = "ARCHIVO JSON";
+            lblSvcAccountPath.Visible = false;
+            //
+            // txtSvcAccountPath
+            //
+            txtSvcAccountPath.BackColor = Color.FromArgb(15, 23, 42);
+            txtSvcAccountPath.BorderStyle = BorderStyle.FixedSingle;
+            txtSvcAccountPath.ForeColor = Color.White;
+            txtSvcAccountPath.Location = new Point(19, 109);
+            txtSvcAccountPath.Name = "txtSvcAccountPath";
+            txtSvcAccountPath.PlaceholderText = "Ruta al archivo service-account.json";
+            txtSvcAccountPath.ReadOnly = true;
+            txtSvcAccountPath.Size = new Size(140, 23);
+            txtSvcAccountPath.TabIndex = 27;
+            txtSvcAccountPath.Visible = false;
+            //
+            // btnBrowseSvcAccount
+            //
+            btnBrowseSvcAccount.FlatAppearance.BorderColor = Color.FromArgb(16, 185, 129);
+            btnBrowseSvcAccount.FlatStyle = FlatStyle.Flat;
+            btnBrowseSvcAccount.ForeColor = Color.White;
+            btnBrowseSvcAccount.Location = new Point(163, 109);
+            btnBrowseSvcAccount.Name = "btnBrowseSvcAccount";
+            btnBrowseSvcAccount.Size = new Size(27, 23);
+            btnBrowseSvcAccount.TabIndex = 28;
+            btnBrowseSvcAccount.Text = "…";
+            btnBrowseSvcAccount.UseVisualStyleBackColor = false;
+            btnBrowseSvcAccount.Visible = false;
+            btnBrowseSvcAccount.Click += btnBrowseSvcAccount_Click;
             // 
             // pnlGem
             // 
@@ -896,7 +1026,7 @@ namespace OPENGIOAI.Vistas
             AutoScaleMode = AutoScaleMode.Font;
             AutoScroll = true;
             BackColor = Color.Black;
-            ClientSize = new Size(910, 850);
+            ClientSize = new Size(910, 960);
             Controls.Add(label20);
             Controls.Add(label17);
             Controls.Add(pnlAntigravity);
@@ -989,5 +1119,15 @@ namespace OPENGIOAI.Vistas
         private Label labelAntigravityTitle;
         private Label labelAntigravityApiKey;
         private Label labelAntigravityModelo;
+        // Nuevos controles de autenticación OAuth/Service Account
+        private Label lblAuthMode;
+        private ComboBox cmbAuthModeAntigravity;
+        private Label lblClientId;
+        private TextBox txtClientId;
+        private Label lblClientSecret;
+        private TextBox txtClientSecret;
+        private Label lblSvcAccountPath;
+        private TextBox txtSvcAccountPath;
+        private Button btnBrowseSvcAccount;
     }
 }

@@ -111,6 +111,9 @@ namespace OPENGIOAI.Vistas
         // -- Ventana deslizante de contexto conversacional ---------------------
         private readonly ConversationWindow _ventana = new(MaxTurnosContexto, MaxTokensContexto);
 
+        // -- Historial persistente de conversaciones ---------------------------
+        private string _sesionActualId = "";
+
         // -- Strings auxiliares ------------------------------------------------
         private string _textoFaltante = "";
         private string _rutasAgregadas = "";
@@ -222,6 +225,10 @@ namespace OPENGIOAI.Vistas
             _telegramService.Detener();
             _slackService.Detener();
             _ctsIA?.Dispose();
+
+            // Finalizar sesión de historial
+            ConversationStorage.FinalizarSesion();
+            _sesionActualId = "";
         }
 
         private void Form_DragLeave(object sender, EventArgs e) => Cursor = Cursors.Default;
@@ -474,6 +481,11 @@ namespace OPENGIOAI.Vistas
 
         private void btnLimpiar_Click(object sender, EventArgs e)
         {
+            // Cierra la sesión de historial activa antes de borrar
+            ConversationStorage.FinalizarSesion();
+            _sesionActualId = "";
+            _ventana.Limpiar();
+
             pnlChat.Controls.Clear();
             _ultimaBurbujaComunicador = null;
             _ultimaFechaInsertada     = null;
@@ -484,6 +496,41 @@ namespace OPENGIOAI.Vistas
         /// Muestra / oculta las etiquetas de tiempo y consumo de tokens.
         /// Sirve como bot�n ? de estad�sticas en la barra inferior.
         /// </summary>
+        private void btnHistorial_Click(object sender, EventArgs e)
+        {
+            FrmHistorialChat.MostrarOTraerAlFrente(this, ses => _ = CargarSesionAsync(ses));
+        }
+
+        private async Task CargarSesionAsync(SesionConversacion ses)
+        {
+            if (ses == null || ses.Turnos.Count == 0) return;
+
+            // Finalizar sesión actual y limpiar UI
+            ConversationStorage.FinalizarSesion();
+            _sesionActualId = ses.SesionId;  // reutilizar el mismo ID
+
+            _ventana.Limpiar();
+            pnlChat.Controls.Clear();
+            _ultimaBurbujaComunicador = null;
+            _ultimaFechaInsertada     = null;
+
+            // Restaurar turnos: mostrar burbujas y reconstruir contexto
+            foreach (var turno in ses.Turnos)
+            {
+                MostrarMensaje(turno.Instruccion, true);
+                MostrarMensaje(turno.Respuesta,   false);
+                await _ventana.AgregarAsync(turno.Instruccion, turno.Respuesta, null,
+                    CancellationToken.None);
+            }
+
+            // Activar "Recordar tema" automáticamente al cargar historial
+            if (!_recordarTema)
+            {
+                checkBoxRecordar.Checked = true;
+                _recordarTema = true;
+            }
+        }
+
         private void btnInfo_Click(object sender, EventArgs e)
         {
             bool visible = !lblTime.Visible;
@@ -652,6 +699,14 @@ namespace OPENGIOAI.Vistas
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             string instruccionOriginal = instruccion;
+
+            // Iniciar sesión de historial en el primer turno
+            if (string.IsNullOrEmpty(_sesionActualId))
+                _sesionActualId = ConversationStorage.IniciarSesion(
+                    instruccionOriginal,
+                    _modeloSeleccionado?.Modelos ?? "",
+                    _modeloSeleccionado?.Agente.ToString() ?? "");
+
             instruccion = _ventana.CombinarConInstruccion(instruccion, _recordarTema, _soloChat);
 
             // -- Reset visual del panel de agentes ----------------------------
@@ -856,6 +911,10 @@ namespace OPENGIOAI.Vistas
                     _modeloSeleccionado.ApiKey,
                     ctResumen),
                 ct);
+
+            // Persistir turno en el historial (fire-and-forget)
+            if (!string.IsNullOrWhiteSpace(respuestaFinal))
+                ConversationStorage.AgregarTurno(instruccionOriginal, respuestaFinal);
 
             if (!string.IsNullOrWhiteSpace(respuestaFinal))
                 await EjecutarDifusionAsync(respuestaFinal, usarTelegram, usarSlack);

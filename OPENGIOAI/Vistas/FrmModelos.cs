@@ -1,11 +1,13 @@
-﻿using OPENGIOAI.Entidades;
+using OPENGIOAI.Entidades;
 using OPENGIOAI.ServiciosAI;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -15,16 +17,18 @@ namespace OPENGIOAI.Vistas
     {
         #region Campos privados
 
-        private List<Modelo> _listaAgentes = new();
-        private List<Api> _listaApisDisponibles = new();
-        private List<ComboBox> _listaApis = new();
-        private List<ComboBox> _listaModels = new();
-        private List<CheckBox> _listaEstados = new();
-        private List<Servicios> _listaServicios = new();
-        private bool _cargandoControles = false;
+        private List<Modelo>    _listaAgentes          = new();
+        private List<Api>       _listaApisDisponibles  = new();
+        private List<ComboBox>  _listaApis             = new();
+        private List<ComboBox>  _listaModels           = new();
+        private List<CheckBox>  _listaEstados          = new();
+        private List<Servicios> _listaServicios        = new();
+        private bool            _cargandoControles     = false;
 
-        // Project ID de GCP detectado desde gcloud (se actualiza al verificar estado)
         private string _antigravityProjectId = "";
+
+        // CancellationToken para el flujo OAuth (cancelable si el usuario cierra el form)
+        private CancellationTokenSource? _oauthCts;
 
         #endregion
 
@@ -36,7 +40,12 @@ namespace OPENGIOAI.Vistas
             AplicarThema();
 
             EmeraldTheme.ThemeChanged += OnTemaChanged;
-            Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
+            Disposed += (_, __) =>
+            {
+                EmeraldTheme.ThemeChanged -= OnTemaChanged;
+                _oauthCts?.Cancel();
+                _oauthCts?.Dispose();
+            };
         }
 
         private void OnTemaChanged()
@@ -52,43 +61,32 @@ namespace OPENGIOAI.Vistas
             await InicializarDatos();
         }
 
-        /// <summary>
-        /// Orquesta la carga completa de datos y controles al iniciar el formulario.
-        /// Deshabilita los paneles durante la carga para evitar interacciones prematuras.
-        /// </summary>
         private async Task InicializarDatos()
         {
             EstadoPanels(false);
 
-            // Ocultar combobox de API para Antigravity — el Project ID viene de gcloud,
-            // no de la lista de API keys. Mostrar solo el label explicativo.
-            comboBoxApiAntigravity.Visible  = false;
-            labelAntigravityApiKey.Text     = "Project ID detectado por gcloud:";
-            labelAntigravityApiKey.ForeColor = Color.FromArgb(100, 116, 139);
+            // El comboBox de API de Antigravity no se usa: el acceso es por OAuth/gcloud
+            comboBoxApiAntigravity.Visible = false;
+            labelAntigravityApiKey.Visible = false;
 
             await CargarDatos();
             CargarControles();
             await CargarInfoAgentes();
+            CargarConfigOAuth();
 
             EstadoPanels(true);
 
-            // Verificar estado de autenticación gcloud en background
-            _ = VerificarEstadoGcloudAsync();
+            _ = VerificarEstadoAntigravityAsync();
         }
 
         #endregion
 
         #region Carga de datos y controles
 
-        /// <summary>
-        /// Carga los datos iniciales necesarios para el funcionamiento del sistema.
-        /// Obtiene la lista de servicios, agentes y APIs desde los archivos de configuración JSON.
-        /// Si es la primera ejecución, genera una configuración por defecto.
-        /// </summary>
         private async Task CargarDatos()
         {
-            _listaServicios = Enum.GetValues<Servicios>().ToList();
-            _listaAgentes = JsonManager.Leer<Modelo>(RutasProyecto.ObtenerRutaListModelos());
+            _listaServicios       = Enum.GetValues<Servicios>().ToList();
+            _listaAgentes         = JsonManager.Leer<Modelo>(RutasProyecto.ObtenerRutaListModelos());
             _listaApisDisponibles = JsonManager.Leer<Api>(RutasProyecto.ObtenerRutaListApis());
 
             if (_listaAgentes.Count != _listaServicios.Count)
@@ -97,10 +95,6 @@ namespace OPENGIOAI.Vistas
             await Task.CompletedTask;
         }
 
-        /// <summary>
-        /// Inicializa y agrupa los controles de la interfaz (APIs, modelos y estados)
-        /// asignando los orígenes de datos correspondientes a cada ComboBox.
-        /// </summary>
         private void CargarControles()
         {
             _cargandoControles = true;
@@ -108,42 +102,42 @@ namespace OPENGIOAI.Vistas
             {
                 _listaApis = new()
                 {
-                    comboBoxApiChat,          // [0] ChatGpt    = 1
-                    comboBoxApiClau,          // [1] Claude     = 2
-                    comboBoxApiGem,           // [2] Gemenni    = 3
-                    comboBoxApiOlla,          // [3] Ollama     = 4
-                    comboBoxApiDesp,          // [4] Deespeek   = 5
-                    ComboxApiOpenroute,       // [5] OpenRouter = 6
-                    comboBoxApiAntigravity    // [6] Antigravity= 7
+                    comboBoxApiChat,       // [0] ChatGpt
+                    comboBoxApiClau,       // [1] Claude
+                    comboBoxApiGem,        // [2] Gemenni
+                    comboBoxApiOlla,       // [3] Ollama
+                    comboBoxApiDesp,       // [4] Deespeek
+                    ComboxApiOpenroute,    // [5] OpenRouter
+                    comboBoxApiAntigravity // [6] Antigravity (oculto)
                 };
 
                 _listaModels = new()
                 {
-                    comboBoxMChat,            // [0] ChatGpt
-                    comboBoxMClau,            // [1] Claude
-                    comboBoxMGem,             // [2] Gemenni
-                    comboBoxmOlla,            // [3] Ollama
-                    comboBoxMDesp,            // [4] Deespeek
-                    ComboxMOpenroute,         // [5] OpenRouter
-                    comboBoxMAntigravity      // [6] Antigravity
+                    comboBoxMChat,         // [0] ChatGpt
+                    comboBoxMClau,         // [1] Claude
+                    comboBoxMGem,          // [2] Gemenni
+                    comboBoxmOlla,         // [3] Ollama
+                    comboBoxMDesp,         // [4] Deespeek
+                    ComboxMOpenroute,      // [5] OpenRouter
+                    comboBoxMAntigravity   // [6] Antigravity
                 };
 
                 _listaEstados = new()
                 {
-                    checkBoxChat,             // [0] ChatGpt
-                    checkBoxClua,             // [1] Claude
-                    checkBoxGem,              // [2] Gemenni
-                    checkBoxOlla,             // [3] Ollama
-                    checkBoxDeesp,            // [4] Deespeek
-                    checkBoxOpenroute,        // [5] OpenRouter
-                    checkBoxAntigravity       // [6] Antigravity
+                    checkBoxChat,          // [0] ChatGpt
+                    checkBoxClua,          // [1] Claude
+                    checkBoxGem,           // [2] Gemenni
+                    checkBoxOlla,          // [3] Ollama
+                    checkBoxDeesp,         // [4] Deespeek
+                    checkBoxOpenroute,     // [5] OpenRouter
+                    checkBoxAntigravity    // [6] Antigravity
                 };
 
                 for (int i = 0; i < _listaApis.Count; i++)
                 {
-                    _listaApis[i].DataSource = new List<Api>(_listaApisDisponibles);
+                    _listaApis[i].DataSource    = new List<Api>(_listaApisDisponibles);
                     _listaApis[i].DisplayMember = "Nombre";
-                    _listaApis[i].ValueMember = "key";
+                    _listaApis[i].ValueMember   = "key";
                     _listaApis[i].SelectedValue = _listaAgentes[i].ApiKey;
                 }
             }
@@ -153,37 +147,48 @@ namespace OPENGIOAI.Vistas
             }
         }
 
-        /// <summary>
-        /// Sincroniza la información de cada agente con sus controles visuales correspondientes:
-        /// estado activo/inactivo, API seleccionada y modelo configurado.
-        /// </summary>
         private async Task CargarInfoAgentes()
         {
             for (int i = 0; i < _listaAgentes.Count; i++)
             {
                 _listaEstados[i].Checked = _listaAgentes[i].Estado;
 
-                // Se guarda el modelo antes de que SeleccionarApi lo sobreescriba
                 string modeloGuardado = _listaAgentes[i].Modelos;
 
                 await SeleccionarApi(_listaAgentes[i].Agente, _listaAgentes[i].ApiKey);
 
-                // Se restaura el modelo una vez que el DataSource ya está asignado
                 _listaModels[i].Text = modeloGuardado;
             }
+        }
+
+        /// <summary>
+        /// Carga los valores de Client ID / Client Secret / Service Account
+        /// desde AntigravityOAuthService y los muestra en los controles.
+        /// </summary>
+        private void CargarConfigOAuth()
+        {
+            var cfg = AntigravityOAuthService.Config;
+
+            txtClientId.Text      = cfg.ClientId;
+            txtClientSecret.Text  = cfg.ClientSecret;
+            txtSvcAccountPath.Text = cfg.ServiceAccountPath;
+
+            // Seleccionar el modo guardado en el combo
+            int idx = cfg.Modo switch
+            {
+                "oauth"           => 0,
+                "service_account" => 1,
+                _                 => 2   // "gcloud"
+            };
+            cmbAuthModeAntigravity.SelectedIndex = idx;
+            // Mostrar/ocultar campos según modo
+            ActualizarVisibilidadCamposOAuth(idx);
         }
 
         #endregion
 
         #region Lógica de agentes y servicios
 
-        /// <summary>
-        /// Obtiene la lista de modelos disponibles para un servicio de IA específico
-        /// consultando la API correspondiente con la clave proporcionada.
-        /// </summary>
-        /// <param name="servicio">Servicio de IA del cual se desean obtener los modelos.</param>
-        /// <param name="apiKey">Clave de autenticación requerida para consultar los modelos.</param>
-        /// <returns>Lista de <see cref="ModeloAgente"/> con los modelos disponibles.</returns>
         private async Task<List<ModeloAgente>> ObtenerModeloAgente(Servicios servicio, string apiKey)
         {
             List<string> lsModels = servicio switch
@@ -203,12 +208,6 @@ namespace OPENGIOAI.Vistas
                 .ToList();
         }
 
-        /// <summary>
-        /// Selecciona una API para el servicio indicado, recarga los modelos disponibles
-        /// y actualiza el ComboBox correspondiente. Muestra mensajes de estado durante la carga.
-        /// </summary>
-        /// <param name="servicio">Servicio de IA a actualizar.</param>
-        /// <param name="apikey">Clave de API seleccionada.</param>
         private async Task SeleccionarApi(Servicios servicio, string apikey)
         {
             int index = (int)servicio - 1;
@@ -227,15 +226,11 @@ namespace OPENGIOAI.Vistas
                 return;
             }
 
-            _listaModels[index].DataSource = modelos;
+            _listaModels[index].DataSource    = modelos;
             _listaModels[index].DisplayMember = "Nombre";
-            _listaModels[index].ValueMember = "Estado";
+            _listaModels[index].ValueMember   = "Estado";
         }
 
-        /// <summary>
-        /// Inicializa y guarda la configuración base de los agentes la primera vez
-        /// que se ejecuta la aplicación, dejando todos los servicios desactivados.
-        /// </summary>
         private void GuardarPrimeraVez()
         {
             _listaAgentes.Clear();
@@ -244,9 +239,9 @@ namespace OPENGIOAI.Vistas
             {
                 _listaAgentes.Add(new Modelo
                 {
-                    Agente = servicio,
-                    Estado = false,
-                    ApiKey = string.Empty,
+                    Agente  = servicio,
+                    Estado  = false,
+                    ApiKey  = string.Empty,
                     Modelos = string.Empty
                 });
             }
@@ -254,11 +249,6 @@ namespace OPENGIOAI.Vistas
             JsonManager.Guardar(RutasProyecto.ObtenerRutaListModelos(), _listaAgentes);
         }
 
-        /// <summary>
-        /// Actualiza en disco la configuración de un agente existente, identificándolo
-        /// por su tipo de servicio y reemplazando estado, API y modelo seleccionado.
-        /// </summary>
-        /// <param name="nuevo">Objeto <see cref="Modelo"/> con la nueva configuración.</param>
         private void ModificarAgente(Modelo nuevo)
         {
             JsonManager.Modificar<Modelo>(
@@ -266,17 +256,12 @@ namespace OPENGIOAI.Vistas
                 u => u.Agente == nuevo.Agente,
                 u =>
                 {
-                    u.ApiKey = nuevo.ApiKey;
-                    u.Estado = nuevo.Estado;
+                    u.ApiKey  = nuevo.ApiKey;
+                    u.Estado  = nuevo.Estado;
                     u.Modelos = nuevo.Modelos;
                 });
         }
 
-        /// <summary>
-        /// Recoge los valores actuales de la interfaz para el servicio indicado,
-        /// construye el objeto de configuración y lo persiste en almacenamiento.
-        /// </summary>
-        /// <param name="servicio">Servicio de IA que se desea guardar.</param>
         private void InicializarAgente(Servicios servicio)
         {
             int index = (int)servicio - 1;
@@ -285,19 +270,17 @@ namespace OPENGIOAI.Vistas
 
             if (servicio == Servicios.Antigravity)
             {
-                // Para Antigravity el "ApiKey" NO es una key de la lista —
-                // es el GCP Project ID detectado por gcloud.
                 apiKey = _antigravityProjectId;
 
                 if (string.IsNullOrWhiteSpace(apiKey))
                 {
                     MessageBox.Show(
                         "No se detectó un Project ID de GCP activo.\n\n" +
-                        "Pasos:\n" +
-                        "1. Haz clic en '🔑 Autenticar gcloud'\n" +
-                        "2. Completa el login en el navegador\n" +
-                        "3. Ejecuta: gcloud config set project TU-PROYECTO\n" +
-                        "4. Vuelve a abrir este panel",
+                        "Pasos según el modo seleccionado:\n" +
+                        "• OAuth 2.0: introduce Client ID + Secret y haz clic en 'Conectar'\n" +
+                        "• Service Account: selecciona el archivo JSON\n" +
+                        "• gcloud ADC: ejecuta 'gcloud auth application-default login'\n\n" +
+                        "Además configura: gcloud config set project TU-PROYECTO",
                         "Project ID requerido",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
@@ -306,15 +289,15 @@ namespace OPENGIOAI.Vistas
             }
             else
             {
-                Api apiSeleccionada = _listaApis[index].SelectedItem as Api;
+                Api? apiSeleccionada = _listaApis[index].SelectedItem as Api;
                 apiKey = apiSeleccionada?.key ?? string.Empty;
             }
 
             Modelo modeloEditado = new()
             {
-                Agente = servicio,
-                Estado = _listaEstados[index].Checked,
-                ApiKey = apiKey,
+                Agente  = servicio,
+                Estado  = _listaEstados[index].Checked,
+                ApiKey  = apiKey,
                 Modelos = _listaModels[index].Text
             };
 
@@ -331,77 +314,274 @@ namespace OPENGIOAI.Vistas
 
         #endregion
 
-        #region UI — Eventos de botones
+        #region UI — Eventos de botones guardar
 
-        private void btnGuardarChat_Click(object sender, EventArgs e) => InicializarAgente(Servicios.ChatGpt);
-        private void btnGuardaGem_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Gemenni);
-        private void btnGuardarOlla_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Ollama);
-        private void btnGuardarClau_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Claude);
-        private void btnGuardarDeesp_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Deespeek);
-        private void btnOpenroute_Click(object sender, EventArgs e) => InicializarAgente(Servicios.OpenRouter);
+        private void btnGuardarChat_Click(object sender, EventArgs e)      => InicializarAgente(Servicios.ChatGpt);
+        private void btnGuardaGem_Click(object sender, EventArgs e)        => InicializarAgente(Servicios.Gemenni);
+        private void btnGuardarOlla_Click(object sender, EventArgs e)      => InicializarAgente(Servicios.Ollama);
+        private void btnGuardarClau_Click(object sender, EventArgs e)      => InicializarAgente(Servicios.Claude);
+        private void btnGuardarDeesp_Click(object sender, EventArgs e)     => InicializarAgente(Servicios.Deespeek);
+        private void btnOpenroute_Click(object sender, EventArgs e)        => InicializarAgente(Servicios.OpenRouter);
         private void btnGuardarAntigravity_Click(object sender, EventArgs e) => InicializarAgente(Servicios.Antigravity);
 
+        #endregion
+
+        #region Antigravity — Autenticación (OAuth / Service Account / gcloud)
+
         /// <summary>
-        /// Abre una ventana CMD con el comando de autenticación gcloud.
-        /// El usuario completa el login en el browser; al volver se actualiza el indicador.
+        /// Botón principal de conexión. Su comportamiento cambia según el modo seleccionado:
+        ///   - OAuth 2.0       → abre browser para auth Google
+        ///   - Service Account → ya se configuró via "…", solo verifica
+        ///   - gcloud ADC      → abre terminal con el comando gcloud
         /// </summary>
         private async void btnAutenticarAntigravity_Click(object sender, EventArgs e)
         {
             btnAutenticarAntigravity.Enabled = false;
-            lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); // ámbar
-            lblGcloudStatus.Text = "⬤  Buscando gcloud...";
+            SetStatus(Color.FromArgb(245, 158, 11), "⬤  Conectando...");
+
+            _oauthCts?.Cancel();
+            _oauthCts = new CancellationTokenSource();
 
             try
             {
-                // Buscar ruta real de gcloud (evita el error "no se reconoce como comando")
-                string gcloudExe = AIServicios.EncontrarGcloudExe();
+                int modo = cmbAuthModeAntigravity.SelectedIndex;
 
-                string cmdArgs;
-                if (!string.IsNullOrEmpty(gcloudExe))
+                switch (modo)
                 {
-                    // Ruta encontrada — abrir cmd con la ruta completa
-                    cmdArgs = $"/k \"{gcloudExe}\" auth application-default login";
-                    lblGcloudStatus.Text = "⬤  Abriendo terminal...";
-                }
-                else
-                {
-                    // No encontrado en rutas conocidas — intentar igualmente vía cmd
-                    cmdArgs = "/k gcloud auth application-default login";
-                    lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11);
-                    lblGcloudStatus.Text = "⬤  gcloud no encontrado en rutas conocidas";
-                    MessageBox.Show(
-                        "No se encontró gcloud en las rutas de instalación estándar.\n\n" +
-                        "Si tienes Google Cloud SDK instalado, asegúrate de que esté en el PATH.\n" +
-                        "Descárgalo desde: https://cloud.google.com/sdk/docs/install",
-                        "Google Cloud SDK",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
+                    case 0: // OAuth 2.0
+                        await AutenticarOAuthAsync(_oauthCts.Token);
+                        break;
+
+                    case 1: // Service Account JSON
+                        await VerificarServiceAccountAsync();
+                        break;
+
+                    default: // gcloud ADC
+                        await AutenticarGcloudAsync();
+                        break;
                 }
 
-                // Abrir terminal visible para que el usuario complete el login
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName        = "cmd.exe",
-                    Arguments       = cmdArgs,
-                    UseShellExecute = true   // true = ventana visible con foco
-                });
-
-                // Esperar a que el usuario complete el proceso en el browser
-                lblGcloudStatus.Text = "⬤  Esperando autorización en el browser...";
-                await Task.Delay(12000);
-
-                // Re-verificar estado
-                await VerificarEstadoGcloudAsync();
+                await VerificarEstadoAntigravityAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                SetStatus(Color.FromArgb(100, 116, 139), "⬤  Cancelado");
             }
             catch (Exception ex)
             {
-                lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68);
-                lblGcloudStatus.Text = $"⬤  Error: {ex.Message}";
+                SetStatus(Color.FromArgb(239, 68, 68), $"⬤  Error: {ex.Message}");
             }
             finally
             {
                 btnAutenticarAntigravity.Enabled = true;
             }
+        }
+
+        private async Task AutenticarOAuthAsync(CancellationToken ct)
+        {
+            string clientId     = txtClientId.Text.Trim();
+            string clientSecret = txtClientSecret.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            {
+                MessageBox.Show(
+                    "Introduce el Client ID y el Client Secret de tu aplicación OAuth en Google Cloud Console.\n\n" +
+                    "Pasos:\n" +
+                    "1. Abre console.cloud.google.com → APIs & Services → Credentials\n" +
+                    "2. Crea un OAuth 2.0 Client ID del tipo 'Desktop application'\n" +
+                    "3. Copia el Client ID y Client Secret aquí",
+                    "Faltan credenciales OAuth",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            SetStatus(Color.FromArgb(245, 158, 11), "⬤  Abriendo browser...");
+
+            var (ok, msg) = await AntigravityOAuthService.ConectarOAuthAsync(
+                clientId, clientSecret, ct);
+
+            SetStatus(
+                ok ? Color.FromArgb(34, 197, 94) : Color.FromArgb(239, 68, 68),
+                $"⬤  {msg}");
+        }
+
+        private async Task VerificarServiceAccountAsync()
+        {
+            string path = txtSvcAccountPath.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                MessageBox.Show(
+                    "Selecciona un archivo Service Account JSON válido haciendo clic en '…'.",
+                    "Archivo requerido",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            SetStatus(Color.FromArgb(245, 158, 11), "⬤  Verificando Service Account...");
+
+            var (ok, msg) = await AntigravityOAuthService.ConectarServiceAccountAsync(path);
+
+            SetStatus(
+                ok ? Color.FromArgb(34, 197, 94) : Color.FromArgb(239, 68, 68),
+                $"⬤  {msg}");
+        }
+
+        private async Task AutenticarGcloudAsync()
+        {
+            string gcloudExe = AIServicios.EncontrarGcloudExe();
+
+            string cmdArgs;
+            if (!string.IsNullOrEmpty(gcloudExe))
+            {
+                cmdArgs = $"/k \"{gcloudExe}\" auth application-default login";
+                SetStatus(Color.FromArgb(245, 158, 11), "⬤  Abriendo terminal gcloud...");
+            }
+            else
+            {
+                cmdArgs = "/k gcloud auth application-default login";
+                SetStatus(Color.FromArgb(245, 158, 11), "⬤  gcloud no encontrado en rutas estándar");
+                MessageBox.Show(
+                    "No se encontró gcloud en las rutas de instalación estándar.\n\n" +
+                    "Descárgalo desde: https://cloud.google.com/sdk/docs/install\n" +
+                    "O usa el modo OAuth 2.0 (no requiere gcloud).",
+                    "Google Cloud SDK no encontrado",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "cmd.exe",
+                Arguments       = cmdArgs,
+                UseShellExecute = true
+            });
+
+            SetStatus(Color.FromArgb(245, 158, 11), "⬤  Esperando autorización en el browser...");
+            await Task.Delay(12000);
+        }
+
+        private async void btnBrowseSvcAccount_Click(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title  = "Selecciona el Service Account JSON",
+                Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*"
+            };
+
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            txtSvcAccountPath.Text = dlg.FileName;
+            SetStatus(Color.FromArgb(245, 158, 11), "⬤  Verificando Service Account...");
+
+            var (ok, msg) = await AntigravityOAuthService.ConectarServiceAccountAsync(dlg.FileName);
+
+            SetStatus(
+                ok ? Color.FromArgb(34, 197, 94) : Color.FromArgb(239, 68, 68),
+                $"⬤  {msg}");
+
+            if (ok) await VerificarEstadoAntigravityAsync();
+        }
+
+        private void cmbAuthModeAntigravity_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            int idx = cmbAuthModeAntigravity.SelectedIndex;
+            ActualizarVisibilidadCamposOAuth(idx);
+            ActualizarTextoBtnAutenticar(idx);
+        }
+
+        private void ActualizarVisibilidadCamposOAuth(int modoIdx)
+        {
+            bool esOAuth = modoIdx == 0;
+            bool esSvc   = modoIdx == 1;
+
+            lblClientId.Visible         = esOAuth;
+            txtClientId.Visible         = esOAuth;
+            lblClientSecret.Visible     = esOAuth;
+            txtClientSecret.Visible     = esOAuth;
+
+            lblSvcAccountPath.Visible   = esSvc;
+            txtSvcAccountPath.Visible   = esSvc;
+            btnBrowseSvcAccount.Visible = esSvc;
+        }
+
+        private void ActualizarTextoBtnAutenticar(int modoIdx)
+        {
+            btnAutenticarAntigravity.Text = modoIdx switch
+            {
+                0 => "🔑  Conectar con Google (OAuth)",
+                1 => "✅  Verificar Service Account",
+                _ => "🔑  Autenticar gcloud ADC"
+            };
+        }
+
+        #endregion
+
+        #region Antigravity — Estado / diagnóstico
+
+        private async Task VerificarEstadoAntigravityAsync()
+        {
+            SetStatus(Color.FromArgb(245, 158, 11), "⬤  Verificando...");
+
+            try
+            {
+                var (tokenOk, projectOk, projectId, mensaje, modo) =
+                    await AntigravityOAuthService.DiagnosticarAsync();
+
+                void Aplicar()
+                {
+                    if (!tokenOk)
+                    {
+                        SetStatus(Color.FromArgb(239, 68, 68), $"⬤  {mensaje}");
+                        return;
+                    }
+
+                    if (!projectOk)
+                    {
+                        SetStatus(Color.FromArgb(245, 158, 11), $"⬤  {mensaje}");
+                        _ = SeleccionarApi(Servicios.Antigravity, "");
+                        return;
+                    }
+
+                    _antigravityProjectId = projectId;
+                    SetStatus(Color.FromArgb(34, 197, 94), $"⬤  {mensaje}");
+                    _ = SeleccionarApi(Servicios.Antigravity, projectId);
+
+                    // Sincronizar el combo de modo con el modo detectado
+                    int idx = modo switch
+                    {
+                        "oauth"           => 0,
+                        "service_account" => 1,
+                        _                 => 2
+                    };
+                    if (cmbAuthModeAntigravity.SelectedIndex != idx)
+                    {
+                        cmbAuthModeAntigravity.SelectedIndex = idx;
+                        ActualizarVisibilidadCamposOAuth(idx);
+                    }
+                }
+
+                if (InvokeRequired) Invoke(Aplicar);
+                else                Aplicar();
+            }
+            catch (Exception ex)
+            {
+                SetStatus(Color.FromArgb(239, 68, 68), $"⬤  Error: {ex.Message}");
+            }
+        }
+
+        private void SetStatus(Color color, string texto)
+        {
+            void Aplicar()
+            {
+                if (IsDisposed) return;
+                lblGcloudStatus.ForeColor = color;
+                lblGcloudStatus.Text      = texto;
+            }
+            if (InvokeRequired) Invoke(Aplicar);
+            else                Aplicar();
         }
 
         #endregion
@@ -446,92 +626,8 @@ namespace OPENGIOAI.Vistas
 
         #endregion
 
-        #region Antigravity — Estado gcloud
-
-        /// <summary>
-        /// Verifica el estado completo de Antigravity (token + project ID) y actualiza
-        /// el indicador visual con mensajes precisos para cada caso de fallo.
-        /// </summary>
-        private async Task VerificarEstadoGcloudAsync()
-        {
-            // Mostrar estado intermedio mientras se comprueba
-            if (InvokeRequired)
-                Invoke(() => { lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); lblGcloudStatus.Text = "⬤  Verificando..."; });
-            else
-            { lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11); lblGcloudStatus.Text = "⬤  Verificando..."; }
-
-            try
-            {
-                // DiagnosticarAntigravityAsync distingue los tres estados posibles:
-                //   a) Sin credenciales ADC
-                //   b) Token OK pero sin Project ID
-                //   c) Todo OK
-                var (tokenOk, projectOk, projectId, mensaje) =
-                    await AIServicios.DiagnosticarAntigravityAsync();
-
-                if (InvokeRequired)
-                    Invoke(() => AplicarEstadoAntigravity(tokenOk, projectOk, projectId, mensaje));
-                else
-                    await AplicarEstadoAntigravity(tokenOk, projectOk, projectId, mensaje);
-            }
-            catch (Exception ex)
-            {
-                string msg = $"Error al verificar: {ex.Message}";
-                if (InvokeRequired)
-                    Invoke(() => { lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68); lblGcloudStatus.Text = $"⬤  {msg}"; });
-                else
-                { lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68); lblGcloudStatus.Text = $"⬤  {msg}"; }
-            }
-        }
-
-        /// <summary>
-        /// Aplica el resultado del diagnóstico al indicador visual y carga de modelos.
-        /// </summary>
-        private async Task AplicarEstadoAntigravity(
-            bool tokenOk, bool projectOk, string projectId, string mensaje)
-        {
-            if (!tokenOk)
-            {
-                // Sin credenciales — rojo + instrucción precisa
-                lblGcloudStatus.ForeColor = Color.FromArgb(239, 68, 68);
-                lblGcloudStatus.Text = $"⬤  {mensaje}";
-                return;
-            }
-
-            if (!projectOk)
-            {
-                // Token OK pero sin proyecto — ámbar + instrucción
-                lblGcloudStatus.ForeColor = Color.FromArgb(245, 158, 11);
-                lblGcloudStatus.Text = $"⬤  {mensaje}";
-                // Cargamos igual con fallback para que el comboBox no quede vacío
-                await SeleccionarApi(Servicios.Antigravity, "");
-                return;
-            }
-
-            // ── Todo OK: token + proyecto detectados ─────────────────────────────
-            _antigravityProjectId = projectId;
-            lblGcloudStatus.ForeColor = Color.FromArgb(34, 197, 94);
-            lblGcloudStatus.Text = $"⬤  {mensaje}";
-
-            // Buscar si ya existe una entrada API con ese project ID
-            var apiExistente = _listaApisDisponibles
-                .FirstOrDefault(a => a.key == projectId || a.Nombre == projectId);
-
-            if (apiExistente != null)
-                comboBoxApiAntigravity.SelectedValue = apiExistente.key;
-            else
-                await SeleccionarApi(Servicios.Antigravity, projectId);
-        }
-
-        #endregion
-
         #region UI — Visual y tema
 
-        /// <summary>
-        /// Habilita o deshabilita todos los paneles de configuración de agentes.
-        /// Se usa para bloquear la UI durante operaciones asíncronas de carga.
-        /// </summary>
-        /// <param name="estado"><c>true</c> para habilitar; <c>false</c> para deshabilitar.</param>
         private void EstadoPanels(bool estado)
         {
             pnllChat.Enabled       = estado;
@@ -543,24 +639,15 @@ namespace OPENGIOAI.Vistas
             pnlAntigravity.Enabled = estado;
         }
 
-        // ── Paleta Blue/Teal (consistente con FrmPrincipal / FrmApis / FrmAutomatizaciones) ──
-        private static readonly Color BgDeep    = ColorTranslator.FromHtml("#002647");
-        private static readonly Color BgSurface = ColorTranslator.FromHtml("#00305a");
-        private static readonly Color BgCard    = ColorTranslator.FromHtml("#00305a");
-        private static readonly Color BgCardHi  = ColorTranslator.FromHtml("#003d73");
-        private static readonly Color BgInput   = ColorTranslator.FromHtml("#002647");
-        private static readonly Color Emerald   = ColorTranslator.FromHtml("#3660C9");
-        private static readonly Color Emerald4  = ColorTranslator.FromHtml("#94E6EC");
-        private static readonly Color Emerald9  = ColorTranslator.FromHtml("#1E4545");
-        private static readonly Color TextMain  = ColorTranslator.FromHtml("#FFFFFF");
-        private static readonly Color TextSub   = ColorTranslator.FromHtml("#B6E3D4");
-        private static readonly Color BorderCol = ColorTranslator.FromHtml("#1a3a5c");
+        private static Color BgDeep   => EmeraldTheme.BgDeep;
+        private static Color BgCard   => EmeraldTheme.BgCard;
+        private static Color BgInput  => EmeraldTheme.BgDeep;
+        private static Color Emerald  => EmeraldTheme.Emerald500;
+        private static Color Emerald4 => EmeraldTheme.Emerald400;
+        private static Color Emerald9 => EmeraldTheme.Emerald900;
+        private static Color TextMain => EmeraldTheme.TextPrimary;
+        private static Color TextSub  => EmeraldTheme.TextSecondary;
 
-        /// <summary>
-        /// Aplica la paleta Emerald al formulario completo: fondo, paneles, botones,
-        /// combos, checks y labels. Mantiene los bordes redondeados de los paneles
-        /// pero con acento esmeralda en lugar del azul previo.
-        /// </summary>
         private void AplicarThema()
         {
             BackColor = BgDeep;
@@ -605,7 +692,6 @@ namespace OPENGIOAI.Vistas
                         break;
 
                     case Label lbl:
-                        // Respeta colores semánticos ya asignados (status verde/ámbar/rojo)
                         if (EsColorSemantico(lbl.ForeColor)) break;
                         lbl.BackColor = Color.Transparent;
                         lbl.ForeColor = EsTitulo(lbl) ? TextMain : TextSub;
@@ -618,9 +704,9 @@ namespace OPENGIOAI.Vistas
                         break;
 
                     case ComboBox cmb:
-                        cmb.BackColor     = BgInput;
-                        cmb.ForeColor     = TextMain;
-                        cmb.FlatStyle     = FlatStyle.Flat;
+                        cmb.BackColor = BgInput;
+                        cmb.ForeColor = TextMain;
+                        cmb.FlatStyle = FlatStyle.Flat;
                         break;
 
                     case Panel pnl when !EsPanelTema(pnl):
@@ -635,8 +721,8 @@ namespace OPENGIOAI.Vistas
         private void EstilizarBoton(Button btn)
         {
             btn.FlatStyle = FlatStyle.Flat;
-            btn.FlatAppearance.BorderSize        = 1;
-            btn.FlatAppearance.BorderColor       = Emerald;
+            btn.FlatAppearance.BorderSize         = 1;
+            btn.FlatAppearance.BorderColor        = Emerald;
             btn.FlatAppearance.MouseOverBackColor = Emerald;
             btn.FlatAppearance.MouseDownBackColor = Emerald4;
             btn.BackColor = Emerald9;
@@ -645,26 +731,19 @@ namespace OPENGIOAI.Vistas
             btn.Font      = new Font("Segoe UI Semibold", 9F);
         }
 
-        private static bool EsTitulo(Label lbl)
-        {
-            return lbl.Font != null && (lbl.Font.Bold || lbl.Font.Size >= 11F);
-        }
+        private static bool EsTitulo(Label lbl) =>
+            lbl.Font != null && (lbl.Font.Bold || lbl.Font.Size >= 11F);
 
-        private static bool EsColorSemantico(Color c)
-        {
-            // Verde 22,197,94 / Ámbar 245,158,11 / Rojo 239,68,68 / Slate 100,116,139
-            return (c.R == 34  && c.G == 197 && c.B == 94)
-                || (c.R == 245 && c.G == 158 && c.B == 11)
-                || (c.R == 239 && c.G == 68  && c.B == 68)
-                || (c.R == 100 && c.G == 116 && c.B == 139);
-        }
+        private static bool EsColorSemantico(Color c) =>
+            (c.R == 34  && c.G == 197 && c.B == 94)
+         || (c.R == 245 && c.G == 158 && c.B == 11)
+         || (c.R == 239 && c.G == 68  && c.B == 68)
+         || (c.R == 100 && c.G == 116 && c.B == 139);
 
-        private bool EsPanelTema(Panel pnl)
-        {
-            return pnl == pnlClau || pnl == pnlGem || pnl == pnlOllla
-                || pnl == pnlDeesp || pnl == pnllChat || pnl == pnlOpenroute
-                || pnl == pnlAntigravity;
-        }
+        private bool EsPanelTema(Panel pnl) =>
+            pnl == pnlClau || pnl == pnlGem || pnl == pnlOllla
+         || pnl == pnlDeesp || pnl == pnllChat || pnl == pnlOpenroute
+         || pnl == pnlAntigravity;
 
         #endregion
     }

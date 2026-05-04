@@ -370,5 +370,24 @@ namespace OPENGIOAI.Utilerias
 
         public static string ObtenerRutaPatronLogs()
             => Path.Combine(ObtenerRutaCarpetaLogs(), "app-.log");
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  Conversaciones — por workspace
+        // ═══════════════════════════════════════════════════════════════════
+
+        public static string ObtenerRutaCarpetaConversaciones()
+        {
+            string carpeta = Path.Combine(ResolverBaseWorkspace(), "Conversaciones");
+            if (!Directory.Exists(carpeta))
+                Directory.CreateDirectory(carpeta);
+            return carpeta;
+        }
+
+        public static string ObtenerRutaConversacionesIndexDelDia(DateTime fecha)
+            => Path.Combine(ObtenerRutaCarpetaConversaciones(),
+                            fecha.ToString("yyyy-MM-dd") + ".index.json");
+
+        public static string ObtenerRutaSesion(string sesionId)
+            => Path.Combine(ObtenerRutaCarpetaConversaciones(), sesionId + ".json");
     }
 }

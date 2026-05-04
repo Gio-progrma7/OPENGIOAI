@@ -459,14 +459,12 @@ namespace OPENGIOAI.ServiciosAI
             System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z][a-z0-9\-]{4,28}[a-z0-9]$");
 
         /// <summary>
-        /// Obtiene un token de acceso GCP usando Application Default Credentials (ADC).
+        /// Obtiene un token de acceso GCP.
         ///
         /// Estrategia (en orden de preferencia):
-        ///  1. Google.Apis.Auth  — lee el archivo ADC directamente; NO requiere gcloud CLI.
-        ///     Funciona si existe %APPDATA%\gcloud\application_default_credentials.json
-        ///     (creado al ejecutar una sola vez: gcloud auth application-default login).
-        ///  2. gcloud CLI        — fallback para entornos donde Google.Apis.Auth no puede
-        ///     leer el archivo ADC pero sí está disponible el CLI.
+        ///  1. AntigravityOAuthService — Service Account JSON o OAuth 2.0 si están configurados.
+        ///  2. Google.Apis.Auth ADC   — lee el archivo ADC directamente; NO requiere gcloud CLI.
+        ///  3. gcloud CLI             — fallback final si los anteriores no aplican.
         /// </summary>
         internal static async Task<string> ObtenerTokenGcloudAsync()
         {
@@ -654,32 +652,15 @@ namespace OPENGIOAI.ServiciosAI
         }
 
         /// <summary>
-        /// Diagnóstico rápido de la conexión Antigravity (Vertex AI).
-        /// Devuelve una tupla que describe exactamente qué paso falla,
-        /// para mostrar mensajes precisos en la UI sin swallow silencioso.
+        /// Diagnóstico completo de Antigravity (Vertex AI).
+        /// Delega en AntigravityOAuthService para soportar los tres modos de auth.
         /// </summary>
-        /// <returns>
-        ///   tokenOk    — true si se obtuvo un token ADC válido.
-        ///   projectOk  — true si se detectó un GCP Project ID.
-        ///   projectId  — el Project ID detectado (vacío si projectOk=false).
-        ///   mensaje    — texto descriptivo del estado para mostrar en UI.
-        /// </returns>
         public static async Task<(bool tokenOk, bool projectOk, string projectId, string mensaje)>
             DiagnosticarAntigravityAsync()
         {
-            // 1. ¿Hay credenciales ADC?
-            string token = await ObtenerTokenGcloudAsync();
-            if (string.IsNullOrWhiteSpace(token))
-                return (false, false, "",
-                    "Sin credenciales — ejecuta: gcloud auth application-default login");
-
-            // 2. ¿Hay un Project ID configurado?
-            string projectId = await ObtenerProyectoGcloudAsync();
-            if (string.IsNullOrWhiteSpace(projectId))
-                return (true, false, "",
-                    "Token OK · Sin proyecto — ejecuta: gcloud config set project TU-PROYECTO");
-
-            return (true, true, projectId, $"Conectado · {projectId}");
+            var (tokenOk, projectOk, projectId, msg, _) =
+                await AntigravityOAuthService.DiagnosticarAsync();
+            return (tokenOk, projectOk, projectId, msg);
         }
 
         public static async Task MostrarConsumoTokens(Servicios servicio, string result)

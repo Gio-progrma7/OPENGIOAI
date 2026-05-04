@@ -47,13 +47,13 @@ namespace OPENGIOAI.Themas
         private static Color BgDeep   => EmeraldTheme.BgDeep;
         private static Color BgCard   => EmeraldTheme.BgCard;
         private static Color BgCardHi => EmeraldTheme.IsDark
-                                           ? ColorTranslator.FromHtml("#003d73")
+                                           ? ColorTranslator.FromHtml("#1c2535")
                                            : ColorTranslator.FromHtml("#D6E8FF");
         private static Color Emerald  => EmeraldTheme.Emerald500;
         private static Color Emerald4 => EmeraldTheme.Emerald400;
         private static Color Emerald9 => EmeraldTheme.Emerald900;
-        // Bubble usuario: siempre teal oscuro para contraste
-        private static readonly Color Emerald12 = ColorTranslator.FromHtml("#0f2a2a");
+        // Bubble usuario: tono ligeramente más oscuro que Emerald9 para gradiente sutil
+        private static readonly Color Emerald12 = ColorTranslator.FromHtml("#172e2e");
         private static Color TextMain  => EmeraldTheme.TextPrimary;
         private static Color TextSub   => EmeraldTheme.TextSecondary;
         private static Color BorderCol => EmeraldTheme.IsDark
@@ -146,6 +146,8 @@ namespace OPENGIOAI.Themas
             Margin         = new Padding(0, 4, 0, 4);
 
             _tooltip = new ToolTip { AutomaticDelay = 400, ShowAlways = true };
+
+            EmeraldTheme.ThemeChanged += OnThemeChanged;
 
             Color colorFondo = EsUsuario ? BgUsuario : BgIA;
 
@@ -259,6 +261,17 @@ namespace OPENGIOAI.Themas
 
             // ── Animación "pensando" cuando texto termina en "..." ───
             ActualizarAnimacionTyping();
+        }
+
+        private void OnThemeChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(OnThemeChanged); return; }
+            Color colorFondo = EsUsuario ? BgUsuario : BgIA;
+            _txtMensaje.BackColor = colorFondo;
+            BackColor = BgDeep;
+            AplicarFormatoEnlaces();
+            Invalidate();
         }
 
         private void ActualizarAnimacionTyping()
@@ -967,6 +980,7 @@ namespace OPENGIOAI.Themas
         {
             if (disposing)
             {
+                EmeraldTheme.ThemeChanged -= OnThemeChanged;
                 _tooltip?.Dispose();
                 _txtMensaje?.Dispose();
                 _avatarPanel?.Dispose();
