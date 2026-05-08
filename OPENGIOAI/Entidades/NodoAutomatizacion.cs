@@ -5,9 +5,27 @@ namespace OPENGIOAI.Entidades
 {
     public enum TipoNodo
     {
-        Disparador,
-        Condicion,
-        Accion,
+        // ── Disparadores ─────────────────────────────────────────────────────
+        Disparador,     // Disparo genérico / entrada manual
+        Webhook,        // Trigger HTTP (escucha requests entrantes)
+        Programado,     // Trigger por tiempo/schedule
+
+        // ── Flujo de control ─────────────────────────────────────────────────
+        Condicion,      // Bifurcación if/else
+        Switch,         // Ramificación múltiple (como switch n8n)
+        Loop,           // Iterador / for-each sobre lista
+
+        // ── Acciones ─────────────────────────────────────────────────────────
+        Accion,         // Script Python genérico
+        HttpRequest,    // Petición HTTP (GET/POST/PUT/DELETE)
+        Email,          // Enviar/recibir email
+        Telegram,       // Mensaje Telegram / Slack
+        Database,       // Consulta SQL / NoSQL
+        Transform,      // Transformación / mapeo de datos
+        Delay,          // Esperar N segundos/minutos
+        SubFlujo,       // Invocar otra automatización
+
+        // ── Terminal ─────────────────────────────────────────────────────────
         Fin
     }
 

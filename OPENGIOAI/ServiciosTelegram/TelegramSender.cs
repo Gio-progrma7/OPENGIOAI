@@ -19,6 +19,8 @@ namespace OPENGIOAI.ServiciosTelegram
     /// </summary>
     public static class TelegramSender
     {
+        private const int MenuPageSize = 8;
+
         /// <summary>
         /// Envía mensajes de texto a un chat de Telegram de forma asíncrona utilizando la API HTTP del bot.
         /// Permite incluir teclados interactivos en formato JSON y utiliza parseo HTML para el formato del mensaje.
@@ -124,49 +126,101 @@ namespace OPENGIOAI.ServiciosTelegram
             };
         }
 
+        private static object CrearMenuPaginado<T>(
+            IEnumerable<T> items,
+            int pagina,
+            string claveMenu,
+            Func<T, (string text, string callback)> map)
+        {
+            var lista = (items ?? Enumerable.Empty<T>()).ToList();
+            int totalPaginas = Math.Max(1, (int)Math.Ceiling(lista.Count / (double)MenuPageSize));
+            pagina = Math.Clamp(pagina, 0, totalPaginas - 1);
+
+            var botones = new List<object[]>();
+            var visibles = lista
+                .Skip(pagina * MenuPageSize)
+                .Take(MenuPageSize)
+                .ToList();
+
+            if (visibles.Count == 0)
+            {
+                botones.Add(new object[]
+                {
+                    new { text = "Sin opciones disponibles", callback_data = "#CONFIGURACIONES" }
+                });
+            }
+            else
+            {
+                var filaTemporal = new List<object>();
+                foreach (var item in visibles)
+                {
+                    var (texto, callback) = map(item);
+                    filaTemporal.Add(new
+                    {
+                        text = RecortarBoton(texto, 34),
+                        callback_data = callback
+                    });
+
+                    if (filaTemporal.Count == 2)
+                    {
+                        botones.Add(filaTemporal.ToArray());
+                        filaTemporal.Clear();
+                    }
+                }
+
+                if (filaTemporal.Count > 0)
+                    botones.Add(filaTemporal.ToArray());
+            }
+
+            var navegacion = new List<object>();
+            if (pagina > 0)
+            {
+                navegacion.Add(new
+                {
+                    text = "‹ Ver menos",
+                    callback_data = $"#VERMENOS_{claveMenu}_{pagina - 1}"
+                });
+            }
+
+            if (pagina < totalPaginas - 1)
+            {
+                navegacion.Add(new
+                {
+                    text = "Ver más ›",
+                    callback_data = $"#VERMAS_{claveMenu}_{pagina + 1}"
+                });
+            }
+
+            if (navegacion.Count > 0)
+                botones.Add(navegacion.ToArray());
+
+            botones.Add(new object[]
+            {
+                new { text = "⚙ Configuraciones", callback_data = "#CONFIGURACIONES" }
+            });
+
+            return new { inline_keyboard = botones };
+        }
+
+        private static string RecortarBoton(string texto, int max)
+        {
+            if (string.IsNullOrWhiteSpace(texto)) return "Opción";
+            texto = texto.Trim();
+            return texto.Length <= max ? texto : texto[..Math.Max(1, max - 1)] + "…";
+        }
+
         /// <summary>
         /// Genera un teclado inline dinámico de Telegram a partir de una lista de agentes.
         /// Organiza los botones en filas de dos elementos y agrega una fila adicional con opciones de configuración.
         /// Cada botón contiene el nombre del agente visible y el callback asociado para su identificación en el sistema.
         /// </summary>
-        public static object CrearKeyboardDesdeListaAgentes(IEnumerable<Modelo> listaAgentes)
+        public static object CrearKeyboardDesdeListaAgentes(IEnumerable<Modelo> listaAgentes, int pagina = 0)
         {
-            var botones = new List<object[]>();
-            var filaTemporal = new List<object>();
-
-            foreach (var item in listaAgentes)
-            {
-                var nombreServicio = item.Agente.ToString();
-                filaTemporal.Add(new
-                {
-
-                    text = nombreServicio,
-                    callback_data = $"#AGENTE_{item.Agente}"
-                });
-
-                if (filaTemporal.Count == 2)
-                {
-                    botones.Add(filaTemporal.ToArray());
-                    filaTemporal.Clear();
-                }
-            }
-
-            if (filaTemporal.Any())
-                botones.Add(filaTemporal.ToArray());
-
-            botones.Add(new[]
-            {
-                    new
-                    {
-                        text = "⚙️ Configuraciones",
-                        callback_data = "#CONFIGURACIONES"
-                    }
-                });
-
-            return new
-            {
-                inline_keyboard = botones
-            };
+            return CrearMenuPaginado(
+                listaAgentes,
+                pagina,
+                "AGENTES",
+                item => ($"🤖 {item.Agente}", $"#AGENTE_{item.Agente}"));
         }
 
         /// <summary>
@@ -174,43 +228,13 @@ namespace OPENGIOAI.ServiciosTelegram
         /// Organiza los botones en filas de dos elementos y agrega una fila adicional con la opción de configuraciones.
         /// Cada botón contiene el nombre del modelo visible al usuario y el callback asociado para su procesamiento interno.
         /// </summary>
-        public static object CrearKeyboardDesdeListaModelos(IEnumerable<ModeloAgente> listaAgentes)
+        public static object CrearKeyboardDesdeListaModelos(IEnumerable<ModeloAgente> listaAgentes, int pagina = 0)
         {
-
-            var botones = new List<object[]>();
-            var filaTemporal = new List<object>();
-
-            foreach (var item in listaAgentes)
-            {
-                filaTemporal.Add(new
-                {
-                    text = item.Nombre,
-                    callback_data = $"#MODELO_{item.Nombre}"
-                });
-
-                if (filaTemporal.Count == 2)
-                {
-                    botones.Add(filaTemporal.ToArray());
-                    filaTemporal.Clear();
-                }
-            }
-
-            if (filaTemporal.Any())
-                botones.Add(filaTemporal.ToArray());
-
-            botones.Add(new[]
-            {
-                    new
-                    {
-                        text = "⚙️ Configuraciones",
-                        callback_data = "#CONFIGURACIONES"
-                    }
-                });
-
-            return new
-            {
-                inline_keyboard = botones
-            };
+            return CrearMenuPaginado(
+                listaAgentes,
+                pagina,
+                "MODELOS",
+                item => ($"⚡ {item.Nombre}", $"#MODELO_{item.Nombre}"));
         }
 
         /// <summary>
@@ -218,43 +242,18 @@ namespace OPENGIOAI.ServiciosTelegram
         /// Organiza los botones en filas de dos elementos y agrega una fila adicional para acceder a las configuraciones.
         /// Cada botón muestra la ruta del archivo y contiene un callback asociado para su procesamiento posterior.
         /// </summary>
-        public static object CrearKeyboardDesdeListaRutas(IEnumerable<Archivo> listaAgentes)
+        public static object CrearKeyboardDesdeListaRutas(IEnumerable<Archivo> listaAgentes, int pagina = 0)
         {
-
-            var botones = new List<object[]>();
-            var filaTemporal = new List<object>();
-
-            foreach (var item in listaAgentes)
-            {
-                filaTemporal.Add(new
+            return CrearMenuPaginado(
+                listaAgentes,
+                pagina,
+                "RUTAS",
+                item =>
                 {
-                    text = item.Ruta,
-                    callback_data = $"#RUTA_{item.Ruta}"
+                    var nombre = Path.GetFileName(item.Ruta.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    if (string.IsNullOrWhiteSpace(nombre)) nombre = item.Ruta;
+                    return ($"📁 {nombre}", $"#RUTA_{item.Ruta}");
                 });
-
-                if (filaTemporal.Count == 2)
-                {
-                    botones.Add(filaTemporal.ToArray());
-                    filaTemporal.Clear();
-                }
-            }
-
-            if (filaTemporal.Any())
-                botones.Add(filaTemporal.ToArray());
-
-            botones.Add(new[]
-            {
-                    new
-                    {
-                        text = "⚙️ Configuraciones",
-                        callback_data = "#CONFIGURACIONES"
-                    }
-                });
-
-            return new
-            {
-                inline_keyboard = botones
-            };
         }
 
 
@@ -263,8 +262,32 @@ namespace OPENGIOAI.ServiciosTelegram
         /// Incluye opciones para activar o desactivar Telegram, controlar el modo recordar tema, limitar el chat, gestionar APIs y cambiar parámetros del sistema como agente, modelo o ruta de trabajo.
         /// Retorna la estructura compatible con reply_markup para su envío mediante el bot.
         /// </summary>
-        public static object Configuraciones_Menu()
+        public static object Configuraciones_Menu(bool avanzado = false)
         {
+            if (avanzado)
+            {
+                return new
+                {
+                    inline_keyboard = new[]
+                    {
+                        new[]
+                        {
+                            new { text = "🤖 Cambiar agente", callback_data = "#CAMBIARAGENTE" },
+                            new { text = "⚡ Cambiar modelo", callback_data = "#CAMBIARMODELO" }
+                        },
+                        new[]
+                        {
+                            new { text = "📁 Ruta de trabajo", callback_data = "#CAMBIARRUTA" },
+                            new { text = "🔌 APIs", callback_data = "#APIS" }
+                        },
+                        new[]
+                        {
+                            new { text = "‹ Ver menos", callback_data = "#VERMENOS_CONFIG" }
+                        }
+                    }
+                };
+            }
+
             var objeto = new
             {
                 inline_keyboard = new[]
@@ -272,23 +295,16 @@ namespace OPENGIOAI.ServiciosTelegram
                             new[]
                             {
                                 new { text = "✅ Activar Telegram", callback_data = "#ACTIVATELEGRAM" },
-                                new { text = "❌ Desactivar Telegram", callback_data = "#DESACTIVATELEGRAM" }
+                                new { text = "⛔ Desactivar Telegram", callback_data = "#DESACTIVATELEGRAM" }
                             },
                             new[]
                             {
-                                new { text = "🧠 Recordar Tema", callback_data = "#RECORDAR" },
+                                new { text = "🧠 Recordar tema", callback_data = "#RECORDAR" },
                                 new { text = "💬 Solo Chat", callback_data = "#SOLOCHAT" }
                             },
-                          
                             new[]
                             {
-                                new { text = "🔌 APIs", callback_data = "#APIS" }
-                            },
-                             new[]
-                            {
-                                new { text = "Cambiar Agente", callback_data = "#CAMBIARAGENTE" },
-                                new { text = "Cambiar Modelo", callback_data = "#CAMBIARMODELO" },
-                                new { text = "Cambiar Ruta trabajo", callback_data = "#CAMBIARRUTA" }
+                                new { text = "Ver más ›", callback_data = "#VERMAS_CONFIG" }
                             }
                         }
             };
