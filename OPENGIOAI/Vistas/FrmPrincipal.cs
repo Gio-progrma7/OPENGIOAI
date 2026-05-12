@@ -227,7 +227,7 @@ namespace OPENGIOAI.Vistas
             };
             lblLogo = new Label
             {
-                Text = "✦  OPENGIOAI",
+                Text = "#  OPENGIOAI",
                 Font = new Font("Segoe UI Semibold", 12f, FontStyle.Bold),
                 ForeColor = Emerald4,
                 AutoSize = false,
@@ -652,7 +652,7 @@ namespace OPENGIOAI.Vistas
             // Inicio (siempre)
             var lblHome = new Label
             {
-                Text = "✦  Inicio",
+                Text = "#  Inicio",
                 Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
                 ForeColor = _nav.Count == 0 ? Emerald4 : TextMuted,
                 AutoSize = true,
