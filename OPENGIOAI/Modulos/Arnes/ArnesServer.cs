@@ -17,16 +17,18 @@ namespace OPENGIOAI.Modulos.Arnes
         private HttpListener? _listener;
         private CancellationTokenSource? _cts;
         private readonly int _puerto;
-        private readonly string _tokenSeguridad;
+        private readonly ArnesSecurityManager _securityManager;
         private bool _isRunning = false;
+        
+        public bool IsRunning => _isRunning;
 
         public event Action<string>? OnLog;
         public event Func<ArnesPayload, Task<ArnesPayload>>? OnPeticionRecibida;
 
-        public ArnesServer(int puerto = 5050, string tokenSeguridad = "openga_arnes_local")
+        public ArnesServer(ArnesSecurityManager securityManager, int puerto = 5050)
         {
+            _securityManager = securityManager;
             _puerto = puerto;
-            _tokenSeguridad = tokenSeguridad;
         }
 
         public void Iniciar()
@@ -108,10 +110,17 @@ namespace OPENGIOAI.Modulos.Arnes
             try
             {
                 // Validación básica de autenticación
-                var authHeader = request.Headers["Authorization"];
-                if (authHeader != $"Bearer {_tokenSeguridad}")
+                var authHeader = request.Headers["Authorization"]?.ToString();
+                if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                 {
-                    await EnviarRespuestaErrorAsync(response, 401, "No autorizado. Token inválido.");
+                    await EnviarRespuestaErrorAsync(response, 401, "No autorizado. Token Bearer ausente.");
+                    return;
+                }
+
+                string token = authHeader.Substring("Bearer ".Length).Trim();
+                if (!_securityManager.ValidarToken(token))
+                {
+                    await EnviarRespuestaErrorAsync(response, 401, "No autorizado. Token inválido o revocado.");
                     return;
                 }
 

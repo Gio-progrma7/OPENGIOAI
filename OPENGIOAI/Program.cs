@@ -118,10 +118,12 @@ namespace OPENGIOAI
             services.AddSingleton<BroadcastService>();
 
             // Módulo ARNES
+            services.AddSingleton<ArnesSecurityManager>();
             services.AddSingleton(sp => 
             {
-                // Puerto 5050 y token genérico para pruebas locales
-                return new ArnesServer(5050, "openga_arnes_local");
+                var securityManager = sp.GetRequiredService<ArnesSecurityManager>();
+                // Puerto 5050
+                return new ArnesServer(securityManager, 5050);
             });
             services.AddSingleton(sp => 
             {

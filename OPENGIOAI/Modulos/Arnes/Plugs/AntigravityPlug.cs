@@ -1,5 +1,9 @@
 using System.Threading;
 using System.Threading.Tasks;
+using OPENGIOAI.Agentes;
+using OPENGIOAI.Data;
+using OPENGIOAI.Entidades;
+using OPENGIOAI.Utilerias;
 
 namespace OPENGIOAI.Modulos.Arnes.Plugs
 {
@@ -24,6 +28,7 @@ namespace OPENGIOAI.Modulos.Arnes.Plugs
             switch (payload.Action.ToLower())
             {
                 case "analyze_code":
+                case "execute_aria":
                     return await HandleAnalyzeCodeAsync(payload, ct);
                     
                 case "sync_workspace":
@@ -39,35 +44,62 @@ namespace OPENGIOAI.Modulos.Arnes.Plugs
             }
         }
 
-        private Task<ArnesPayload> HandleAnalyzeCodeAsync(ArnesPayload payload, CancellationToken ct)
+        private async Task<ArnesPayload> HandleAnalyzeCodeAsync(ArnesPayload payload, CancellationToken ct)
         {
             // Extraer parámetros específicos
-            string? codeFragment = payload.Parameters.ContainsKey("code") ? payload.Parameters["code"].ToString() : null;
+            string instruction = payload.Parameters.ContainsKey("instruction") 
+                ? payload.Parameters["instruction"].ToString() ?? "Revisa este código." 
+                : "Revisa este código.";
+                
+            string? codeFragment = payload.Parameters.ContainsKey("code") 
+                ? payload.Parameters["code"].ToString() 
+                : null;
 
-            if (string.IsNullOrEmpty(codeFragment))
+            // Cargar configuración global para ejecutar ARIA en modo Headless
+            var config = Utils.LeerConfig<ConfiguracionClient>(RutasProyecto.ObtenerRutaConfiguracion()) ?? new ConfiguracionClient();
+            string modelo = config.Mimodelo?.Modelos ?? "";
+            string apiKey = config.Mimodelo?.ApiKey ?? "";
+            string ruta = config.MiArchivo?.Ruta ?? RutasProyecto.ObtenerRutaScripts();
+            Servicios servicio = config.Mimodelo?.Agente ?? Servicios.Gemenni;
+
+            var apis = JsonManager.Leer<Api>(RutasProyecto.ObtenerRutaListApis()) ?? new System.Collections.Generic.List<Api>();
+            string claves = Utils.ObtenerNombresApis(apis);
+
+            // Instanciar el Orquestador en modo "Solo Chat" para no sobreescribir scripts locales sin permiso
+            var aria = new OrquestadorARIA(
+                modelo, ruta, apiKey, claves, 
+                soloChat: true, 
+                servicio, 
+                maxReintentos: 3);
+
+            string fullInstruction = instruction;
+            if (!string.IsNullOrWhiteSpace(codeFragment))
             {
-                return Task.FromResult(new ArnesPayload
+                fullInstruction += $"\n\n```\n{codeFragment}\n```";
+            }
+
+            try
+            {
+                string resultado = await aria.EjecutarAsync(fullInstruction, ct);
+
+                var respuesta = new ArnesPayload
+                {
+                    SourceApp = Nombre,
+                    Status = "success",
+                    Message = resultado
+                };
+                
+                return respuesta;
+            }
+            catch (System.Exception ex)
+            {
+                return new ArnesPayload
                 {
                     SourceApp = Nombre,
                     Status = "error",
-                    Message = "Falta el parámetro 'code' para la acción 'analyze_code'."
-                });
+                    Message = $"Error al ejecutar el análisis: {ex.Message}"
+                };
             }
-
-            // Aquí se conectaría con el motor ARIA para analizar el código.
-            // (Mockeado para propósitos de la arquitectura)
-            
-            var respuesta = new ArnesPayload
-            {
-                SourceApp = Nombre,
-                Status = "success",
-                Message = "Código analizado correctamente por OPENGIOAI."
-            };
-            
-            // Adjuntar resultados
-            respuesta.Parameters.Add("lint_result", "Se encontraron 2 sugerencias de optimización.");
-            
-            return Task.FromResult(respuesta);
         }
 
         private Task<ArnesPayload> HandleSyncWorkspaceAsync(ArnesPayload payload, CancellationToken ct)

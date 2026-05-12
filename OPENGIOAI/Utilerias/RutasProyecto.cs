@@ -192,6 +192,12 @@ namespace OPENGIOAI.Utilerias
             return Path.Combine(appDir, "EmbeddingsConfig.json");
         }
 
+        public static string ObtenerRutaArnesKeys()
+        {
+            string appDir = AppDomain.CurrentDomain.BaseDirectory;
+            return Path.Combine(appDir, "ArnesKeys.json");
+        }
+
         // ═══════════════════════════════════════════════════════════════════
         //  RUTAS POR WORKSPACE (en RutaTrabajoActual o AppDir como fallback)
         // ═══════════════════════════════════════════════════════════════════

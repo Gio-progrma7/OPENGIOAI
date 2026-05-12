@@ -1,5 +1,9 @@
-using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
+using OPENGIOAI.Agentes;
+using OPENGIOAI.Data;
+using OPENGIOAI.Entidades;
+using OPENGIOAI.Utilerias;
 using System.Threading.Tasks;
 
 namespace OPENGIOAI.Modulos.Arnes
@@ -67,15 +71,11 @@ namespace OPENGIOAI.Modulos.Arnes
             }
             else
             {
-                // 3. Fallback: Si no hay un plug específico, podemos intentar un manejo "Genérico"
-                // Por ejemplo, peticiones directas al motor ARIA de OPENGIOAI.
-                if (source.ToLower() == "generico" || source.ToLower() == "test")
-                {
-                    return await ProcesarPeticionGenericaAsync(peticion);
-                }
-
-                OnLog?.Invoke($"[ARNES ROUTER] No se encontró un Plug registrado para '{source}'.");
-                return GenerarError($"Aplicación origen '{source}' no soportada o no registrada en el servidor ARNES.");
+                // 3. Fallback: Si no hay un plug específico, despachar a la lógica genérica
+                // Esto permite que aplicaciones nuevas (como extensiones) puedan usar
+                // execute_aria sin tener un plug registrado en el código C#.
+                OnLog?.Invoke($"[ARNES ROUTER] Plug no registrado para '{source}'. Usando manejador genérico.");
+                return await ProcesarPeticionGenericaAsync(peticion);
             }
         }
 
@@ -97,15 +97,44 @@ namespace OPENGIOAI.Modulos.Arnes
                     };
 
                 case "execute_aria":
-                    // Aquí iría el puente con el OrquestadorARIA de la capa superior.
-                    // Para mantener la separación de responsabilidades, esta clase
-                    // podría disparar un evento para que FrmMandos u otro coordinador lo ejecute.
-                    return new ArnesPayload
+                    // Despachar al OrquestadorARIA en modo Headless
+                    string instruction = peticion.Parameters.ContainsKey("instruction") 
+                        ? peticion.Parameters["instruction"].ToString() ?? ""
+                        : "";
+
+                    if (string.IsNullOrWhiteSpace(instruction))
                     {
-                        SourceApp = "opengioai_arnes",
-                        Status = "success",
-                        Message = "Funcionalidad 'execute_aria' reservada para implementación en OPENGIOAI."
-                    };
+                        return GenerarError("La acción 'execute_aria' requiere el parámetro 'instruction'.");
+                    }
+
+                    try
+                    {
+                        var config = Utils.LeerConfig<ConfiguracionClient>(RutasProyecto.ObtenerRutaConfiguracion()) ?? new ConfiguracionClient();
+                        var apis = JsonManager.Leer<Api>(RutasProyecto.ObtenerRutaListApis()) ?? new List<Api>();
+
+                        var aria = new OrquestadorARIA(
+                            config.Mimodelo?.Modelos ?? "",
+                            config.MiArchivo?.Ruta ?? RutasProyecto.ObtenerRutaScripts(),
+                            config.Mimodelo?.ApiKey ?? "",
+                            Utils.ObtenerNombresApis(apis),
+                            soloChat: true, 
+                            config.Mimodelo?.Agente ?? Servicios.Gemenni,
+                            maxReintentos: 3);
+
+                        // La ejecución puede tardar un poco, el cliente debe soportar la latencia
+                        string result = await aria.EjecutarAsync(instruction, System.Threading.CancellationToken.None);
+
+                        return new ArnesPayload
+                        {
+                            SourceApp = "opengioai_arnes",
+                            Status = "success",
+                            Message = result
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        return GenerarError($"Error ejecutando ARIA de forma genérica: {ex.Message}");
+                    }
 
                 default:
                     return GenerarError($"Acción genérica no soportada: {peticion.Action}");
