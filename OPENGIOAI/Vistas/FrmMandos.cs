@@ -736,11 +736,11 @@ namespace OPENGIOAI.Vistas
                 if (!string.IsNullOrWhiteSpace(msg))
                     MostrarBurbujaFase(fase, msg);
 
-                // Reenviar el plan del Analista a Telegram / Slack en tiempo real.
-                // Se filtra el mensaje gen�rico inicial; solo se env�a el plan real.
+                // En canales externos enviamos el plan real del Analista, pero no
+                // los mensajes genéricos de progreso como "Analizando...".
                 if (fase == FaseAgente.Analista
                     && !string.IsNullOrWhiteSpace(msg)
-                    && msg != "Analizando tu instrucci�n...")
+                    && !EsMensajeProgresoCanal(msg))
                 {
                     _ = EjecutarDifusionAsync($"🔍 {msg}", usarTelegram, usarSlack);
                 }
@@ -850,10 +850,7 @@ namespace OPENGIOAI.Vistas
                 }, ctsTyping.Token);
             }
 
-            // Slack: mensaje "pensando..." que se elimina al finalizar
-            string? slackTsPensando = null;
-            if (usarSlack && _slackService.IsConfigured)
-                slackTsPensando = await _slackService.EnviarPensandoAsync();
+            // Slack no publica mensajes temporales de progreso; solo respuesta final.
 
             // -- Ejecutar pipeline ---------------------------------------------
             string respuestaFinal;
@@ -879,8 +876,6 @@ namespace OPENGIOAI.Vistas
 
                 // Detener indicadores en cuanto termina el pipeline
                 ctsTyping.Cancel();
-                if (slackTsPensando != null && _slackService.IsConfigured)
-                    _ = _slackService.EliminarMensajeAsync(slackTsPensando);
             }
 
             // Flush final del Comunicador � pasar el buffer acumulado para garantizar
@@ -920,6 +915,18 @@ namespace OPENGIOAI.Vistas
                 await EjecutarDifusionAsync(respuestaFinal, usarTelegram, usarSlack);
 
             return respuestaFinal;
+        }
+
+        private static bool EsMensajeProgresoCanal(string mensaje)
+        {
+            if (string.IsNullOrWhiteSpace(mensaje)) return true;
+
+            var limpio = mensaje.Trim();
+            return limpio.Equals("Analizando tu instrucción...", StringComparison.OrdinalIgnoreCase)
+                || limpio.Equals("Analizando tu instrucci�n...", StringComparison.OrdinalIgnoreCase)
+                || limpio.Contains("se está procesando", StringComparison.OrdinalIgnoreCase)
+                || limpio.Contains("se est� procesando", StringComparison.OrdinalIgnoreCase)
+                || limpio.Contains("Por favor espera", StringComparison.OrdinalIgnoreCase);
         }
 
         // ---------------------------------------------------------------------
@@ -1676,9 +1683,9 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             if (!IsHandleCreated) return;
             BeginInvoke(async () =>
             {
-                await _telegramService.EnviarMensajeAsync(chatId,
-                    "Tu mensaje ha sido recibido y se est� procesando... Por favor espera.",
-                    TelegramSender.CancelarConfig());
+                if (await ProcesarCallbackMenuTelegramAsync(chatId, data))
+                    return;
+
                 await ProcesarMensajeTelegramAsync(chatId, data);
             });
         }
@@ -1706,15 +1713,6 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             {
                 MostrarMensaje(texto, true);
 
-                bool esComando = texto.TrimStart().StartsWith('#');
-
-                if (!esComando)
-                {
-                    await _telegramService.EnviarMensajeAsync(chatId,
-                        "Tu mensaje ha sido recibido y se est� procesando... Por favor espera.",
-                        TelegramSender.CancelarConfig());
-                }
-
                 // Pasamos el texto ORIGINAL (preserva el case de los args).
                 await EjecutarComandoOConsultaAsync(texto, true, false);
             }
@@ -1734,6 +1732,62 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
         private object CambiarAgente_Telegram() => TelegramSender.CrearKeyboardDesdeListaAgentes(_listaAgentes);
         private object CambiarModelo_Telegram() => TelegramSender.CrearKeyboardDesdeListaModelos(_modelosAgente);
         private object CambiarRuta_Telegram() => TelegramSender.CrearKeyboardDesdeListaRutas(_listaArchivosDisponibles);
+
+        private async Task<bool> ProcesarCallbackMenuTelegramAsync(long chatId, string data)
+        {
+            if (string.IsNullOrWhiteSpace(data)) return false;
+
+            if (data.StartsWith("#VERMAS_AGENTES_", StringComparison.OrdinalIgnoreCase) ||
+                data.StartsWith("#VERMENOS_AGENTES_", StringComparison.OrdinalIgnoreCase))
+            {
+                int pagina = ExtraerPaginaCallback(data);
+                await _telegramService.EnviarMensajeAsync(
+                    chatId, "Selecciona un agente:", TelegramSender.CrearKeyboardDesdeListaAgentes(_listaAgentes, pagina));
+                return true;
+            }
+
+            if (data.StartsWith("#VERMAS_MODELOS_", StringComparison.OrdinalIgnoreCase) ||
+                data.StartsWith("#VERMENOS_MODELOS_", StringComparison.OrdinalIgnoreCase))
+            {
+                int pagina = ExtraerPaginaCallback(data);
+                await _telegramService.EnviarMensajeAsync(
+                    chatId, "Selecciona un modelo:", TelegramSender.CrearKeyboardDesdeListaModelos(_modelosAgente, pagina));
+                return true;
+            }
+
+            if (data.StartsWith("#VERMAS_RUTAS_", StringComparison.OrdinalIgnoreCase) ||
+                data.StartsWith("#VERMENOS_RUTAS_", StringComparison.OrdinalIgnoreCase))
+            {
+                int pagina = ExtraerPaginaCallback(data);
+                await _telegramService.EnviarMensajeAsync(
+                    chatId, "Selecciona una ruta de trabajo:", TelegramSender.CrearKeyboardDesdeListaRutas(_listaArchivosDisponibles, pagina));
+                return true;
+            }
+
+            if (data.Equals("#VERMAS_CONFIG", StringComparison.OrdinalIgnoreCase))
+            {
+                await _telegramService.EnviarMensajeAsync(
+                    chatId, "Ajustes avanzados:", TelegramSender.Configuraciones_Menu(avanzado: true));
+                return true;
+            }
+
+            if (data.Equals("#VERMENOS_CONFIG", StringComparison.OrdinalIgnoreCase))
+            {
+                await _telegramService.EnviarMensajeAsync(
+                    chatId, "Configuraciones:", TelegramSender.Configuraciones_Menu(avanzado: false));
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int ExtraerPaginaCallback(string data)
+        {
+            int idx = data.LastIndexOf('_');
+            if (idx >= 0 && idx + 1 < data.Length && int.TryParse(data[(idx + 1)..], out int pagina))
+                return Math.Max(0, pagina);
+            return 0;
+        }
 
         /// <summary>
         /// Enrutador de comandos Telegram / Slack. Usa el nuevo CommandExecutor:
@@ -1902,7 +1956,6 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                     });
                 }
 
-                await _slackService.EnviarMensajeAsync("Su instrucci�n se recibi�, espere respuesta...");
                 await Realizar_Peticiones_Slack(instruccion);
             }
             catch

@@ -178,6 +178,7 @@ namespace OPENGIOAI.Vistas
             _items.Add(new() { Icono = "🧬", Titulo = "Memoria",          Grupo = "INTELIGENCIA",  Accion = AbrirMemoria,         TipoForm = typeof(FrmMemoria) });
             _items.Add(new() { Icono = "🔎", Titulo = "Patrones",         Grupo = "INTELIGENCIA",  Accion = AbrirPatrones,        TipoForm = typeof(FrmPatrones) });
             _items.Add(new() { Icono = "🪡", Titulo = "Embeddings",       Grupo = "INTELIGENCIA",  Accion = AbrirEmbeddings,      TipoForm = typeof(FrmEmbeddings) });
+            _items.Add(new() { Icono = "🔌", Titulo = "Hub ARNES",        Grupo = "INTELIGENCIA",  Accion = AbrirArnesHub,        TipoForm = typeof(FrmArnesHub) });
 
             // OBSERVABILIDAD — el dashboard entra al stack; los otros son flotantes
             _items.Add(new() { Icono = "📈", Titulo = "Dashboard",        Grupo = "OBSERVABILIDAD", Accion = AbrirDashboard,                                    TipoForm = typeof(FrmDashboard) });
@@ -764,6 +765,9 @@ namespace OPENGIOAI.Vistas
             string ruta = Miconfiguracion?.MiArchivo?.Ruta ?? "";
             AbrirEnPanel(typeof(FrmEmbeddings), "Embeddings", "🪡", () => new FrmEmbeddings(ruta));
         }
+
+        private void AbrirArnesHub() =>
+            AbrirEnPanel(typeof(FrmArnesHub), "Hub ARNES", "🔌", () => ActivatorUtilities.CreateInstance<FrmArnesHub>(_services));
 
         private void AbrirDashboard() =>
             AbrirEnPanel(typeof(FrmDashboard), "Dashboard", "📈", () => new FrmDashboard());

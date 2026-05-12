@@ -126,6 +126,11 @@ namespace OPENGIOAI.Utilerias
         public static object CrearBlocksDesdeTexto(string mensaje)
         {
             var bloques = new List<object>();
+            const string marcador = "<!--BOTONES-->";
+            int index = (mensaje ?? string.Empty).IndexOf(marcador, StringComparison.OrdinalIgnoreCase);
+            string textoPrincipal = index >= 0
+                ? mensaje[..index].Trim()
+                : (mensaje ?? string.Empty).Trim();
 
             // Texto principal
             bloques.Add(new
@@ -134,27 +139,39 @@ namespace OPENGIOAI.Utilerias
                 text = new
                 {
                     type = "mrkdwn",
-                    text = mensaje
+                    text = string.IsNullOrWhiteSpace(textoPrincipal) ? "Selecciona una opción:" : textoPrincipal
                 }
             });
 
-            // Botón por defecto
+            bloques.Add(new { type = "divider" });
+
             var botones = new List<object>
             {
                 new
                 {
                     type = "button",
+                    action_id = "cfg_configuraciones",
                     text = new
                     {
                         type = "plain_text",
-                        text = "⚙️ Configuraciones"
+                        text = "⚙ Configuraciones",
+                        emoji = true
                     },
                     value = "#CONFIGURACIONES"
+                },
+                new
+                {
+                    type = "button",
+                    action_id = "cfg_recordar",
+                    text = new
+                    {
+                        type = "plain_text",
+                        text = "🧠 Recordar",
+                        emoji = true
+                    },
+                    value = "#RECORDAR"
                 }
             };
-
-            const string marcador = "<!--BOTONES-->";
-            int index = mensaje.IndexOf(marcador, StringComparison.OrdinalIgnoreCase);
 
             if (index >= 0)
             {
@@ -165,28 +182,58 @@ namespace OPENGIOAI.Utilerias
                     @"\[(.*?)\]\s*\|\s*(#\S+)"
                 );
 
-                foreach (Match m in matches)
+                int visibles = 0;
+                foreach (Match m in matches.Cast<Match>().Take(8))
                 {
                     botones.Add(new
                     {
                         type = "button",
+                        action_id = $"accion_{visibles}",
                         text = new
                         {
                             type = "plain_text",
-                            text = m.Groups[1].Value.Trim()
+                            text = RecortarTextoBoton(m.Groups[1].Value.Trim(), 28),
+                            emoji = true
                         },
                         value = m.Groups[2].Value.Trim()
+                    });
+                    visibles++;
+                }
+
+                if (matches.Count > 8)
+                {
+                    botones.Add(new
+                    {
+                        type = "button",
+                        action_id = "menu_ver_mas",
+                        text = new
+                        {
+                            type = "plain_text",
+                            text = "Ver más",
+                            emoji = true
+                        },
+                        value = "#VERMAS_MENU"
                     });
                 }
             }
 
-            bloques.Add(new
+            foreach (var grupo in botones.Chunk(5))
             {
-                type = "actions",
-                elements = botones
-            });
+                bloques.Add(new
+                {
+                    type = "actions",
+                    elements = grupo.ToArray()
+                });
+            }
 
             return bloques;
+        }
+
+        private static string RecortarTextoBoton(string texto, int max)
+        {
+            if (string.IsNullOrWhiteSpace(texto)) return "Opción";
+            texto = texto.Trim();
+            return texto.Length <= max ? texto : texto[..Math.Max(1, max - 1)] + "…";
         }
         public static object? CrearKeyboardDesdeTexto(string mensaje)
         {
@@ -196,12 +243,12 @@ namespace OPENGIOAI.Utilerias
             {
                 new[]
                 {
-                    ("⚙️ Configuraciones", "#CONFIGURACIONES")
+                    ("⚙ Configuraciones", "#CONFIGURACIONES")
 
                 },
                 new[]
                 {
-                    ("Mantener Comversacion", "#RECORDAR")
+                    ("🧠 Recordar conversación", "#RECORDAR")
                 }
              };
 
@@ -225,14 +272,24 @@ namespace OPENGIOAI.Utilerias
             if (matches.Count == 0)
                 return TelegramSender.CrearInlineKeyboard(botonDefault);
 
-            var filas = matches
+            var filasDinamicas = matches
+                .Cast<Match>()
+                .Take(8)
                 .Select(m => new[]
                 {
-            (m.Groups[1].Value.Trim(), m.Groups[2].Value.Trim())
+                    (RecortarTextoBoton(m.Groups[1].Value.Trim(), 32), m.Groups[2].Value.Trim())
                 })
-                .ToArray();
+                .ToList();
 
-            return TelegramSender.CrearInlineKeyboard(filas);
+            if (matches.Count > 8)
+            {
+                filasDinamicas.Add(new[]
+                {
+                    ("Ver más ›", "#CONFIGURACIONES")
+                });
+            }
+
+            return TelegramSender.CrearInlineKeyboard(filasDinamicas.ToArray());
         }
 
         public static List<string> DividirMensajeTelegram(string mensaje, int limite = 4096)

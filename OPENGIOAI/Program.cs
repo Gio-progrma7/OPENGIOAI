@@ -5,6 +5,8 @@ using OPENGIOAI.ServiciosTelegram;
 using OPENGIOAI.ServiciosTTS;
 using OPENGIOAI.Utilerias;
 using OPENGIOAI.Vistas;
+using OPENGIOAI.Modulos.Arnes;
+using OPENGIOAI.Modulos.Arnes.Plugs;
 using Serilog;
 using Serilog.Events;
 using System.IO;
@@ -59,6 +61,12 @@ namespace OPENGIOAI
                     catch { /* no crítico */ }
                 }
 
+                // Iniciar Servidor ARNES
+                var arnesServer = provider.GetRequiredService<ArnesServer>();
+                // Forzar resolución del router para que se conecte a los eventos del server
+                var arnesRouter = provider.GetRequiredService<ArnesRouter>(); 
+                arnesServer.Iniciar();
+
                 Application.Run(mainForm);
             }
             catch (Exception ex)
@@ -108,6 +116,25 @@ namespace OPENGIOAI
             services.AddSingleton<SlackChannelService>();
             services.AddSingleton<AudioTTSService>();
             services.AddSingleton<BroadcastService>();
+
+            // Módulo ARNES
+            services.AddSingleton<ArnesSecurityManager>();
+            services.AddSingleton(sp => 
+            {
+                var securityManager = sp.GetRequiredService<ArnesSecurityManager>();
+                // Puerto 5050
+                return new ArnesServer(securityManager, 5050);
+            });
+            services.AddSingleton(sp => 
+            {
+                var server = sp.GetRequiredService<ArnesServer>();
+                var router = new ArnesRouter(server);
+                
+                // Registrar los adaptadores iniciales
+                router.RegistrarPlug(new AntigravityPlug());
+                
+                return router;
+            });
 
             services.AddTransient<FrmPrincipal>();
 

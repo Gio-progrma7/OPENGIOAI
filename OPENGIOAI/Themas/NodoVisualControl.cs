@@ -14,9 +14,20 @@ namespace OPENGIOAI.Themas
     {
         // ── Colores por tipo de nodo ──────────────────────────────────────────
         private static readonly Color ColorDisparador  = ColorTranslator.FromHtml("#3b82f6"); // azul
+        private static readonly Color ColorWebhook     = ColorTranslator.FromHtml("#8b5cf6"); // violeta
+        private static readonly Color ColorProgramado  = ColorTranslator.FromHtml("#06b6d4"); // cian
         private static readonly Color ColorCondicion   = ColorTranslator.FromHtml("#f59e0b"); // ámbar
-        private static readonly Color ColorAccion = ColorTranslator.FromHtml("#3660C9"); // blue
-        private static readonly Color ColorFin   = ColorTranslator.FromHtml("#f87171"); // rojo
+        private static readonly Color ColorSwitch      = ColorTranslator.FromHtml("#eab308"); // amarillo
+        private static readonly Color ColorLoop        = ColorTranslator.FromHtml("#6366f1"); // indigo
+        private static readonly Color ColorAccion      = ColorTranslator.FromHtml("#3660C9"); // azul oscuro
+        private static readonly Color ColorHttpRequest = ColorTranslator.FromHtml("#06b6d4"); // teal
+        private static readonly Color ColorEmail       = ColorTranslator.FromHtml("#f97316"); // naranja
+        private static readonly Color ColorTelegram    = ColorTranslator.FromHtml("#0ea5e9"); // azul claro
+        private static readonly Color ColorDatabase    = ColorTranslator.FromHtml("#10b981"); // verde
+        private static readonly Color ColorTransform   = ColorTranslator.FromHtml("#14b8a6"); // teal-green
+        private static readonly Color ColorDelay       = ColorTranslator.FromHtml("#6b7280"); // gris
+        private static readonly Color ColorSubFlujo    = ColorTranslator.FromHtml("#e11d48"); // rosa
+        private static readonly Color ColorFin         = ColorTranslator.FromHtml("#f87171"); // rojo
 
         private static Color BgCard    => EmeraldTheme.BgCard;
         private static Color BgCardHov => EmeraldTheme.IsDark
@@ -135,11 +146,22 @@ namespace OPENGIOAI.Themas
             // Icono de tipo + estado de ejecución
             string tipoLabel = Datos.TipoNodo switch
             {
-                TipoNodo.Disparador => "⚡ DISPARADOR",
-                TipoNodo.Condicion  => "⬡ CONDICIÓN",
-                TipoNodo.Accion     => "▶ ACCIÓN",
-                TipoNodo.Fin        => "■ FIN",
-                _                   => "● NODO"
+                TipoNodo.Disparador  => "⚡ DISPARADOR",
+                TipoNodo.Webhook     => "🌐 WEBHOOK",
+                TipoNodo.Programado  => "⏰ PROGRAMADO",
+                TipoNodo.Condicion   => "⬡ CONDICIÓN",
+                TipoNodo.Switch      => "⇌ SWITCH",
+                TipoNodo.Loop        => "↻ LOOP",
+                TipoNodo.Accion      => "▶ ACCIÓN",
+                TipoNodo.HttpRequest => "⇄ HTTP",
+                TipoNodo.Email       => "✉ EMAIL",
+                TipoNodo.Telegram    => "💬 TELEGRAM",
+                TipoNodo.Database    => "🗄 DATABASE",
+                TipoNodo.Transform   => "⟳ TRANSFORM",
+                TipoNodo.Delay       => "⏳ DELAY",
+                TipoNodo.SubFlujo    => "⊞ SUBFLUJO",
+                TipoNodo.Fin         => "■ FIN",
+                _                    => "● NODO"
             };
             string estadoLabel = Datos.Estado switch
             {
@@ -259,11 +281,22 @@ namespace OPENGIOAI.Themas
         // ── Helpers ───────────────────────────────────────────────────────────
         private Color ObtenerColorTipo() => Datos.TipoNodo switch
         {
-            TipoNodo.Disparador => ColorDisparador,
-            TipoNodo.Condicion  => ColorCondicion,
-            TipoNodo.Accion     => ColorAccion,
-            TipoNodo.Fin        => ColorFin,
-            _                   => ColorAccion
+            TipoNodo.Disparador  => ColorDisparador,
+            TipoNodo.Webhook     => ColorWebhook,
+            TipoNodo.Programado  => ColorProgramado,
+            TipoNodo.Condicion   => ColorCondicion,
+            TipoNodo.Switch      => ColorSwitch,
+            TipoNodo.Loop        => ColorLoop,
+            TipoNodo.Accion      => ColorAccion,
+            TipoNodo.HttpRequest => ColorHttpRequest,
+            TipoNodo.Email       => ColorEmail,
+            TipoNodo.Telegram    => ColorTelegram,
+            TipoNodo.Database    => ColorDatabase,
+            TipoNodo.Transform   => ColorTransform,
+            TipoNodo.Delay       => ColorDelay,
+            TipoNodo.SubFlujo    => ColorSubFlujo,
+            TipoNodo.Fin         => ColorFin,
+            _                    => ColorAccion
         };
 
         private static GraphicsPath RoundedRect(Rectangle r, int radius)

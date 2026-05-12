@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 //  AIModelConector.cs  — VERSIÓN FINAL (Pasos 1, 2, 3, 4)
 //
 //  PASO 1: PromtAgente eliminado como estado global mutable.
@@ -151,13 +151,13 @@ namespace OPENGIOAI.Data
             Servicios servicio = Servicios.Gemenni,
             CancellationToken ct = default,
             Action? onInicioScript = null,
-            Action<string>? onSalidaScript = null)
+            Action<string>? onSalidaScript = null,
+            AgentContext? ctxExistente = null)
         {
             ct.ThrowIfCancellationRequested();
 
-            // PASO 1: contexto inmutable por ejecución.
-            // Lee los .md del disco una sola vez y arma el prompt efectivo.
-            AgentContext ctx = await AgentContext.BuildAsync(
+            // PASO 1: Reusar contexto si se proporciona, o construir uno nuevo.
+            AgentContext ctx = ctxExistente ?? await AgentContext.BuildAsync(
                 rutaArchivo, modelo, apiKey, servicio,
                 soloChat, clavesDisponibles, ct);
 

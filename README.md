@@ -29,9 +29,10 @@
 9. [Multi-Proveedor de LLMs](#multi-proveedor-de-llms)
 10. [Integración Multi-Canal](#integración-multi-canal)
 11. [UI — Tema Emerald y Controles Personalizados](#ui--tema-emerald-y-controles-personalizados)
-12. [Cómo Empezar](#cómo-empezar)
-13. [Extensión y Desarrollo](#extensión-y-desarrollo)
-14. [Troubleshooting](#troubleshooting)
+12. [Servidor ARNES (Hub de Integración Externa)](#servidor-arnes-hub-de-integracion-externa)
+13. [Cómo Empezar](#cómo-empezar)
+14. [Extensión y Desarrollo](#extensión-y-desarrollo)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -47,6 +48,7 @@ OPENGIOAI se organiza en capas bien definidas. El núcleo es `AIModelConector.cs
 │  FrmMemoria  •  FrmHabilidades  •  FrmPatrones                  │
 │  FrmEmbeddings  •  FrmConsumoTokens  •  FrmTraces               │
 │  FrmApis  •  FrmModelos  •  FrmRutas  •  FrmComunicadores       │
+│  FrmArnesHub (Gestor de API Keys locales y Logs)                │
 │  Telegram Bot  •  Slack Bot                                     │
 └────────────────────────────┬────────────────────────────────────┘
                              │
@@ -55,7 +57,7 @@ OPENGIOAI se organiza en capas bien definidas. El núcleo es `AIModelConector.cs
 │              CAPA DE ORQUESTACIÓN — OrquestadorARIA             │
 │  Analista → Constructor → Guardián → Comunicador                │
 │  AgentContext (inmutable)  •  PerfilContexto (slicing)          │
-│  PanelAgentes (eventos UI reactiva)                             │
+│  PanelAgentes (eventos UI) •  ArnesRouter (Headless)            │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
@@ -121,6 +123,17 @@ OPENGIOAI/
 │   ├── MotorHerramientas.cs
 │   ├── RegistroHerramientas.cs
 │   └── [HTTP, archivos, comandos, búsqueda]
+│
+├── Modulos/                    # Módulos de extensión y conectividad
+│   └── Arnes/                  # Servidor HTTP embebido y Hub de Integración
+│       ├── ArnesServer.cs      # HttpListener asíncrono
+│       ├── ArnesRouter.cs      # Enrutador y fallback genérico a ARIA
+│       ├── ArnesPayload.cs     # Estructura JSON unificada
+│       ├── ArnesSecurityManager.cs # Gestor persistente de API Keys locales
+│       ├── ArnesKey.cs         # Entidad de token de acceso
+│       └── Plugs/
+│           ├── IArnesPlug.cs   # Interfaz de adaptador externo
+│           └── AntigravityPlug.cs # Implementación de ejecución Headless
 │
 ├── ServiciosAI/                # Servicios transversales de IA
 │   ├── AIServicios.cs          # Listar modelos, validar keys, OAuth Vertex
@@ -978,6 +991,37 @@ Configurado en `Program.cs` con inyección de dependencias (Telegram, Slack, Aud
 
 ---
 
+## Servidor ARNES (Hub de Integración Externa)
+
+**ARNES** transforma la instancia local de OPENGIOAI en un **servidor de agentes (Hub API)**, permitiendo que aplicaciones externas (Visual Studio Code, scripts de Python, curl, Antigravity) consuman el motor ARIA de forma silenciosa e independiente (Headless).
+
+### Arquitectura de Conexión
+
+- **Servidor HTTP Ligero**: `ArnesServer` utiliza `HttpListener` en el puerto `5050` corriendo en segundo plano sin bloquear la UI.
+- **Enrutamiento (ArnesRouter)**: Identifica a la aplicación origen (`source_app`) y delega la ejecución a un `IArnesPlug` específico o utiliza el despachador genérico (Headless ARIA).
+- **Seguridad (ArnesSecurityManager)**: Todas las peticiones deben incluir una llave válida en el header `Authorization: Bearer <API_KEY>`. Las llaves se generan, auditan y revocan directamente desde la interfaz gráfica del Hub.
+
+### Ejecución Headless
+
+Cuando una aplicación externa envía código o instrucciones, el router invoca a `OrquestadorARIA` de forma silenciosa. ARIA lee la configuración activa del usuario (modelo LLM, credenciales, memoria, habilidades activas) y ejecuta las 4 fases. Todo el costo, los traces y los logs se registran en OPENGIOAI como si el usuario lo hubiera ejecutado a mano.
+
+#### Ejemplo de Payload (POST http://localhost:5050/arnes/)
+
+```json
+{
+  "source_app": "visual_copilot",
+  "action": "execute_aria",
+  "parameters": {
+    "instruction": "Refactoriza este código siguiendo principios SOLID.",
+    "code": "def suma(a,b): return a+b"
+  }
+}
+```
+
+La respuesta mantiene una estructura estandarizada indicando el status (`success`/`error`) y el mensaje completo generado por el agente comunicador.
+
+---
+
 ## Cómo Empezar
 
 ### Requisitos
@@ -1151,6 +1195,9 @@ Pasarlo a `AgentContext.BuildAsync(..., perfil: PerfilContexto.MiPreset)`.
 - [x] Streaming SSE con cancelación del usuario y throttle a ~8 fps sin parpadeos
 - [x] RetryPolicy con backoff exponencial + jitter para todos los providers
 - [x] HttpClient singleton por proveedor (sin socket exhaustion)
+- [x] **Módulo ARNES** (Servidor HTTP local puerto 5050) para integración con apps externas (Antigravity, Copilot)
+- [x] Arquitectura Headless de ARIA invocable vía REST API JSON
+- [x] Gestor de API Keys Locales (`ArnesSecurityManager`) + UI de auditoría y revocación en tiempo real
 
 ### 🚧 En progreso / próximas fases
 

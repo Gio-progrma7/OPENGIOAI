@@ -69,14 +69,16 @@ namespace OPENGIOAI.Vistas
         private CanvasAutomatizacion canvas      = null!;
         private Label               lblZoom      = null!;
         private RichTextBox         rtbLog       = null!;
-        private TextBox  txtNLInput    = null!;
+        private RichTextBox txtNLInput  = null!;
+        private Label       lblNLHint   = null!;
         private Button   btnCrearIA    = null!, btnNueva = null!, btnGuardar = null!;
         private Button   btnEjecutar   = null!, btnDetener = null!, btnAddNodo = null!, btnToggleLog = null!;
         private Button   btnEliminarAuto = null!;
         private Button   btnValidar = null!;
         private Label    lblTituloAuto = null!, lblInfoConfig = null!, lblEstadoIA = null!;
         // Editor
-        private TextBox  edtTitulo = null!, edtDescripcion = null!, edtInstruccion = null!;
+        private TextBox     edtTitulo = null!, edtDescripcion = null!;
+        private RichTextBox edtInstruccion = null!;
         private ComboBox cmbTipoNodo = null!;
         private Button   btnGenScript = null!, btnCerrarEditor = null!, btnProbarNodo = null!;
         private Label    lblScriptStatus = null!, lblResultadoNodo = null!;
@@ -84,12 +86,17 @@ namespace OPENGIOAI.Vistas
         private CheckedListBox chkConexiones = null!;
         private Label lblConexiones = null!;
         // Error interactivo
-        private Panel    pnlErrorFix = null!;
+        private Panel       pnlErrorFix     = null!;
         private RichTextBox rtbErrorDetalle = null!;
-        private TextBox  txtFixInput = null!;
-        private Button   btnReintentarFix = null!, btnSaltarError = null!;
-        private TaskCompletionSource<string?>? _tcsErrorFix = null;
-        private NodoAutomatizacion? _nodoConError = null;
+        private RichTextBox rtbDiagnostico  = null!;   // análisis streaming de IA
+        private Label       lblDiagStatus   = null!;   // "Analizando…" / "Diagnóstico listo"
+        private Button      btnAplicarFixIA = null!;   // aplica la corrección propuesta por IA
+        private TextBox     txtFixInput     = null!;
+        private Button      btnReintentarFix = null!, btnSaltarError = null!;
+        private TaskCompletionSource<string?>? _tcsErrorFix     = null;
+        private NodoAutomatizacion?            _nodoConError     = null;
+        private string?                        _fixIASugerido    = null; // código corregido por IA
+        private const  string                  FixIASentinel     = "\x01IAFIX\x01"; // señal: usar _fixIASugerido
         // Schedule — controles del panel rediseñado
         private Panel          pnlSchedule        = null!;
         private string         _tipoProgActual     = "manual";
@@ -316,16 +323,66 @@ namespace OPENGIOAI.Vistas
             logGrip.MouseUp += (_, _) => _logResizeStartY = -1;
             pnlLog.Controls.Add(logGrip);
 
-            // Barra NL
-            pnlBarraIA = new Panel { Dock = DockStyle.Bottom, Height = 58, BackColor = BgSurface, Padding = new Padding(12, 10, 12, 10) };
-            pnlBarraIA.Paint += PintarBordeSup;
-            txtNLInput = new TextBox
+            // ── Barra de instrucción NL — estilo FrmMandos ────────────────────
+            pnlBarraIA = new Panel
             {
-                PlaceholderText = "✨  Ej: «Captura pantalla y envíalo al correo x@y.com a las 8am todos los días»  (Ctrl+Enter)",
-                BackColor = BgCard, ForeColor = TextMain, BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 10f), Dock = DockStyle.Fill
+                Dock = DockStyle.Bottom, Height = 110,
+                BackColor = Color.FromArgb(10, 10, 14), Padding = new Padding(0)
             };
-            txtNLInput.KeyDown += (_, e) => { if (e.Control && e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; BtnCrearIA_Click(); } };
+            pnlBarraIA.Paint += (_, ev) =>
+            {
+                // Línea superior emerald tenue
+                using var pen = new Pen(Color.FromArgb(55, 52, 211, 153), 1f);
+                ev.Graphics.DrawLine(pen, 0, 0, pnlBarraIA.Width, 0);
+            };
+
+            // RichTextBox de instrucción (misma estética que textBoxInstrucion en FrmMandos)
+            txtNLInput = new RichTextBox
+            {
+                BackColor = Color.FromArgb(8, 8, 12),
+                ForeColor = Color.FromArgb(220, 220, 225),
+                Font      = new Font("Segoe UI", 10f),
+                BorderStyle   = BorderStyle.None,
+                ScrollBars    = RichTextBoxScrollBars.None,
+                WordWrap      = true,
+                AcceptsTab    = false,
+                Location      = new Point(12, 28),
+                AllowDrop     = true
+            };
+            // Placeholder flotante (como labelSugerencia en FrmMandos)
+            lblNLHint = new Label
+            {
+                Text      = "✨  Ej: «Captura pantalla y envíalo al correo x@y.com a las 8am»   Ctrl+Enter",
+                ForeColor = Color.FromArgb(80, 180, 190, 200),
+                Font      = new Font("Segoe UI", 9.5f),
+                BackColor = Color.Transparent,
+                AutoSize  = false,
+                Location  = new Point(16, 32),
+                Height    = 24
+            };
+            lblNLHint.Click += (_, _) => txtNLInput.Focus();
+
+            // Ocultar/mostrar hint según contenido
+            txtNLInput.TextChanged += (_, _) =>
+            {
+                lblNLHint.Visible = string.IsNullOrEmpty(txtNLInput.Text);
+                // Auto-ajuste de altura del panel (máx 180px)
+                int lineas  = txtNLInput.GetLineFromCharIndex(txtNLInput.TextLength) + 1;
+                int altRtb  = Math.Max(46, Math.Min(120, lineas * 20));
+                int altBase = 68; // cabecera + padding
+                if (pnlBarraIA.Height != altBase + altRtb)
+                    pnlBarraIA.Height = altBase + altRtb;
+                txtNLInput.Height = altRtb;
+            };
+
+            txtNLInput.KeyDown += (_, e) =>
+            {
+                if (e.Control && e.KeyCode == Keys.Enter)
+                {
+                    e.SuppressKeyPress = true;
+                    BtnCrearIA_Click();
+                }
+            };
             txtNLInput.AllowDrop = true;
             txtNLInput.DragEnter += (_, e) =>
             {
@@ -337,28 +394,42 @@ namespace OPENGIOAI.Vistas
                 string dropped = (e.Data?.GetData(DataFormats.Text) as string) ?? "";
                 if (!string.IsNullOrEmpty(dropped)) InsertarEnInput(dropped);
             };
+
+            // Botón enviar (arriba derecha)
             btnCrearIA = new Button
             {
-                Text = "✨ Crear con IA", Size = new Size(130, 38), Dock = DockStyle.Right,
-                BackColor = Emerald, ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Semibold", 9.5f), Cursor = Cursors.Hand
+                Text      = "✨",
+                Size      = new Size(40, 38),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Emerald, ForeColor = Color.White,
+                Font      = new Font("Segoe UI Emoji", 14f),
+                Cursor    = Cursors.Hand,
+                Location  = new Point(0, 0)   // se posiciona en el Resize
             };
             btnCrearIA.FlatAppearance.BorderSize = 0;
+            new ToolTip().SetToolTip(btnCrearIA, "Crear / modificar automatización con IA  (Ctrl+Enter)");
             btnCrearIA.Click += (_, _) => BtnCrearIA_Click();
-            lblEstadoIA = new Label { Text = "", ForeColor = TextMuted, Font = new Font("Segoe UI", 8f), Dock = DockStyle.Bottom, Height = 0 };
-            var pnlWrap = new Panel { Dock = DockStyle.Fill, BackColor = BgCard, Padding = new Padding(10, 0, 10, 0) };
-            pnlWrap.Controls.Add(txtNLInput);
-            pnlBarraIA.Controls.Add(pnlWrap);
-            pnlBarraIA.Controls.Add(btnCrearIA);
 
-            // Botón para mostrar/ocultar panel de credenciales
+            // Etiqueta "Crear con IA" debajo del botón enviar
+            lblEstadoIA = new Label
+            {
+                Text      = "Crear con IA",
+                ForeColor = Color.FromArgb(80, 167, 243, 208),
+                Font      = new Font("Segoe UI", 7f),
+                AutoSize  = false, Height = 14,
+                TextAlign = ContentAlignment.MiddleRight
+            };
+
+            // Botón 🔑 credenciales — posicionado igual que en FrmMandos
             var btnToggleCreds = new Button
             {
-                Text = "🔑", Size = new Size(38, 38), Dock = DockStyle.Left,
-                BackColor = Color.Transparent, ForeColor = TextMuted, FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Emoji", 13f), Cursor = Cursors.Hand
+                Text      = "🔑",
+                Size      = new Size(38, 38),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.Transparent, ForeColor = TextMuted,
+                Font      = new Font("Segoe UI Emoji", 12f), Cursor = Cursors.Hand
             };
-            new ToolTip().SetToolTip(btnToggleCreds, "Mostrar / ocultar credenciales disponibles");
+            new ToolTip().SetToolTip(btnToggleCreds, "Mostrar / ocultar credenciales disponibles — arrástralas al input");
             btnToggleCreds.FlatAppearance.BorderSize = 0;
             btnToggleCreds.Click += (_, _) =>
             {
@@ -366,7 +437,50 @@ namespace OPENGIOAI.Vistas
                 btnToggleCreds.ForeColor = pnlCredenciales.Visible ? Emerald4 : TextMuted;
                 if (pnlCredenciales.Visible) RefrescarChipsCredenciales();
             };
+
+            // Posicionamiento: todo en Resize para manejar anchura dinámica
+            // Layout: [🔑 44px] [RTB fill] [✨ 44px]
+            const int BtnW = 44, BtnY = 30, InputY = 32;
+            pnlBarraIA.Resize += (_, _) =>
+            {
+                int totalW   = pnlBarraIA.Width;
+                int rtbLeft  = BtnW + 4;               // justo a la derecha del 🔑
+                int rtbRight = totalW - BtnW - 6;       // margen derecho antes de ✨
+                int rtbW     = Math.Max(60, rtbRight - rtbLeft);
+
+                btnToggleCreds.Location = new Point(4,             BtnY);
+                btnCrearIA.Location     = new Point(totalW - BtnW, BtnY);
+                txtNLInput.Location     = new Point(rtbLeft,       InputY);
+                txtNLInput.Width        = rtbW;
+                lblNLHint.Location      = new Point(rtbLeft + 4,   InputY + 4);
+                lblNLHint.Width         = rtbW - 8;
+                lblEstadoIA.Location    = new Point(totalW - BtnW - 72, BtnY + 22);
+                lblEstadoIA.Width       = 72;
+            };
+
+            // Cabecera fija (Dock=Top, 24px)
+            var lblBarraHdr = new Label
+            {
+                Text      = "  ✍  INSTRUCCIÓN",
+                ForeColor = Color.FromArgb(55, 167, 243, 208),
+                Font      = new Font("Segoe UI", 7f, FontStyle.Bold),
+                Dock      = DockStyle.Top, Height = 24,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            lblBarraHdr.Paint += (_, ev) =>
+            {
+                using var pen = new Pen(Color.FromArgb(25, 52, 211, 153), 1f);
+                ev.Graphics.DrawLine(pen, 0, ev.ClipRectangle.Height - 1,
+                    lblBarraHdr.Width, ev.ClipRectangle.Height - 1);
+            };
+
+            // Agregar controles — lblBarraHdr primero para que Dock=Top lo coloque arriba
+            pnlBarraIA.Controls.Add(lblBarraHdr);
+            pnlBarraIA.Controls.Add(txtNLInput);
+            pnlBarraIA.Controls.Add(lblNLHint);
             pnlBarraIA.Controls.Add(btnToggleCreds);
+            pnlBarraIA.Controls.Add(btnCrearIA);
+            pnlBarraIA.Controls.Add(lblEstadoIA);
 
             // Panel de credenciales (se muestra encima de la barra de input)
             pnlCredenciales = new Panel
@@ -458,11 +572,50 @@ namespace OPENGIOAI.Vistas
                 BackColor = BgCard, ForeColor = TextMain, FlatStyle = FlatStyle.Flat,
                 DropDownStyle = ComboBoxStyle.DropDownList, Size = new Size(fw, 28), Font = new Font("Segoe UI", 9.5f)
             };
-            cmbTipoNodo.Items.AddRange(new object[] { "Disparador", "Condición", "Acción", "Fin" });
-            cmbTipoNodo.SelectedIndex = 2;
+            // Tipos agrupados al estilo n8n
+            cmbTipoNodo.Items.AddRange(new object[]
+            {
+                // Disparadores
+                "⚡ Disparador",
+                "🌐 Webhook",
+                "⏰ Programado",
+                // Flujo
+                "⬡ Condición",
+                "⇌ Switch",
+                "↻ Loop",
+                // Acciones
+                "▶ Acción (script)",
+                "⇄ HTTP Request",
+                "✉ Email",
+                "💬 Telegram",
+                "🗄 Database",
+                "⟳ Transform",
+                "⏳ Delay",
+                "⊞ SubFlujo",
+                // Terminal
+                "■ Fin"
+            });
+            cmbTipoNodo.SelectedIndex = 6; // "▶ Acción (script)" por defecto
             edtTitulo      = new TextBox { BackColor = BgCard, ForeColor = TextMain, BorderStyle = BorderStyle.FixedSingle, Size = new Size(fw, 26), Font = new Font("Segoe UI", 9.5f) };
             edtDescripcion = new TextBox { BackColor = BgCard, ForeColor = TextMain, BorderStyle = BorderStyle.FixedSingle, Size = new Size(fw, 26), Font = new Font("Segoe UI", 9.5f) };
-            edtInstruccion = new TextBox { BackColor = BgCard, ForeColor = TextMain, BorderStyle = BorderStyle.FixedSingle, Size = new Size(fw, 70), Multiline = true, Font = new Font("Segoe UI", 9.5f) };
+
+            // Instrucción como RichTextBox — mismo estilo oscuro que el input principal
+            edtInstruccion = new RichTextBox
+            {
+                BackColor   = Color.FromArgb(8, 8, 12),
+                ForeColor   = Color.FromArgb(220, 220, 225),
+                BorderStyle = BorderStyle.None,
+                ScrollBars  = RichTextBoxScrollBars.Vertical,
+                WordWrap    = true,
+                Size        = new Size(fw, 78),
+                Font        = new Font("Segoe UI", 9.5f)
+            };
+            // Borde pintado manualmente
+            edtInstruccion.Paint += (_, ev) =>
+            {
+                using var pen = new Pen(Color.FromArgb(50, 52, 211, 153), 1f);
+                ev.Graphics.DrawRectangle(pen, 0, 0, edtInstruccion.Width - 1, edtInstruccion.Height - 1);
+            };
 
             // Conexiones
             lblConexiones = new Label { Text = "🔗 Conectar a (salidas)", ForeColor = TextMuted, Font = new Font("Segoe UI", 7.5f, FontStyle.Bold), Size = new Size(fw, 18) };
@@ -573,90 +726,129 @@ namespace OPENGIOAI.Vistas
         {
             pnlErrorFix = new Panel
             {
-                Dock = DockStyle.Bottom, Height = 310,
-                BackColor = ColorTranslator.FromHtml("#160303"),
-                Visible = false, Padding = new Padding(12, 6, 12, 8)
+                Dock = DockStyle.Bottom, Height = 440,
+                BackColor = ColorTranslator.FromHtml("#0e0202"),
+                Visible = false, Padding = new Padding(0)
             };
-
-            // Borde animado con degradado rojizo
             pnlErrorFix.Paint += (_, ev) =>
             {
                 var g = ev.Graphics;
-                // Franja superior de alerta
                 using var franBrush = new System.Drawing.Drawing2D.LinearGradientBrush(
                     new Rectangle(0, 0, pnlErrorFix.Width, 4),
                     Color.FromArgb(220, 248, 113, 113),
                     Color.FromArgb(80, 248, 113, 113),
                     System.Drawing.Drawing2D.LinearGradientMode.Horizontal);
                 g.FillRectangle(franBrush, 0, 0, pnlErrorFix.Width, 4);
-                // Borde exterior
-                using var pen = new Pen(Color.FromArgb(160, 248, 113, 113), 1.5f);
+                using var pen = new Pen(Color.FromArgb(120, 248, 113, 113), 1f);
                 g.DrawRectangle(pen, 0, 0, pnlErrorFix.Width - 1, pnlErrorFix.Height - 1);
             };
 
-            // ── Cabecera ────────────────────────────────────────────────────────
+            // ── Cabecera ────────────────────────────────────────────────────
             var pnlHdr = new Panel
             {
                 Dock = DockStyle.Top, Height = 36,
-                BackColor = ColorTranslator.FromHtml("#2a0808"), Padding = new Padding(10, 0, 10, 0)
+                BackColor = ColorTranslator.FromHtml("#260505"), Padding = new Padding(10, 0, 10, 0)
             };
             var lblIcono = new Label
             {
-                Text = "🔴", Font = new Font("Segoe UI Emoji", 14f),
-                ForeColor = ErrorColor, AutoSize = true, Location = new Point(8, 7)
+                Text = "🔴", Font = new Font("Segoe UI Emoji", 13f),
+                ForeColor = ErrorColor, AutoSize = true, Location = new Point(10, 8)
             };
             var lblHdrTxt = new Label
             {
-                Text = "SCRIPT FALLIDO — Revisa el error y da instrucciones de corrección",
+                Text = "SCRIPT FALLIDO",
                 ForeColor = Color.FromArgb(255, 200, 200),
-                Font = new Font("Segoe UI Semibold", 9.5f),
-                AutoSize = false, Height = 36, TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(34, 0), Width = 700
+                Font = new Font("Segoe UI Semibold", 10f),
+                AutoSize = true, Location = new Point(36, 9)
             };
-            pnlHdr.Controls.AddRange(new Control[] { lblIcono, lblHdrTxt });
-
-            // ── Info del nodo (nombre + script, en amarillo) ─────────────────
-            var pnlNodoInfo = new Panel
+            var lblNodoInfoDet = new Label
             {
-                Dock = DockStyle.Top, Height = 26,
-                BackColor = Color.Transparent, Padding = new Padding(4, 0, 0, 0)
+                Name = "lblNodoInfoDet", Text = "",
+                ForeColor = Color.FromArgb(252, 211, 77),
+                Font = new Font("Segoe UI", 8f, FontStyle.Bold),
+                AutoSize = true, Location = new Point(210, 11)
             };
-            var lblNodoInfo = new Label
-            {
-                Name = "lblNodoInfoDet",
-                Text = "",
-                ForeColor = Color.FromArgb(252, 211, 77),   // amarillo
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-                Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft
-            };
-            pnlNodoInfo.Controls.Add(lblNodoInfo);
+            pnlHdr.Controls.AddRange(new Control[] { lblIcono, lblHdrTxt, lblNodoInfoDet });
 
-            // ── Detalle del error (RichTextBox grande con colores) ───────────
+            // ── Error detalle (arriba, 100px) ────────────────────────────────
             rtbErrorDetalle = new RichTextBox
             {
-                Dock = DockStyle.Top, Height = 148, ReadOnly = true,
-                BackColor = ColorTranslator.FromHtml("#0d0202"),
+                Dock = DockStyle.Top, Height = 100, ReadOnly = true,
+                BackColor = ColorTranslator.FromHtml("#0a0101"),
                 ForeColor = Color.FromArgb(255, 180, 180),
+                Font = new Font("Consolas", 8f), BorderStyle = BorderStyle.None,
+                ScrollBars = RichTextBoxScrollBars.Vertical, WordWrap = false
+            };
+
+            // ── Separador + cabecera DIAGNÓSTICO ────────────────────────────
+            var pnlDiagHdr = new Panel
+            {
+                Dock = DockStyle.Top, Height = 28,
+                BackColor = ColorTranslator.FromHtml("#100820"), Padding = new Padding(10, 0, 10, 0)
+            };
+            pnlDiagHdr.Paint += (_, ev) =>
+            {
+                using var pen = new Pen(Color.FromArgb(50, 139, 92, 246), 1f);
+                ev.Graphics.DrawLine(pen, 0, 0, pnlDiagHdr.Width, 0);
+            };
+            var lblDiagIcono = new Label
+            {
+                Text = "🧠", Font = new Font("Segoe UI Emoji", 10f),
+                AutoSize = true, Location = new Point(8, 5), ForeColor = Color.FromArgb(167, 139, 250)
+            };
+            var lblDiagTitulo = new Label
+            {
+                Text = "DIAGNÓSTICO IA",
+                ForeColor = Color.FromArgb(167, 139, 250),
+                Font = new Font("Segoe UI", 7.5f, FontStyle.Bold),
+                AutoSize = true, Location = new Point(30, 9)
+            };
+            lblDiagStatus = new Label
+            {
+                Text = "En espera…",
+                ForeColor = Color.FromArgb(100, 167, 139, 250),
+                Font = new Font("Segoe UI", 7.5f),
+                AutoSize = true, Location = new Point(160, 9)
+            };
+            pnlDiagHdr.Controls.AddRange(new Control[] { lblDiagIcono, lblDiagTitulo, lblDiagStatus });
+
+            // ── Streaming de diagnóstico (120px) ─────────────────────────────
+            rtbDiagnostico = new RichTextBox
+            {
+                Dock = DockStyle.Top, Height = 110, ReadOnly = true,
+                BackColor = ColorTranslator.FromHtml("#0a0618"),
+                ForeColor = Color.FromArgb(200, 185, 255),
                 Font = new Font("Consolas", 8.5f), BorderStyle = BorderStyle.None,
-                ScrollBars = RichTextBoxScrollBars.Vertical,
-                WordWrap = false
+                ScrollBars = RichTextBoxScrollBars.Vertical, WordWrap = true
             };
 
             // ── Input del usuario ────────────────────────────────────────────
+            var pnlInputArea = new Panel
+            {
+                Dock = DockStyle.Top, Height = 56,
+                BackColor = ColorTranslator.FromHtml("#0e0202"), Padding = new Padding(10, 6, 10, 4)
+            };
+            pnlInputArea.Paint += (_, ev) =>
+            {
+                using var pen = new Pen(Color.FromArgb(35, 248, 113, 113), 1f);
+                ev.Graphics.DrawLine(pen, 0, 0, pnlInputArea.Width, 0);
+            };
             var lblInputHint = new Label
             {
-                Text = "💡 Instrucción de corrección (opcional — deja vacío para autocorregir con IA):",
-                ForeColor = Color.FromArgb(156, 163, 175), Font = new Font("Segoe UI", 7.5f),
-                Dock = DockStyle.Top, Height = 18
+                Text = "💡 Instrucción adicional (opcional — deja vacío para usar corrección IA):",
+                ForeColor = Color.FromArgb(120, 156, 163, 175),
+                Font = new Font("Segoe UI", 7.5f),
+                Location = new Point(10, 5), Height = 16, AutoSize = false
             };
-
+            pnlInputArea.Resize += (_, _) => lblInputHint.Width = pnlInputArea.Width - 20;
             txtFixInput = new TextBox
             {
                 PlaceholderText = "Ej: 'usa requests en vez de httpx', 'el token va en el header X-API-Key'…",
-                BackColor = ColorTranslator.FromHtml("#1f1010"), ForeColor = TextMain,
-                BorderStyle = BorderStyle.FixedSingle,
-                Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 9f)
+                BackColor = ColorTranslator.FromHtml("#180a0a"), ForeColor = TextMain,
+                BorderStyle = BorderStyle.None, Location = new Point(10, 24),
+                Height = 22, Font = new Font("Segoe UI", 9f)
             };
+            pnlInputArea.Resize += (_, _) => txtFixInput.Width = pnlInputArea.Width - 20;
             txtFixInput.KeyDown += (_, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
@@ -665,29 +857,49 @@ namespace OPENGIOAI.Vistas
                     _tcsErrorFix?.TrySetResult(txtFixInput.Text.Trim());
                 }
             };
+            pnlInputArea.Controls.AddRange(new Control[] { lblInputHint, txtFixInput });
 
             // ── Botones ──────────────────────────────────────────────────────
-            var pnlBtns = new FlowLayoutPanel
+            var pnlBtns = new Panel
             {
-                Dock = DockStyle.Top, Height = 40, FlowDirection = FlowDirection.LeftToRight,
-                BackColor = Color.Transparent, Padding = new Padding(0, 6, 0, 0)
+                Dock = DockStyle.Top, Height = 46,
+                BackColor = Color.Transparent, Padding = new Padding(10, 8, 10, 0)
+            };
+
+            // "⚡ Aplicar fix IA" — solo disponible cuando el diagnóstico termina
+            btnAplicarFixIA = new Button
+            {
+                Text = "⚡  Aplicar corrección IA", Size = new Size(200, 30),
+                BackColor = Color.FromArgb(80, 70, 180), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 9f),
+                Cursor = Cursors.Hand, Location = new Point(10, 8), Enabled = false
+            };
+            btnAplicarFixIA.FlatAppearance.BorderSize = 1;
+            btnAplicarFixIA.FlatAppearance.BorderColor = Color.FromArgb(167, 139, 250);
+            new ToolTip().SetToolTip(btnAplicarFixIA, "Aplica automáticamente el código corregido propuesto por el agente IA");
+            btnAplicarFixIA.Click += (_, _) =>
+            {
+                // Resuelve con el sentinel para que el caller escriba _fixIASugerido directamente
+                _tcsErrorFix?.TrySetResult(FixIASentinel);
             };
 
             btnReintentarFix = new Button
             {
-                Text = "🔄  Corregir y reintentar", Size = new Size(190, 30),
+                Text = "🔄  Corregir manual", Size = new Size(160, 30),
                 BackColor = Emerald, ForeColor = Color.Black, FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Semibold", 9f), Cursor = Cursors.Hand
+                Font = new Font("Segoe UI Semibold", 9f), Cursor = Cursors.Hand,
+                Location = new Point(220, 8)
             };
             btnReintentarFix.FlatAppearance.BorderSize = 0;
+            new ToolTip().SetToolTip(btnReintentarFix, "Usar la instrucción manual del campo de texto para corregir");
             btnReintentarFix.Click += (_, _) => _tcsErrorFix?.TrySetResult(txtFixInput.Text.Trim());
 
             btnSaltarError = new Button
             {
-                Text = "⏭  Saltar nodo", Size = new Size(120, 30),
+                Text = "⏭  Saltar", Size = new Size(90, 30),
                 BackColor = ColorTranslator.FromHtml("#1f1010"), ForeColor = TextMuted,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f),
-                Cursor = Cursors.Hand, Margin = new Padding(8, 0, 0, 0)
+                Cursor = Cursors.Hand, Location = new Point(390, 8)
             };
             btnSaltarError.FlatAppearance.BorderSize = 1;
             btnSaltarError.FlatAppearance.BorderColor = Color.FromArgb(80, 248, 113, 113);
@@ -695,10 +907,10 @@ namespace OPENGIOAI.Vistas
 
             var btnAbortarTodo = new Button
             {
-                Text = "✖  Abortar automatización", Size = new Size(190, 30),
-                BackColor = ColorTranslator.FromHtml("#450a0a"), ForeColor = ErrorColor,
+                Text = "✖  Abortar", Size = new Size(100, 30),
+                BackColor = ColorTranslator.FromHtml("#350404"), ForeColor = ErrorColor,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f),
-                Cursor = Cursors.Hand, Margin = new Padding(8, 0, 0, 0)
+                Cursor = Cursors.Hand, Location = new Point(490, 8)
             };
             btnAbortarTodo.FlatAppearance.BorderSize = 1;
             btnAbortarTodo.FlatAppearance.BorderColor = ErrorColor;
@@ -708,20 +920,22 @@ namespace OPENGIOAI.Vistas
                 _tcsErrorFix?.TrySetResult(null);
             };
 
-            pnlBtns.Controls.AddRange(new Control[] { btnReintentarFix, btnSaltarError, btnAbortarTodo });
+            pnlBtns.Controls.AddRange(new Control[]
+                { btnAplicarFixIA, btnReintentarFix, btnSaltarError, btnAbortarTodo });
 
-            // ── Ensamblar de abajo hacia arriba (Dock=Top se apila) ──────────
+            // ── Ensamblar ────────────────────────────────────────────────────
             pnlErrorFix.Controls.Add(pnlBtns);
-            pnlErrorFix.Controls.Add(txtFixInput);
-            pnlErrorFix.Controls.Add(lblInputHint);
+            pnlErrorFix.Controls.Add(pnlInputArea);
+            pnlErrorFix.Controls.Add(rtbDiagnostico);
+            pnlErrorFix.Controls.Add(pnlDiagHdr);
             pnlErrorFix.Controls.Add(rtbErrorDetalle);
-            pnlErrorFix.Controls.Add(pnlNodoInfo);
             pnlErrorFix.Controls.Add(pnlHdr);
         }
 
         /// <summary>
-        /// Muestra el panel de error y espera a que el usuario escriba instrucciones o salte.
-        /// Devuelve null si el usuario quiere saltar, o el texto de instrucciones.
+        /// Muestra el panel de error, lanza el agente analizador IA en background y espera
+        /// a que el usuario elija: aplicar fix IA, dar instrucción manual, saltar o abortar.
+        /// Devuelve null si el usuario quiere saltar, o el texto de instrucciones (vacío = solo IA).
         /// </summary>
         private async Task<string?> MostrarErrorYEsperarUsuario(
             NodoAutomatizacion nodo, string error, string codigoActual,
@@ -733,85 +947,124 @@ namespace OPENGIOAI.Vistas
                     () => MostrarErrorYEsperarUsuario(nodo, error, codigoActual, hintMensaje));
             }
 
-            _nodoConError = nodo;
-            _tcsErrorFix = new TaskCompletionSource<string?>();
+            _nodoConError     = nodo;
+            _fixIASugerido    = null;
+            _tcsErrorFix      = new TaskCompletionSource<string?>();
+            btnAplicarFixIA.Enabled = false;
 
-            // ── Actualizar label de nodo/script (amarillo) ──────────────────
+            // ── Info del nodo ──────────────────────────────────────────────
             var lblInfo = pnlErrorFix.Controls.OfType<Panel>()
                 .SelectMany(p => p.Controls.OfType<Label>())
                 .FirstOrDefault(l => l.Name == "lblNodoInfoDet");
             if (lblInfo != null)
-                lblInfo.Text = $"  📦 Nodo: {nodo.Titulo}   |   📄 Script: {nodo.NombreScript}";
+                lblInfo.Text = $"  ·  {nodo.Titulo}   |   {nodo.NombreScript}";
 
-            // ── Actualizar hint dinámico ─────────────────────────────────────
-            var lblHintInput = pnlErrorFix.Controls.OfType<Label>()
-                .FirstOrDefault(l => l.Text?.StartsWith("💡") == true);
-            if (lblHintInput != null && !string.IsNullOrEmpty(hintMensaje))
-                lblHintInput.Text = $"💡 {hintMensaje}";
+            // ── Colorizar error ─────────────────────────────────────────────
+            ColorearErrorEnRTB(rtbErrorDetalle, error);
 
-            // ── Colorizar el RichTextBox con secciones ──────────────────────
-            rtbErrorDetalle.Clear();
-            rtbErrorDetalle.SuspendLayout();
-
-            // Separar el error en líneas y colorear por tipo
-            var lineas = error.Replace("\r\n", "\n").Split('\n');
-            foreach (var linea in lineas)
-            {
-                Color colorLinea;
-                bool negrita = false;
-
-                if (linea.StartsWith("Traceback", StringComparison.OrdinalIgnoreCase) ||
-                    linea.StartsWith("  File ", StringComparison.OrdinalIgnoreCase))
-                {
-                    colorLinea = Color.FromArgb(253, 186, 116);  // naranja — traza
-                }
-                else if (linea.Contains("Error:") || linea.Contains("Exception:") ||
-                         linea.Contains("error:") || linea.Contains("FAILED") ||
-                         (linea.Length > 0 && char.IsUpper(linea[0]) &&
-                          (linea.Contains("Error") || linea.Contains("Exception"))))
-                {
-                    colorLinea = Color.FromArgb(252, 100, 100);  // rojo vivo — tipo de error
-                    negrita = true;
-                }
-                else if (linea.TrimStart().StartsWith("^") || linea.TrimStart().StartsWith("~"))
-                {
-                    colorLinea = Color.FromArgb(251, 191, 36);   // amarillo — marcador de posición
-                }
-                else if (linea.TrimStart().StartsWith(">>>") || linea.TrimStart().StartsWith("..."))
-                {
-                    colorLinea = Color.FromArgb(134, 239, 172);  // verde — prompt interactivo
-                }
-                else
-                {
-                    colorLinea = Color.FromArgb(220, 180, 180);  // rosa suave — texto general
-                }
-
-                // Aplicar color y negrita al fragmento
-                int startIdx = rtbErrorDetalle.TextLength;
-                rtbErrorDetalle.AppendText(linea + "\n");
-                rtbErrorDetalle.Select(startIdx, linea.Length);
-                rtbErrorDetalle.SelectionColor = colorLinea;
-                if (negrita) rtbErrorDetalle.SelectionFont =
-                    new Font("Consolas", 8.5f, FontStyle.Bold);
-                else rtbErrorDetalle.SelectionFont =
-                    new Font("Consolas", 8.5f, FontStyle.Regular);
-            }
-
-            rtbErrorDetalle.ResumeLayout();
-            // Scroll al final para mostrar el mensaje de error más relevante
-            rtbErrorDetalle.SelectionStart = rtbErrorDetalle.TextLength;
-            rtbErrorDetalle.ScrollToCaret();
+            // ── Reset diagnóstico ──────────────────────────────────────────
+            rtbDiagnostico.Clear();
+            lblDiagStatus.Text      = "⏳ Analizando…";
+            lblDiagStatus.ForeColor = Color.FromArgb(180, 167, 139, 250);
 
             txtFixInput.Clear();
             txtFixInput.Focus();
             pnlErrorFix.Visible = true;
             pnlErrorFix.BringToFront();
 
+            // ── Lanzar agente analizador en background ─────────────────────
+            var ctDiag = _cts?.Token ?? CancellationToken.None;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    string? codigoFix = await AnalizarErrorConIAAsync(
+                        nodo, codigoActual, error, ctDiag);
+
+                    if (codigoFix == null) return;
+
+                    _fixIASugerido = codigoFix;
+
+                    if (!IsDisposed)
+                        BeginInvoke(() =>
+                        {
+                            lblDiagStatus.Text      = "✅ Diagnóstico listo";
+                            lblDiagStatus.ForeColor = Color.FromArgb(134, 239, 172);
+                            btnAplicarFixIA.Enabled = true;
+                            btnAplicarFixIA.BackColor = Color.FromArgb(60, 50, 160);
+                        });
+                }
+                catch (OperationCanceledException) { /* cancelado — normal */ }
+                catch (Exception ex)
+                {
+                    if (!IsDisposed)
+                        BeginInvoke(() =>
+                        {
+                            DiagAppend($"\n⚠ Error en análisis: {ex.Message}\n",
+                                Color.FromArgb(248, 113, 113));
+                            lblDiagStatus.Text      = "⚠ Error en análisis";
+                            lblDiagStatus.ForeColor = Color.FromArgb(248, 113, 113);
+                        });
+                }
+            }, ctDiag);
+
             string? resultado = await _tcsErrorFix.Task;
 
             pnlErrorFix.Visible = false;
-            _nodoConError = null;
+            _nodoConError       = null;
             return resultado;
+        }
+
+        // ── Coloriza el traceback en el RichTextBox de error ─────────────────
+        private static void ColorearErrorEnRTB(RichTextBox rtb, string error)
+        {
+            rtb.Clear();
+            rtb.SuspendLayout();
+            foreach (var linea in error.Replace("\r\n", "\n").Split('\n'))
+            {
+                Color c;
+                bool  b = false;
+                if (linea.StartsWith("Traceback", StringComparison.OrdinalIgnoreCase) ||
+                    linea.StartsWith("  File ",   StringComparison.OrdinalIgnoreCase))
+                    c = Color.FromArgb(253, 186, 116);
+                else if (linea.Contains("Error:") || linea.Contains("Exception:") ||
+                         linea.Contains("FAILED") ||
+                         (linea.Length > 0 && char.IsUpper(linea[0]) &&
+                          (linea.Contains("Error") || linea.Contains("Exception"))))
+                { c = Color.FromArgb(252, 100, 100); b = true; }
+                else if (linea.TrimStart().StartsWith("^") || linea.TrimStart().StartsWith("~"))
+                    c = Color.FromArgb(251, 191, 36);
+                else if (linea.TrimStart().StartsWith(">>>") || linea.TrimStart().StartsWith("..."))
+                    c = Color.FromArgb(134, 239, 172);
+                else
+                    c = Color.FromArgb(220, 180, 180);
+
+                int idx = rtb.TextLength;
+                rtb.AppendText(linea + "\n");
+                rtb.Select(idx, linea.Length);
+                rtb.SelectionColor = c;
+                rtb.SelectionFont  = new Font("Consolas", 8f, b ? FontStyle.Bold : FontStyle.Regular);
+            }
+            rtb.ResumeLayout();
+            rtb.SelectionStart = rtb.TextLength;
+            rtb.ScrollToCaret();
+        }
+
+        // ── Escribe texto coloreado en el RichTextBox de diagnóstico ─────────
+        private void DiagAppend(string texto, Color color)
+        {
+            if (rtbDiagnostico.IsDisposed) return;
+            Action act = () =>
+            {
+                if (rtbDiagnostico.IsDisposed) return;
+                int s = rtbDiagnostico.TextLength;
+                rtbDiagnostico.AppendText(texto);
+                rtbDiagnostico.Select(s, texto.Length);
+                rtbDiagnostico.SelectionColor = color;
+                rtbDiagnostico.SelectionLength = 0;
+                rtbDiagnostico.ScrollToCaret();
+            };
+            if (rtbDiagnostico.InvokeRequired) rtbDiagnostico.BeginInvoke(act); else act();
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -1956,10 +2209,22 @@ if __name__ == '__main__':
                     var p = defAuto.Pasos[i];
                     TipoNodo tipo = p.Tipo?.ToLowerInvariant() switch
                     {
-                        "disparador" => TipoNodo.Disparador,
-                        "condicion"  => TipoNodo.Condicion,
-                        "fin"        => TipoNodo.Fin,
-                        _            => TipoNodo.Accion
+                        "disparador"  => TipoNodo.Disparador,
+                        "webhook"     => TipoNodo.Webhook,
+                        "programado"  => TipoNodo.Programado,
+                        "condicion"   => TipoNodo.Condicion,
+                        "switch"      => TipoNodo.Switch,
+                        "loop"        => TipoNodo.Loop,
+                        "http"        => TipoNodo.HttpRequest,
+                        "httprequest" => TipoNodo.HttpRequest,
+                        "email"       => TipoNodo.Email,
+                        "telegram"    => TipoNodo.Telegram,
+                        "database"    => TipoNodo.Database,
+                        "transform"   => TipoNodo.Transform,
+                        "delay"       => TipoNodo.Delay,
+                        "subflujo"    => TipoNodo.SubFlujo,
+                        "fin"         => TipoNodo.Fin,
+                        _             => TipoNodo.Accion
                     };
                     auto.Nodos.Add(new NodoAutomatizacion
                     {
@@ -2675,7 +2940,11 @@ Devuelve el JSON de modificación.";
                     if (!string.IsNullOrEmpty(ruta))
                         ok = await ProbarNodoConReintentos(
                             nodo, auto, idxN, carpeta, ruta, ctx, ct,
-                            sinInteractivo: esParalelo);   // paralelo → auto-corrige sin bloquear UI
+                            sinInteractivo: esParalelo,
+                            refreshContexto: async () => await EjecutarCadenaHastaAsync(
+                                nodo, auto, carpeta, predMap,
+                                resultados.ToDictionary(kv => kv.Key, kv => kv.Value),
+                                nodosById, ct));
 
                     resultados[nodo.Id] = nodo.UltimaRespuesta ?? "";
 
@@ -2726,7 +2995,7 @@ Devuelve el JSON de modificación.";
                         string ctxRetry   = ObtenerContextoCombinado(
                             nodo.Id, predMap, resultados.ToDictionary(kv => kv.Key, kv => kv.Value), nodosById);
 
-                        // Reutilizar el panel interactivo + corrección con pasos
+                        // Panel interactivo con agente analizador IA integrado
                         string? instruccion = await MostrarErrorYEsperarUsuario(
                             nodo, errorAct, codigoAct,
                             "Nodo falló durante ejecución paralela. ¿Instrucción para corregir?");
@@ -2738,17 +3007,31 @@ Devuelve el JSON de modificación.";
                         var cSep  = Color.FromArgb(40, 255, 255, 255);
                         var cPrev = Color.FromArgb(100, 200, 155);
 
-                        string? corregido = await AnalizarYCorregirConPasos(
-                            nodo, auto, idxN, carpeta, codigoAct, errorAct,
-                            string.IsNullOrWhiteSpace(instruccion) ? null : instruccion,
-                            ct, cOut, cErr, cSep, cPrev);
+                        string? corregido;
+                        if (instruccion == FixIASentinel && _fixIASugerido != null)
+                        {
+                            // Usar el fix ya generado por el agente analizador
+                            corregido = _fixIASugerido;
+                            LogW($"  ⚡ Aplicando corrección IA directa\n", Emerald4);
+                        }
+                        else
+                        {
+                            corregido = await AnalizarYCorregirConPasos(
+                                nodo, auto, idxN, carpeta, codigoAct, errorAct,
+                                string.IsNullOrWhiteSpace(instruccion) ? null : instruccion,
+                                ct, cOut, cErr, cSep, cPrev);
+                        }
 
                         if (corregido != null)
                         {
                             File.WriteAllText(ruta, corregido, Encoding.UTF8);
                             nodo.ScriptGenerado = corregido;
                             bool okRetry = await ProbarNodoConReintentos(
-                                nodo, auto, idxN, carpeta, ruta, ctxRetry, ct);
+                                nodo, auto, idxN, carpeta, ruta, ctxRetry, ct,
+                                refreshContexto: async () => await EjecutarCadenaHastaAsync(
+                                    nodo, auto, carpeta, predMap,
+                                    resultados.ToDictionary(kv => kv.Key, kv => kv.Value),
+                                    nodosById, ct));
                             resultados[nodo.Id] = nodo.UltimaRespuesta ?? "";
                             if (okRetry) Volatile.Write(ref todoOk, true);
                         }
@@ -2896,6 +3179,78 @@ Devuelve el JSON de modificación.";
                 sb.AppendLine(res);
             }
             return sb.ToString();
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  RE-EJECUCIÓN DE CADENA PREDECESORA (contexto fresco para correcciones)
+        // ══════════════════════════════════════════════════════════════════════
+        /// <summary>
+        /// Silently re-executes all predecessor nodes of <paramref name="nodoObjetivo"/>
+        /// in topological order and returns the fresh combined context for it.
+        /// Called before retrying a corrected node so that NODO_ANTERIOR_RESULTADO
+        /// always contains real, up-to-date values from the predecessor chain.
+        /// </summary>
+        private async Task<string> EjecutarCadenaHastaAsync(
+            NodoAutomatizacion nodoObjetivo,
+            Automatizacion auto,
+            string carpeta,
+            Dictionary<string, List<string>> predMap,
+            Dictionary<string, string> resultados,
+            Dictionary<string, NodoAutomatizacion> nodosById,
+            CancellationToken ct)
+        {
+            // Topological traversal: collect predecessors in execution order
+            var orden    = new List<NodoAutomatizacion>();
+            var visitados = new HashSet<string>();
+
+            void Visit(string id)
+            {
+                if (!visitados.Add(id)) return;
+                foreach (var pid in predMap.GetValueOrDefault(id) ?? new List<string>())
+                    Visit(pid);
+                if (id != nodoObjetivo.Id && nodosById.TryGetValue(id, out var n))
+                    orden.Add(n);
+            }
+            Visit(nodoObjetivo.Id);
+
+            if (orden.Count == 0) return "";
+
+            var cChain = Color.FromArgb(147, 197, 253);
+            var cOk    = Color.FromArgb(100, 200, 155);
+            var cErr2  = Color.FromArgb(255, 110, 110);
+
+            LogW($"\n  🔗 Re-ejecutando cadena ({orden.Count} predecesor(es)) para contexto fresco…\n", cChain);
+
+            foreach (var pred in orden)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (string.IsNullOrWhiteSpace(pred.NombreScript)) continue;
+                string ruta = Path.Combine(carpeta, pred.NombreScript);
+                if (!File.Exists(ruta)) continue;
+
+                string predCtx = ObtenerContextoCombinado(
+                    pred.Id, predMap,
+                    resultados.ToDictionary(kv => kv.Key, kv => kv.Value),
+                    nodosById);
+                try
+                {
+                    LogW($"  ↻ [{pred.Titulo}] re-ejecutando…\n", cChain);
+                    string res = await EjecutarScriptDirecto(ruta, carpeta, predCtx, ct);
+                    pred.UltimaRespuesta  = res;
+                    resultados[pred.Id]   = res;
+                    LogW($"  ✔ [{pred.Titulo}] OK\n", cOk);
+                }
+                catch (Exception ex)
+                {
+                    LogW($"  ⚠ [{pred.Titulo}] no se pudo re-ejecutar: {ex.Message}\n", cErr2);
+                    // Keep last known result so downstream nodes still get *something*
+                }
+            }
+
+            return ObtenerContextoCombinado(
+                nodoObjetivo.Id, predMap,
+                resultados.ToDictionary(kv => kv.Key, kv => kv.Value),
+                nodosById);
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -3607,6 +3962,163 @@ SOLO código Python. Primera línea: import";
             return corregido;
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        //  AGENTE ANALIZADOR DE ERRORES — tipo Claude Code
+        //  Se lanza automáticamente al mostrar el panel de error.
+        //  Hace un análisis en dos pasadas:
+        //   1. Diagnóstico: clasifica el error, identifica causa raíz, explica qué falló
+        //   2. Corrección: genera código Python corregido
+        //  Hace streaming de cada sección al rtbDiagnostico en tiempo real.
+        // ══════════════════════════════════════════════════════════════════════
+        private async Task<string?> AnalizarErrorConIAAsync(
+            NodoAutomatizacion nodo,
+            string codigoActual,
+            string errorMsg,
+            CancellationToken ct)
+        {
+            var cTitulo = Color.FromArgb(167, 139, 250);  // violeta — secciones
+            var cCuerpo = Color.FromArgb(196, 181, 253);  // lila — cuerpo
+            var cCodigo = Color.FromArgb(134, 239, 172);  // verde — código
+            var cError  = Color.FromArgb(252, 100, 100);  // rojo — error type
+            var cSep    = Color.FromArgb(60,  139,  92, 246);
+            var cMeta   = Color.FromArgb(80,  167, 139, 250);
+
+            if (string.IsNullOrWhiteSpace(Modelo)) return null;
+
+            // ── PASO 1: Diagnosificar el error ───────────────────────────────
+            DiagAppend("🔍 ANÁLISIS DE ERROR\n", cTitulo);
+            DiagAppend("─────────────────────────────────────────\n", cSep);
+
+            // Parsear tipo de error localmente primero (rápido, sin LLM)
+            var (tipoError, lineaError, mensajeClave) = ParsearTipoError(errorMsg);
+            if (!string.IsNullOrEmpty(tipoError))
+            {
+                DiagAppend($"  Tipo      : ", cMeta);
+                DiagAppend($"{tipoError}\n", cError);
+            }
+            if (lineaError > 0)
+            {
+                DiagAppend($"  Línea     : ", cMeta);
+                DiagAppend($"{lineaError}", Color.FromArgb(253, 186, 116));
+                var lineas = codigoActual.Split('\n');
+                if (lineaError <= lineas.Length)
+                    DiagAppend($"  →  {lineas[lineaError - 1].Trim()}\n", Color.FromArgb(220, 150, 150));
+                else
+                    DiagAppend("\n", cMeta);
+            }
+            if (!string.IsNullOrEmpty(mensajeClave))
+            {
+                DiagAppend($"  Mensaje   : ", cMeta);
+                DiagAppend($"{mensajeClave}\n", Color.FromArgb(253, 186, 116));
+            }
+
+            await Task.Delay(80, ct);
+
+            // ── PASO 2: LLM analiza causa raíz y propone solución ─────────────
+            DiagAppend($"\n🧠 DIAGNÓSTICO IA\n", cTitulo);
+            DiagAppend("─────────────────────────────────────────\n", cSep);
+
+            string promptDiag =
+                $"Analiza este error de Python de forma concisa (máx 5 líneas).\n" +
+                $"Responde en español con formato:\n" +
+                $"• CAUSA: [una línea]\n" +
+                $"• SOLUCIÓN: [una línea con la fix específica]\n" +
+                $"• CAMBIO: [el cambio exacto de código]\n\n" +
+                $"--- ERROR ---\n{errorMsg[..Math.Min(800, errorMsg.Length)]}\n\n" +
+                $"--- CÓDIGO (primeras 30 líneas) ---\n" +
+                string.Join("\n", codigoActual.Split('\n').Take(30));
+
+            AgentContext ctxDiag = await AgentContext.BuildAsync(
+                RutaTrabajo, Modelo, ApiKey, Agente, soloChat: true, "", ct);
+            AgentContext ctxAnalysis = ctxDiag.ConPromptPersonalizado(
+                "Eres un agente experto en debugging de Python. " +
+                "Analiza errores de forma precisa y concisa. " +
+                "Responde SIEMPRE en español con el formato solicitado.");
+
+            try
+            {
+                string diagRespuesta = await AIModelConector.ObtenerRespuestaLLMAsync(
+                    promptDiag, ctxAnalysis, ct);
+
+                // Mostrar análisis con colores según sección
+                foreach (var linea in diagRespuesta.Replace("\r\n", "\n").Split('\n'))
+                {
+                    Color c;
+                    if (linea.StartsWith("• CAUSA:",       StringComparison.OrdinalIgnoreCase) ||
+                        linea.StartsWith("- CAUSA:",       StringComparison.OrdinalIgnoreCase) ||
+                        linea.TrimStart().StartsWith("CAUSA:", StringComparison.OrdinalIgnoreCase))
+                        c = Color.FromArgb(252, 100, 100);
+                    else if (linea.StartsWith("• SOLUCIÓN:", StringComparison.OrdinalIgnoreCase) ||
+                             linea.StartsWith("- SOLUCIÓN:", StringComparison.OrdinalIgnoreCase) ||
+                             linea.TrimStart().StartsWith("SOLUCIÓN:", StringComparison.OrdinalIgnoreCase))
+                        c = Color.FromArgb(134, 239, 172);
+                    else if (linea.StartsWith("• CAMBIO:",   StringComparison.OrdinalIgnoreCase) ||
+                             linea.StartsWith("- CAMBIO:",   StringComparison.OrdinalIgnoreCase) ||
+                             linea.TrimStart().StartsWith("CAMBIO:", StringComparison.OrdinalIgnoreCase))
+                        c = Color.FromArgb(251, 191, 36);
+                    else
+                        c = cCuerpo;
+
+                    DiagAppend($"  {linea}\n", c);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagAppend($"  ⚠ No se pudo obtener diagnóstico IA: {ex.Message}\n", cError);
+            }
+
+            await Task.Delay(60, ct);
+
+            // ── PASO 3: Generar código corregido ──────────────────────────────
+            DiagAppend($"\n✏️  GENERANDO CORRECCIÓN\n", cTitulo);
+            DiagAppend("─────────────────────────────────────────\n", cSep);
+
+            string? codigoFix = null;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                AgentContext ctxFix = ctxDiag.ConPromptPersonalizado(
+                    "Eres un agente experto en Python. Corrige el script proporcionado. " +
+                    "Devuelve SOLO el código Python corregido dentro de ```python...```. " +
+                    "No expliques nada fuera del bloque de código.");
+
+                string promptFix =
+                    $"Corrige este script Python que produce el siguiente error.\n\n" +
+                    $"--- ERROR ---\n{errorMsg[..Math.Min(600, errorMsg.Length)]}\n\n" +
+                    $"--- SCRIPT ACTUAL ---\n```python\n{codigoActual}\n```\n\n" +
+                    $"Devuelve SOLO el script corregido completo en un bloque ```python```.";
+
+                string respFix = await AIModelConector.ObtenerRespuestaLLMAsync(
+                    promptFix, ctxFix, ct);
+
+                codigoFix = ExtraerCodigoPython(respFix);
+                sw.Stop();
+
+                int lnAntes  = codigoActual.Split('\n').Length;
+                int lnDespues = codigoFix.Split('\n').Length;
+                int diff      = lnDespues - lnAntes;
+                string diffStr = diff == 0 ? "sin cambio" : diff > 0 ? $"+{diff} ln" : $"{diff} ln";
+
+                DiagAppend($"  ✅ Corrección generada  ", cCodigo);
+                DiagAppend($"({lnAntes}→{lnDespues} líneas · {diffStr} · {sw.Elapsed.TotalSeconds:F1}s)\n", cMeta);
+
+                // Preview primeras líneas del código corregido
+                DiagAppend("  ─── preview ───\n", cSep);
+                foreach (var pl in codigoFix.Split('\n').Take(6))
+                    DiagAppend($"  {pl}\n", cCodigo);
+                if (lnDespues > 6)
+                    DiagAppend($"  … ({lnDespues - 6} líneas más)\n", cSep);
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                DiagAppend($"  ⚠ Error generando fix: {ex.Message}\n", cError);
+                return null;
+            }
+
+            return codigoFix;
+        }
+
         /// <summary>
         /// Evalúa semánticamente si la salida de un nodo es válida.
         /// Devuelve null si el resultado es aceptable, o un string con la descripción
@@ -3832,7 +4344,8 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
             NodoAutomatizacion nodo, Automatizacion auto, int idx,
             string carpeta, string rutaScript, string? contextoAnterior,
             CancellationToken ct,
-            bool sinInteractivo = false)   // true en ejecución paralela: no muestra panel de error
+            bool sinInteractivo = false,
+            Func<Task<string?>>? refreshContexto = null)
         {
             var   ctrl        = canvas.Nodos.FirstOrDefault(c => c.Datos.Id == nodo.Id);
             bool  nodoOk      = false;
@@ -3847,6 +4360,21 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
             var cPrev = Color.FromArgb(100, 200, 155);           // preview código
             var cCmd  = Color.FromArgb(100, 180, 255);           // comando python
             var cBord = Color.FromArgb(60, 16, 185, 129);        // bordes
+
+            // ── Helper: aplicar fix al archivo y refrescar contexto predecesor ─
+            async Task AplicarFix(string? fix)
+            {
+                if (fix == null) return;
+                File.WriteAllText(rutaScript, fix, Encoding.UTF8);
+                nodo.ScriptGenerado = fix;
+                ctrl?.ActualizarEstado(EstadoNodo.Ejecutando);
+                if (refreshContexto != null)
+                {
+                    LogW($"  🔄 Actualizando contexto de predecesores…\n",
+                        Color.FromArgb(147, 197, 253));
+                    contextoAnterior = await refreshContexto() ?? contextoAnterior;
+                }
+            }
 
             // ── Encabezado del nodo ──────────────────────────────────────────
             LogW($"\n", cSep);
@@ -3919,12 +4447,7 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
                         string? fix = await AnalizarYCorregirConPasos(
                             nodo, auto, idx, carpeta, codigoActual, errorSemantico, null, ct,
                             cOut, cErr, cSep, cPrev);
-                        if (fix != null)
-                        {
-                            File.WriteAllText(rutaScript, fix, Encoding.UTF8);
-                            nodo.ScriptGenerado = fix;
-                            ctrl?.ActualizarEstado(EstadoNodo.Ejecutando);
-                        }
+                        await AplicarFix(fix);
                         continue; // reintentar
                     }
 
@@ -3975,12 +4498,7 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
                         string? autoFix = await AnalizarYCorregirConPasos(
                             nodo, auto, idx, carpeta, codigoActual, errorMsg, null, ct,
                             cOut, cErr, cSep, cPrev);
-                        if (autoFix != null)
-                        {
-                            File.WriteAllText(rutaScript, autoFix, Encoding.UTF8);
-                            nodo.ScriptGenerado = autoFix;
-                            ctrl?.ActualizarEstado(EstadoNodo.Ejecutando);
-                        }
+                        await AplicarFix(autoFix);
                         continue; // volver al while
                     }
 
@@ -4005,18 +4523,22 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
                             return false;
                         }
 
-                        // Usuario dio instrucción → un último intento extra
+                        // Usuario aplicó fix IA directo o dio instrucción manual
                         intentoAuto = 0;
-                        string? exFix = await AnalizarYCorregirConPasos(
-                            nodo, auto, idx, carpeta, codigoActual, errorMsg,
-                            string.IsNullOrWhiteSpace(instrFinal) ? null : instrFinal, ct,
-                            cOut, cErr, cSep, cPrev);
-                        if (exFix != null)
+                        string? exFix;
+                        if (instrFinal == FixIASentinel && _fixIASugerido != null)
                         {
-                            File.WriteAllText(rutaScript, exFix, Encoding.UTF8);
-                            nodo.ScriptGenerado = exFix;
-                            ctrl?.ActualizarEstado(EstadoNodo.Ejecutando);
+                            exFix = _fixIASugerido;
+                            LogW($"  ⚡ Aplicando corrección IA directa\n", Emerald4);
                         }
+                        else
+                        {
+                            exFix = await AnalizarYCorregirConPasos(
+                                nodo, auto, idx, carpeta, codigoActual, errorMsg,
+                                string.IsNullOrWhiteSpace(instrFinal) ? null : instrFinal, ct,
+                                cOut, cErr, cSep, cPrev);
+                        }
+                        await AplicarFix(exFix);
                         continue;
                     }
 
@@ -4038,24 +4560,29 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
                     }
 
                     intentoAuto++;
-                    string etiqueta = string.IsNullOrWhiteSpace(instruccion)
-                        ? $"AUTO-CORRECCIÓN {intentoAuto}/{MAX_AUTO}"
-                        : $"CORRECCIÓN CON INSTRUCCIONES {intentoAuto}/{MAX_AUTO}";
 
-                    LogW($"  ━━ {etiqueta} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", WarnColor);
-                    EstadoIA($"🔄 Corrigiendo [{idx + 1}] {nodo.Titulo}  ({intentoAuto}/{MAX_AUTO})", WarnColor);
-
-                    string? corregido = await AnalizarYCorregirConPasos(
-                        nodo, auto, idx, carpeta, codigoActual, errorMsg,
-                        string.IsNullOrWhiteSpace(instruccion) ? null : instruccion, ct,
-                        cOut, cErr, cSep, cPrev);
-
-                    if (corregido != null)
+                    string? corregido;
+                    if (instruccion == FixIASentinel && _fixIASugerido != null)
                     {
-                        File.WriteAllText(rutaScript, corregido, Encoding.UTF8);
-                        nodo.ScriptGenerado = corregido;
-                        ctrl?.ActualizarEstado(EstadoNodo.Ejecutando);
+                        // Fix IA ya generado por el agente analizador → aplicar directo
+                        corregido = _fixIASugerido;
+                        LogW($"  ⚡ Aplicando corrección IA directa ({intentoAuto}/{MAX_AUTO})\n", Emerald4);
+                        EstadoIA($"⚡ Fix IA aplicado [{idx + 1}] {nodo.Titulo}", Emerald4);
                     }
+                    else
+                    {
+                        string etiqueta = string.IsNullOrWhiteSpace(instruccion)
+                            ? $"AUTO-CORRECCIÓN {intentoAuto}/{MAX_AUTO}"
+                            : $"CORRECCIÓN CON INSTRUCCIONES {intentoAuto}/{MAX_AUTO}";
+                        LogW($"  ━━ {etiqueta} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", WarnColor);
+                        EstadoIA($"🔄 Corrigiendo [{idx + 1}] {nodo.Titulo}  ({intentoAuto}/{MAX_AUTO})", WarnColor);
+                        corregido = await AnalizarYCorregirConPasos(
+                            nodo, auto, idx, carpeta, codigoActual, errorMsg,
+                            string.IsNullOrWhiteSpace(instruccion) ? null : instruccion, ct,
+                            cOut, cErr, cSep, cPrev);
+                    }
+
+                    await AplicarFix(corregido);
                 }
             }
 
@@ -4145,8 +4672,9 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
             RefrescarLista();
 
             // Cambiar texto del botón para indicar modo modificación
-            btnCrearIA.Text = "✏ Modificar con IA";
-            txtNLInput.PlaceholderText = "✏  Ej: «agrega un paso que notifique a Slack», «cambia el paso 2 para usar Gmail», «elimina el último nodo»";
+            btnCrearIA.Text   = "✏";
+            lblNLHint.Text    = "✏  Ej: «agrega un paso que notifique a Slack», «cambia el paso 2 para usar Gmail», «elimina el último nodo»";
+            lblNLHint.Visible = string.IsNullOrEmpty(txtNLInput.Text);
         }
 
         private void DeseleccionarAuto()
@@ -4156,8 +4684,9 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
             pnlEditor.Visible = false;
             pnlSchedule.Visible = false;
             _nodoEditando = null;
-            btnCrearIA.Text = "✨ Crear con IA";
-            txtNLInput.PlaceholderText = "✨  Ej: «Captura pantalla y envíalo al correo x@y.com a las 8am todos los días»  (Ctrl+Enter)";
+            btnCrearIA.Text   = "✨";
+            lblNLHint.Text    = "✨  Ej: «Captura pantalla y envíalo al correo x@y.com a las 8am todos los días»  (Ctrl+Enter)";
+            lblNLHint.Visible = string.IsNullOrEmpty(txtNLInput.Text);
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -4476,12 +5005,13 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
         private void InsertarEnInput(string texto)
         {
             txtNLInput.Focus();
-            int pos    = txtNLInput.SelectionStart;
+            int    pos = txtNLInput.SelectionStart;
             string cur = txtNLInput.Text;
             string pre = (pos > 0 && cur[pos - 1] != ' ') ? " " : "";
             string suf = (pos < cur.Length && cur[pos] != ' ') ? " " : "";
-            txtNLInput.Text           = cur[..pos] + pre + texto + suf + cur[pos..];
-            txtNLInput.SelectionStart = pos + pre.Length + texto.Length + suf.Length;
+            // RichTextBox: usar SelectedText para inserción eficiente
+            txtNLInput.Select(pos, 0);
+            txtNLInput.SelectedText = pre + texto + suf;
         }
 
         private void GuardarLista() =>
