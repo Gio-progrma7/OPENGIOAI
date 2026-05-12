@@ -163,58 +163,41 @@ namespace OPENGIOAI.Agentes
             try
             {
 
-            // ── FASE 1: ANALISTA (en paralelo con pre-carga de contexto) ──────
-            OnFaseIniciada?.Invoke(FaseAgente.Analista, "Analizando tu instrucción...");
-
-            var spanAnalista = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Analista");
-            spanAnalista.RegistrarInput(instruccion);
-            var taskAnalista    = FaseAnalistaAsync(instruccion, ct);
-            // Pre-build del contexto COMPLETO para el Constructor.
-            // Se lanza en paralelo con el Analista para ocultar latencia de I/O.
+            // ── FASE 1: PRE-CARGA DE CONTEXTO (Optimizada) ──────
+            OnFaseIniciada?.Invoke(FaseAgente.Analista, "Preparando el entorno...");
+            
+            // Construcción del contexto COMPLETO.
             // Pasamos la instrucción → si memoria_semantica está activa,
             // BuildAsync usará RAG (top-K) en lugar del dump completo.
-            var taskCtxPrebuild = AgentContext.BuildAsync(
+            var ctxConstructor = await AgentContext.BuildAsync(
                 _ruta, _modelo, _apiKey, _servicio, _soloChat, _claves, ct,
                 perfil: PerfilContexto.Completo,
                 instruccionUsuario: instruccion);
 
-            await Task.WhenAll(taskAnalista, taskCtxPrebuild);
-
-            string planSimple = taskAnalista.Result;
-            spanAnalista.RegistrarOutput(planSimple);
-            spanAnalista.Dispose();
-
-            OnFaseIniciada?.Invoke(FaseAgente.Analista, planSimple);
             OnFaseCompletada?.Invoke(FaseAgente.Analista, true);
-
-            log.AppendLine("### 📋 Analista");
-            log.AppendLine($"> {planSimple.Replace("\n", "\n> ")}");
+            log.AppendLine("### 📋 Contexto");
+            log.AppendLine($"- Modelo: `{_modelo}`");
+            log.AppendLine($"- Perfil: `Completo` (RAG)");
             log.AppendLine();
 
             ct.ThrowIfCancellationRequested();
 
-            // ── FASE 2: CONSTRUCTOR ──────────────────────────────────────────
-            OnFaseIniciada?.Invoke(FaseAgente.Constructor, "Trabajando en ello...");
+            // ── FASE 2: CONSTRUCTOR (Reusando Contexto) ──────────────────────
+            OnFaseIniciada?.Invoke(FaseAgente.Constructor, "Ejecutando instrucciones...");
             var spanConstructor = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Constructor");
             spanConstructor.RegistrarInput(instruccion);
-            var (codigoGenerado, stdoutConstructor) = await FaseConstructorAsync(instruccion, ct);
+            
+            // Ahora pasamos ctxConstructor para evitar que se reconstruya dentro
+            var (codigoGenerado, stdoutConstructor) = await FaseConstructorAsync(instruccion, ctxConstructor, ct);
             OnFaseCompletada?.Invoke(FaseAgente.Constructor, true);
 
             // ── Determinar la salida real del Constructor ────────────────────
-            // Prioridad:
-            //   1. respuesta.txt → el script la escribió explícitamente (caso ideal)
-            //   2. stdout capturado → el script imprimió a consola pero no escribió respuesta.txt
-            //      En este caso lo persistimos en respuesta.txt para que el Analizador y
-            //      el Guardián también lo lean (ambos llaman a LeerRespuestaTxt internamente)
-            //   3. codigoGenerado → modo soloChat sin script (LLM respondió texto directo)
             string salidaRawConstructor = LeerRespuestaTxt();
 
             if (string.IsNullOrWhiteSpace(salidaRawConstructor))
             {
                 if (!string.IsNullOrWhiteSpace(stdoutConstructor))
                 {
-                    // El script produjo stdout pero no escribió respuesta.txt
-                    // → persistirlo para que todo el pipeline lo use
                     salidaRawConstructor = stdoutConstructor;
                     try
                     {
@@ -223,59 +206,61 @@ namespace OPENGIOAI.Agentes
                             stdoutConstructor,
                             System.Text.Encoding.UTF8);
                     }
-                    catch { /* Silenciar — el flujo continúa igual */ }
+                    catch { }
                 }
                 else
                 {
-                    // Sin script (soloChat): el LLM respondió texto directamente
                     salidaRawConstructor = codigoGenerado;
                 }
             }
 
-            // Notificar a la UI con la salida real (para reenvío opcional por Telegram, etc.)
-            OnConstructorCompletado?.Invoke(salidaRawConstructor);
+            // Normalizar JSON inmediatamente (barato, sin LLM)
+            string resultadoFinal = NormalizarSalidaJSON(salidaRawConstructor);
+
+            OnConstructorCompletado?.Invoke(resultadoFinal);
             spanConstructor.AgregarAtributo("lineas_codigo", codigoGenerado.Split('\n').Length.ToString());
-            spanConstructor.RegistrarOutput(salidaRawConstructor);
+            spanConstructor.RegistrarOutput(resultadoFinal);
             spanConstructor.Dispose();
 
             log.AppendLine("### ⚙️ Constructor");
             log.AppendLine($"- Código: {codigoGenerado.Split('\n').Length} líneas");
-            log.AppendLine($"- Salida raw: `{Truncar(salidaRawConstructor, 400)}`");
+            log.AppendLine($"- Salida normalizada: `{Truncar(resultadoFinal, 400)}`");
             log.AppendLine();
 
             ct.ThrowIfCancellationRequested();
 
-            // ── ANALIZADOR DE SALIDA ─────────────────────────────────────────
-            OnFaseIniciada?.Invoke(FaseAgente.Guardian, "Verificando el resultado...");
-
+            // ── GUARDIÁN: actúa si el Constructor falla (vacío o error técnico) ──
+            // Camino feliz (salida sin errores) → cero coste extra de LLM.
+            // Fallo técnico o salida vacía → reintentos automáticos del Guardián.
             var spanGuardian = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Guardian");
-            spanGuardian.RegistrarInput(codigoGenerado);
+            spanGuardian.RegistrarInput(instruccion);
 
-            var (exitoRapido, salidaNormalizada) =
-                await AnalizarSalidaRapidoAsync(instruccion, codigoGenerado, ct);
+            bool esFalloTecnico = string.IsNullOrWhiteSpace(resultadoFinal) || 
+                                 stdoutConstructor.Contains("[ERR]") || 
+                                 codigoGenerado.Contains("Error al ejecutar el script") ||
+                                 resultadoFinal.ToLower().Contains("traceback") ||
+                                 resultadoFinal.ToLower().Contains("status : error") ||
+                                 resultadoFinal.ToLower().Contains("\"status\": \"error\"") ||
+                                 resultadoFinal.ToLower().Contains("'status': 'error'");
 
-            string resultadoFinal;
-            if (exitoRapido)
+            if (esFalloTecnico && _maxIntentosGuardian > 0)
             {
-                spanGuardian.AgregarAtributo("via", "rapido");
-                spanGuardian.AgregarAtributo("correcciones", "0");
-                OnFaseCompletada?.Invoke(FaseAgente.Guardian, true);
-                resultadoFinal = salidaNormalizada;
+                OnFaseIniciada?.Invoke(FaseAgente.Guardian,
+                    "Detecté un error técnico o falta de salida. Intentando corrección automática...");
+                resultadoFinal = await FaseGuardianAsync(instruccion, codigoGenerado, ctxConstructor, ct);
+                OnFaseCompletada?.Invoke(FaseAgente.Guardian, !string.IsNullOrWhiteSpace(resultadoFinal));
                 log.AppendLine("### 🛡️ Guardián");
-                log.AppendLine("- ✅ Datos verificados — sin correcciones necesarias");
-                log.AppendLine($"- Resultado: `{Truncar(salidaNormalizada, 400)}`");
-                log.AppendLine();
+                log.AppendLine("- 🔄 Fallo detectado → corrección automática aplicada");
+                log.AppendLine($"- Resultado corregido: `{Truncar(resultadoFinal, 400)}`");
             }
             else
             {
-                spanGuardian.AgregarAtributo("via", "correccion");
-                resultadoFinal = await FaseGuardianAsync(instruccion, codigoGenerado, ct);
                 OnFaseCompletada?.Invoke(FaseAgente.Guardian, true);
                 log.AppendLine("### 🛡️ Guardián");
-                log.AppendLine("- 🔄 Corrección automática aplicada");
-                log.AppendLine($"- Resultado corregido: `{Truncar(resultadoFinal, 400)}`");
-                log.AppendLine();
+                log.AppendLine("- ✅ Ejecución técnica correcta — Guardián no necesario");
             }
+            log.AppendLine();
+
             spanGuardian.RegistrarOutput(resultadoFinal);
             spanGuardian.Dispose();
 
@@ -364,126 +349,13 @@ namespace OPENGIOAI.Agentes
         //  explicando qué va a hacer, en lenguaje simple y directo.
         // ════════════════════════════════════════════════════════════════════
 
-        private async Task<string> FaseAnalistaAsync(string instruccion, CancellationToken ct)
-        {
-            // El Analista SOLO interpreta la instrucción: no necesita credenciales,
-            // ni skills, ni memoria, ni rutas. Perfil Mínimo → cero I/O de disco,
-            // cero tokens del PromptEfectivo (pasa "" más su propio prompt).
-            var ctx = await AgentContext.BuildAsync(
-                _ruta, _modelo, _apiKey, _servicio,
-                soloChat: true, _claves, ct,
-                perfil: PerfilContexto.Minimo);
-
-            // Prompt del Analista — definido en PromptCatalogo, editable desde FrmPromts.
-            string promptAnalista = PromptRegistry.Instancia.Obtener(
-                PromptCatalogo.K_ANALISTA,
-                new Dictionary<string, string>
-                {
-                    ["instruccion"] = instruccion,
-                });
-
-            var ctxAnalista = ctx.ComoFase("Analista").ConPromptPersonalizado("");
-            string raw = await AIModelConector.ObtenerRespuestaLLMAsync(promptAnalista, ctxAnalista, ct);
-
-            return ParsearPlanAnalista(raw);
-        }
-
-        private static string ParsearPlanAnalista(string raw)
-        {
-            try
-            {
-                // Limpiar bloques de código si el modelo los añadió
-                string limpio = ExtraerBloquePuro(raw);
-
-                var obj = JObject.Parse(limpio);
-                string resumen = obj["resumen"]?.ToString() ?? "";
-                var pasos = obj["pasos"]?.ToObject<List<string>>() ?? new List<string>();
-
-                if (string.IsNullOrWhiteSpace(resumen)) return raw.Trim();
-
-                var sb = new StringBuilder(resumen);
-                if (pasos.Count > 0)
-                {
-                    sb.AppendLine();
-                    for (int i = 0; i < pasos.Count; i++)
-                        sb.AppendLine($"  {i + 1}. {pasos[i]}");
-                }
-                return sb.ToString().TrimEnd();
-            }
-            catch
-            {
-                // Si el LLM no devolvió JSON válido, usar el texto directamente
-                return raw.Trim();
-            }
-        }
-
-        // ════════════════════════════════════════════════════════════════════
-        //  ANALIZADOR DE SALIDA — verificación rápida post-Constructor
+        // ─────────────────────────────────────────────────────────────────────
+        //  NORMALIZADOR JSON → Texto legible
         //
-        //  Problemas que resuelve:
-        //    1. respuesta.txt contiene JSON crudo en vez de texto legible.
-        //    2. El script se ejecutó pero no completó la instrucción real.
-        //    3. No hay salida (respuesta.txt vacío).
-        //
-        //  Devuelve (exitoRapido, salidaNormalizada):
-        //    · exitoRapido = true  → corto circuito al Comunicador
-        //    · exitoRapido = false → Guardián entra a corregir
-        //    · salidaNormalizada  → texto legible (JSON convertido si aplica)
-        // ════════════════════════════════════════════════════════════════════
-
-        private async Task<(bool exito, string salida)> AnalizarSalidaRapidoAsync(
-            string instruccion, string codigoGenerado, CancellationToken ct)
-        {
-            // 1. Leer salida cruda
-            string salidaCruda = LeerRespuestaTxt();
-
-            // 2. Normalizar JSON si es necesario
-            string salidaNorm = NormalizarSalidaJSON(salidaCruda);
-
-            // 3. Si no hay salida en absoluto → fallo inmediato sin LLM call
-            if (string.IsNullOrWhiteSpace(salidaNorm))
-                return (false, "");
-
-            // 4. Verificación LLM rápida — prompt minimalista para latencia baja.
-            //    El Analizador solo compara instrucción vs salida, no ejecuta
-            //    nada. Perfil Mínimo es suficiente.
-            var ctx = await AgentContext.BuildAsync(
-                _ruta, _modelo, _apiKey, _servicio, soloChat: true, _claves, ct,
-                perfil: PerfilContexto.Minimo);
-
-            string promptAnalisis = PromptRegistry.Instancia.Obtener(
-                PromptCatalogo.K_ANALIZADOR,
-                new Dictionary<string, string>
-                {
-                    ["instruccion"] = instruccion,
-                    ["salida"]      = Truncar(salidaNorm, 600),
-                });
-
-            var ctxAnalizador = ctx.ComoFase("Analizador").ConPromptPersonalizado("");
-            string raw = "";
-            try
-            {
-                raw = await AIModelConector.ObtenerRespuestaLLMAsync(promptAnalisis, ctxAnalizador, ct);
-
-                var json = JObject.Parse(ExtraerBloquePuro(raw));
-                bool exito = json["exito"]?.Value<bool>() ?? false;
-
-                if (!exito)
-                {
-                    string razon = json["razon"]?.ToString() ?? "La instrucción no se completó.";
-                    OnFaseIniciada?.Invoke(FaseAgente.Guardian,
-                        $"Detecté un problema: {razon}. Lo corregiré automáticamente...");
-                }
-
-                return (exito, salidaNorm);
-            }
-            catch
-            {
-                // Si el LLM no respondió JSON válido, asumir éxito conservador
-                // (evitar loops de corrección innecesarios)
-                return (!string.IsNullOrWhiteSpace(salidaNorm), salidaNorm);
-            }
-        }
+        //  Cuando el script Python escribe JSON en respuesta.txt en lugar de
+        //  texto plano, este método extrae los valores de texto significativos
+        //  y los convierte en líneas legibles por un humano.
+        // ─────────────────────────────────────────────────────────────────────
 
         // ─────────────────────────────────────────────────────────────────────
         //  NORMALIZADOR JSON → Texto legible
@@ -616,7 +488,7 @@ namespace OPENGIOAI.Agentes
         /// distinto de respuesta.txt que el propio script puede o no escribir.
         /// </summary>
         private async Task<(string codigo, string stdout)> FaseConstructorAsync(
-            string instruccion, CancellationToken ct)
+            string instruccion, AgentContext ctx, CancellationToken ct)
         {
             var sbStdout = new StringBuilder();
             string codigo = await AIModelConector.EjecutarInstruccionIAAsync(
@@ -627,7 +499,8 @@ namespace OPENGIOAI.Agentes
                 {
                     sbStdout.AppendLine(linea);
                     OnLineaScript?.Invoke(FaseAgente.Constructor, linea);
-                });
+                },
+                ctxExistente: ctx); // Reusar contexto
             return (codigo, sbStdout.ToString().Trim());
         }
 
@@ -642,7 +515,7 @@ namespace OPENGIOAI.Agentes
         // ════════════════════════════════════════════════════════════════════
 
         private async Task<string> FaseGuardianAsync(
-            string instruccion, string codigoGenerado, CancellationToken ct)
+            string instruccion, string codigoGenerado, AgentContext ctxConstructor, CancellationToken ct)
         {
             // Normalizar JSON para que el Guardián evalúe datos, no formato
             string resultado = NormalizarSalidaJSON(LeerRespuestaTxt());
@@ -674,7 +547,7 @@ namespace OPENGIOAI.Agentes
                     promptGuardian, ctxGuardian, ct);
 
                 var (seguir, nuevoResultado) = await ProcesarVerificacionGuardianAsync(
-                    rawVerificacion, instruccion, intento, resultado, ct);
+                    rawVerificacion, instruccion, intento, resultado, ctxConstructor, ct);
 
                 if (nuevoResultado != null) resultado = nuevoResultado;
                 if (!seguir) break;
@@ -693,6 +566,7 @@ namespace OPENGIOAI.Agentes
         private async Task<(bool seguir, string? nuevoResultado)> ProcesarVerificacionGuardianAsync(
             string rawJson, string instruccion,
             int intentoActual, string resultadoActual,
+            AgentContext ctxConstructor,
             CancellationToken ct)
         {
             try
@@ -720,7 +594,8 @@ namespace OPENGIOAI.Agentes
                     {
                         sbStdoutCorrector.AppendLine(linea);
                         OnLineaScript?.Invoke(FaseAgente.Guardian, linea);
-                    });
+                    },
+                    ctxExistente: ctxConstructor); // Reusar contexto del orquestador
 
                 // Nuevo resultado: preferir respuesta.txt; fallback a stdout si está vacío
                 string nuevoResultado = NormalizarSalidaJSON(LeerRespuestaTxt());

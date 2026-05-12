@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net10.0          → cross-platform (Linux, macOS, Windows sin WinForms)
+      net10.0-windows  → habilita System.Speech y System.Management
+      La UI WinForms (OPENGIOAI) siempre resuelve la variante -windows.
+    -->
+    <TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OPENGIOAI</RootNamespace>
+    <!-- Suprimir CS8622 igual que en WinForms para consistencia -->
+    <NoWarn>$(NoWarn);CS8622</NoWarn>
+  </PropertyGroup>
+
+  <!-- ── Paquetes compartidos (todas las plataformas) ─────────────────────── -->
+  <ItemGroup>
+    <PackageReference Include="Google.Apis.Auth"                         Version="1.68.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Newtonsoft.Json"                          Version="13.0.4" />
+    <PackageReference Include="Serilog"                                  Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Logging"              Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console"                   Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File"                       Version="7.0.0" />
+    <PackageReference Include="SlackAPI"                                 Version="1.1.14" />
+    <PackageReference Include="Telegram.Bot"                             Version="22.9.0" />
+  </ItemGroup>
+
+  <!-- ── Paquetes exclusivos de Windows (System.Speech, System.Management) ── -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <PackageReference Include="System.Speech"     Version="10.0.0" />
+    <PackageReference Include="System.Management" Version="10.0.3" />
+  </ItemGroup>
+
+</Project>
