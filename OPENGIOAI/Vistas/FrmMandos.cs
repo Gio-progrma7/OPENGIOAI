@@ -2514,10 +2514,10 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             // Chips de sugerencia
             (string icono, string texto)[] chips =
             {
-                ("\U0001F4DD", "Crear un archivo notas.md"),
-                ("\U0001F50D", "Buscar archivos en mi carpeta"),
-                ("\U0001F4E4", "Enviarme un resumen por Telegram"),
-                ("⚡",     "Ejecutar una skill"),
+                ("\U0001F4DD", "Toma una captura de pantalla"),
+                ("\U0001F50D", "Muestrame los archivos de mi escritorio"),
+                ("\U0001F4E4", "Enviarme un resumen de mi por Telegram"),
+                ("⚡",     "Crea una pagina con html"),
             };
 
             int x = 22, y = 96;
