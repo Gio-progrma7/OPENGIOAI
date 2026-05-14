@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationIcon>logo.ico</ApplicationIcon>
+    <ApplicationIcon>iconadav2.ico</ApplicationIcon>
     <!-- CS8622: sender de event handlers en WinForms — sistemáticamente no-null en runtime;
          fijarlo en 66 handlers sería ruido sin valor. Se suprime para que warnings
          reales de nulabilidad (CS8602/CS8603) sigan visibles. -->
@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="logo.ico" />
+    <Content Include="iconadav2.ico" />
   </ItemGroup>
 
   <!-- Excluir subproyectos de pruebas: tienen su propio csproj y Main.
@@ -44,6 +44,11 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <Compile Update="Properties\Settings.Designer.cs">
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
@@ -51,6 +56,13 @@
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
   </ItemGroup>
 
 </Project>

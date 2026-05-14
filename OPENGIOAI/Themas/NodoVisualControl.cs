@@ -89,62 +89,97 @@ namespace OPENGIOAI.Themas
             Cursor = Cursors.SizeAll;
         }
 
-        // ── Pintar ────────────────────────────────────────────────────────────
+        // ── Fuentes cacheadas ─────────────────────────────────────────────────
+        private static readonly Font _fntTipo   = new Font("Segoe UI", 6.5f, FontStyle.Bold);
+        private static readonly Font _fntTitulo = new Font("Segoe UI Semibold", 9f);
+        private static readonly Font _fntDesc   = new Font("Segoe UI", 7.5f);
+
+        private GraphicsPath? _cachedPath;
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            _cachedPath?.Dispose();
+            _cachedPath = null;
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.SmoothingMode        = SmoothingMode.AntiAlias;
-            g.TextRenderingHint    = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
 
             Color tipoColor = ObtenerColorTipo();
-            Rectangle rc    = new Rectangle(0, 0, Width - 1, Height - 1);
+            Rectangle rc = new Rectangle(0, 0, Width - 1, Height - 1);
 
-            // Sombra
-            if (_seleccionado || _hovered)
+            if (_cachedPath == null)
             {
-                using var shadowPath = RoundedRect(new Rectangle(3, 3, Width - 3, Height - 3), 10);
-                using var shadowBrush = new SolidBrush(Color.FromArgb(60, tipoColor));
-                g.FillPath(shadowBrush, shadowPath);
+                _cachedPath = RoundedRect(rc, 10);
             }
 
-            // Fondo — más brillante si está ejecutando
+            // Fondo
             Color bgColor = Datos.Estado switch
             {
-                EstadoNodo.Ejecutando  => ColorTranslator.FromHtml("#0f2a1c"),
-                EstadoNodo.Completado  => ColorTranslator.FromHtml("#0a1f15"),
-                EstadoNodo.Error       => ColorTranslator.FromHtml("#2a0f0f"),
-                _                      => _hovered ? BgCardHov : BgCard
+                EstadoNodo.Ejecutando => ColorTranslator.FromHtml("#0f2a1c"),
+                EstadoNodo.Completado => ColorTranslator.FromHtml("#0a1f15"),
+                EstadoNodo.Error      => ColorTranslator.FromHtml("#2a0f0f"),
+                _                     => _hovered ? BgCardHov : BgCard
             };
-            using var bgPath = RoundedRect(rc, 10);
-            using var bgBrush = new SolidBrush(bgColor);
-            g.FillPath(bgBrush, bgPath);
+            
+            using (var bgBrush = new SolidBrush(bgColor))
+            {
+                g.FillPath(bgBrush, _cachedPath);
+            }
 
-            // Franja de color (borde superior = tipo / estado)
+            // Franja de color superior
             Color franjaColor = Datos.Estado switch
             {
-                EstadoNodo.Ejecutando  => ColorTranslator.FromHtml("#94E6EC"),
-                EstadoNodo.Completado  => ColorTranslator.FromHtml("#3660C9"),
-                EstadoNodo.Error       => ColorTranslator.FromHtml("#f87171"),
-                _                      => tipoColor
+                EstadoNodo.Ejecutando => ColorTranslator.FromHtml("#94E6EC"),
+                EstadoNodo.Completado => ColorTranslator.FromHtml("#3660C9"),
+                EstadoNodo.Error      => ColorTranslator.FromHtml("#f87171"),
+                _                     => tipoColor
             };
-            Rectangle franjaRect = new Rectangle(0, 0, Width - 1, 5);
-            using var franjaBrush = new SolidBrush(franjaColor);
-            g.FillRectangle(franjaBrush, franjaRect);
+            g.FillRectangle(Brushes.Transparent, 0, 0, Width - 1, 5); // Limpiar
+            using (var franjaBrush = new SolidBrush(franjaColor))
+            {
+                g.FillRectangle(franjaBrush, 0, 0, Width - 1, 5);
+            }
 
             // Borde
             float borderW = (_seleccionado || Datos.Estado == EstadoNodo.Ejecutando) ? 2.5f : 1.5f;
             Color borderColor = Datos.Estado switch
             {
-                EstadoNodo.Ejecutando  => ColorTranslator.FromHtml("#94E6EC"),
-                EstadoNodo.Completado  => ColorTranslator.FromHtml("#3660C9"),
-                EstadoNodo.Error       => ColorTranslator.FromHtml("#f87171"),
-                _                      => _seleccionado ? tipoColor : Color.FromArgb(50, tipoColor)
+                EstadoNodo.Ejecutando => ColorTranslator.FromHtml("#94E6EC"),
+                EstadoNodo.Completado => ColorTranslator.FromHtml("#3660C9"),
+                EstadoNodo.Error      => ColorTranslator.FromHtml("#f87171"),
+                _                     => _seleccionado ? tipoColor : Color.FromArgb(50, tipoColor)
             };
-            using var borderPen = new Pen(borderColor, borderW);
-            g.DrawPath(borderPen, bgPath);
+            using (var borderPen = new Pen(borderColor, borderW))
+            {
+                g.DrawPath(borderPen, _cachedPath);
+            }
 
-            // Icono de tipo + estado de ejecución
-            string tipoLabel = Datos.TipoNodo switch
+            // Textos
+            string tipoLabel = ObtenerEtiquetaTipo();
+            using (var brTipo = new SolidBrush(franjaColor))
+                g.DrawString(tipoLabel, _fntTipo, brTipo, 10, 10);
+
+            TextRenderer.DrawText(g, Datos.Titulo, _fntTitulo, new Rectangle(10, 24, Width - 20, 20), TextMain,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+            if (!string.IsNullOrWhiteSpace(Datos.Descripcion))
+            {
+                TextRenderer.DrawText(g, Datos.Descripcion, _fntDesc, new Rectangle(10, 46, Width - 20, 26), TextSub,
+                    TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.WordBreak);
+            }
+
+            // Puntos de conexión
+            DrawConPoint(g, tipoColor, PuntoSalida);
+            DrawConPoint(g, tipoColor, PuntoEntrada);
+        }
+
+        private string ObtenerEtiquetaTipo()
+        {
+            string label = Datos.TipoNodo switch
             {
                 TipoNodo.Disparador  => "⚡ DISPARADOR",
                 TipoNodo.Webhook     => "🌐 WEBHOOK",
@@ -163,41 +198,16 @@ namespace OPENGIOAI.Themas
                 TipoNodo.Fin         => "■ FIN",
                 _                    => "● NODO"
             };
-            string estadoLabel = Datos.Estado switch
+            return label + (Datos.Estado switch
             {
                 EstadoNodo.Ejecutando => "  ⏳",
                 EstadoNodo.Completado => "  ✔",
                 EstadoNodo.Error      => "  ✖",
                 _                     => ""
-            };
-
-            using var fntTipo = new Font("Segoe UI", 6.5f, FontStyle.Bold);
-            using var brTipo  = new SolidBrush(franjaColor);
-            g.DrawString(tipoLabel + estadoLabel, fntTipo, brTipo, new PointF(10, 10));
-
-            // Título
-            using var fntTitulo = new Font("Segoe UI Semibold", 9f);
-            using var brMain    = new SolidBrush(TextMain);
-            Rectangle rcTitulo  = new Rectangle(10, 24, Width - 20, 20);
-            TextRenderer.DrawText(g, Datos.Titulo, fntTitulo, rcTitulo, TextMain,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-
-            // Descripción (subtexto)
-            if (!string.IsNullOrWhiteSpace(Datos.Descripcion))
-            {
-                using var fntDesc = new Font("Segoe UI", 7.5f);
-                using var brSub   = new SolidBrush(TextSub);
-                Rectangle rcDesc  = new Rectangle(10, 46, Width - 20, 26);
-                TextRenderer.DrawText(g, Datos.Descripcion, fntDesc, rcDesc, TextSub,
-                    TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.WordBreak);
-            }
-
-            // Punto de conexión salida (círculo derecho)
-            DrawConPoint(g, tipoColor, PuntoSalida,  salida: true);
-            DrawConPoint(g, tipoColor, PuntoEntrada, salida: false);
+            });
         }
 
-        private void DrawConPoint(Graphics g, Color c, Point pt, bool salida)
+        private void DrawConPoint(Graphics g, Color c, Point pt)
         {
             int r = 5;
             Rectangle rc = new Rectangle(pt.X - r, pt.Y - r, r * 2, r * 2);
@@ -205,6 +215,15 @@ namespace OPENGIOAI.Themas
             using var border = new Pen(c, 1.5f);
             g.FillEllipse(fill, rc);
             g.DrawEllipse(border, rc);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _cachedPath?.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
         // ── Arrastre ──────────────────────────────────────────────────────────

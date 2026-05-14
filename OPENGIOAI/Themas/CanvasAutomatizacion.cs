@@ -163,12 +163,17 @@ namespace OPENGIOAI.Themas
 
         private void DibujarGrid(Graphics g)
         {
-            int paso = 28;
-            using var pen = new Pen(GridColor, 1f);
+            int paso = (int)(28 * _zoom);
+            if (paso < 10) return; // No dibujar si es muy denso
+
+            using var brush = new SolidBrush(Color.FromArgb(40, 255, 255, 255));
             for (int x = 0; x < Width; x += paso)
-                g.DrawLine(pen, x, 0, x, Height);
-            for (int y = 0; y < Height; y += paso)
-                g.DrawLine(pen, 0, y, Width, y);
+            {
+                for (int y = 0; y < Height; y += paso)
+                {
+                    g.FillRectangle(brush, x, y, 1.5f, 1.5f);
+                }
+            }
         }
 
         private void DibujarConexiones(Graphics g)
