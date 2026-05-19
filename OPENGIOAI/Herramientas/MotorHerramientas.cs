@@ -33,8 +33,9 @@ namespace OPENGIOAI.Herramientas
 {
     public static class MotorHerramientas
     {
-        // Registro global de herramientas (lazy init, thread-safe con Lazy<T>)
-        private static readonly Lazy<RegistroHerramientas> _registro =
+        // Registro base de herramientas nativas (lazy init, thread-safe con Lazy<T>).
+        // Los skills dependen del workspace activo, asi que se agregan por ejecucion.
+        private static readonly Lazy<RegistroHerramientas> _registroBase =
             new(RegistroHerramientas.CrearPorDefecto);
 
         // HttpClient dedicado para el motor de herramientas
@@ -66,7 +67,8 @@ namespace OPENGIOAI.Herramientas
         {
             ct.ThrowIfCancellationRequested();
 
-            var herramientas = _registro.Value.ObtenerTodas();
+            var registro = CrearRegistroParaContexto(ctx);
+            var herramientas = registro.ObtenerTodas();
             var mensajes = InicializarMensajes(instruccion, ctx);
 
             // Span raíz del bucle ReAct — cada iteración y cada tool call cuelga de aquí.
@@ -130,7 +132,7 @@ namespace OPENGIOAI.Herramientas
                     string resultado;
                     try
                     {
-                        resultado = await EjecutarHerramientaAsync(llamada, ct);
+                        resultado = await EjecutarHerramientaAsync(registro, llamada, ct);
                         spanTool.RegistrarOutput(resultado);
                     }
                     catch (Exception ex)
@@ -571,13 +573,15 @@ namespace OPENGIOAI.Herramientas
         // =====================================================================
 
         private static async Task<string> EjecutarHerramientaAsync(
-            LlamadaHerramienta llamada, CancellationToken ct)
+            RegistroHerramientas registro,
+            LlamadaHerramienta llamada,
+            CancellationToken ct)
         {
-            var herramienta = _registro.Value.Obtener(llamada.Nombre);
+            var herramienta = registro.Obtener(llamada.Nombre);
 
             if (herramienta == null)
                 return $"Error: La herramienta '{llamada.Nombre}' no está registrada. " +
-                       $"Herramientas disponibles: {string.Join(", ", _registro.Value.ObtenerTodas().Select(h => h.Nombre))}";
+                       $"Herramientas disponibles: {string.Join(", ", registro.ObtenerTodas().Select(h => h.Nombre))}";
 
             try
             {
@@ -597,6 +601,14 @@ namespace OPENGIOAI.Herramientas
             {
                 return $"Error inesperado ejecutando '{llamada.Nombre}': {ex.Message}";
             }
+        }
+
+        private static RegistroHerramientas CrearRegistroParaContexto(AgentContext ctx)
+        {
+            if (ctx.Skills.Count == 0)
+                return _registroBase.Value;
+
+            return RegistroHerramientas.CrearConSkills(ctx.Skills, ctx.RutaArchivo);
         }
 
         // =====================================================================

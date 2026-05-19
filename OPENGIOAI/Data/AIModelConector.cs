@@ -152,7 +152,43 @@ namespace OPENGIOAI.Data
             CancellationToken ct = default,
             Action? onInicioScript = null,
             Action<string>? onSalidaScript = null,
-            AgentContext? ctxExistente = null)
+            AgentContext? ctxExistente = null,
+            string? workspaceEjecucion = null)
+        {
+            var resultado = await EjecutarInstruccionIAConResultadoAsync(
+                instruccion,
+                modelo,
+                rutaArchivo,
+                apiKey,
+                clavesDisponibles,
+                soloChat,
+                servicio,
+                ct,
+                onInicioScript,
+                onSalidaScript,
+                ctxExistente,
+                workspaceEjecucion);
+
+            return resultado.SalidaTecnica;
+        }
+
+        /// <summary>
+        /// Version tipada del Agente 1. Devuelve codigo, stdout/stderr y salida
+        /// capturada en respuesta.txt sin obligar al orquestador a releer archivos.
+        /// </summary>
+        public static async Task<ResultadoEjecucionIA> EjecutarInstruccionIAConResultadoAsync(
+            string instruccion,
+            string modelo = "",
+            string rutaArchivo = "",
+            string apiKey = "",
+            string clavesDisponibles = "",
+            bool soloChat = false,
+            Servicios servicio = Servicios.Gemenni,
+            CancellationToken ct = default,
+            Action? onInicioScript = null,
+            Action<string>? onSalidaScript = null,
+            AgentContext? ctxExistente = null,
+            string? workspaceEjecucion = null)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -167,7 +203,8 @@ namespace OPENGIOAI.Data
 
             ct.ThrowIfCancellationRequested();
 
-            return await GenerarScriptIA(codigoPython, rutaArchivo, soloChat, ct,
+            return await GenerarScriptIAResultado(codigoPython, rutaArchivo, soloChat, ct,
+                workspaceEjecucion,
                 onInicioScript, onSalidaScript);
         }
 
@@ -1053,11 +1090,24 @@ REGLAS:
             Action? onInicioScript = null,
             Action<string>? onLinea = null)
         {
+            var resultado = await GenerarScriptIAResultado(
+                script, rutaArchivo, chat, ct, null, onInicioScript, onLinea);
+
+            return resultado.SalidaTecnica;
+        }
+
+        private static async Task<ResultadoEjecucionIA> GenerarScriptIAResultado(
+            string script, string rutaArchivo, bool chat, CancellationToken ct,
+            string? workspaceEjecucion = null,
+            Action? onInicioScript = null,
+            Action<string>? onLinea = null)
+        {
             if (string.IsNullOrWhiteSpace(script))
                 throw new Exception("La IA no devolvió ningún script válido.");
 
-            string pythonFile = Path.Combine(rutaArchivo, "script_ia.py");
-            GuardarScript(rutaArchivo, script);
+            string rutaEjecucion = ResolverWorkspaceEjecucion(rutaArchivo, workspaceEjecucion);
+            string pythonFile = Path.Combine(rutaEjecucion, "script_ia.py");
+            GuardarScript(rutaEjecucion, script);
 
             var psi = new System.Diagnostics.ProcessStartInfo
             {
@@ -1077,9 +1127,10 @@ REGLAS:
                 onInicioScript?.Invoke();
 
                 var sbSalida = new StringBuilder();
+                var sbError = new StringBuilder();
 
                 // ── Watcher sobre respuesta.txt para mostrar cambios en tiempo real ──
-                string respuestaTxtPath = Path.Combine(rutaArchivo, "respuesta.txt");
+                string respuestaTxtPath = Path.Combine(rutaEjecucion, "respuesta.txt");
                 long _ultimaPosRespuesta = 0;
                 // Limpiar el archivo antes de empezar para no acumular ejecuciones anteriores
                 if (File.Exists(respuestaTxtPath))
@@ -1088,7 +1139,7 @@ REGLAS:
                 FileSystemWatcher? watcher = null;
                 if (onLinea != null)
                 {
-                    watcher = new FileSystemWatcher(rutaArchivo)
+                    watcher = new FileSystemWatcher(rutaEjecucion)
                     {
                         Filter = "respuesta.txt",
                         NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
@@ -1128,7 +1179,7 @@ REGLAS:
                 {
                     if (e.Data == null) return;
                     string linea = $"[ERR] {e.Data}";
-                    sbSalida.AppendLine(linea);
+                    sbError.AppendLine(e.Data);
                     onLinea?.Invoke(linea);
                 };
 
@@ -1143,18 +1194,50 @@ REGLAS:
 
                 watcher?.Dispose();
 
-                string salida = sbSalida.ToString().Trim();
-                return process.ExitCode != 0
-                    ? script + "\n\nError al ejecutar el script:\n" + salida
-                    : string.IsNullOrEmpty(salida)
-                        ? script
-                        : script + "\n\nSalida del script:\n" + salida;
+                return new ResultadoEjecucionIA
+                {
+                    CodigoGenerado = script,
+                    Stdout = sbSalida.ToString().Trim(),
+                    Stderr = sbError.ToString().Trim(),
+                    RespuestaTxt = LeerRespuestaTxtSeguro(respuestaTxtPath),
+                    RutaScript = pythonFile,
+                    WorkspaceEjecucion = rutaEjecucion,
+                    ExitCode = process.ExitCode,
+                    Ejecutado = true
+                };
             }
 
             _ = Task.Run(() =>
                 System.Diagnostics.Process.Start(psi)?.WaitForExit(), ct);
 
-            return script;
+            return new ResultadoEjecucionIA
+            {
+                CodigoGenerado = script,
+                RutaScript = pythonFile,
+                WorkspaceEjecucion = rutaEjecucion,
+                Ejecutado = false
+            };
+        }
+
+        private static string ResolverWorkspaceEjecucion(string rutaArchivo, string? workspaceEjecucion)
+        {
+            if (!string.IsNullOrWhiteSpace(workspaceEjecucion))
+                return workspaceEjecucion;
+
+            return rutaArchivo;
+        }
+
+        private static string LeerRespuestaTxtSeguro(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return "";
+                return File.ReadAllText(path, Encoding.UTF8).Trim();
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private static void GuardarScript(string rutaArchivo, string script)

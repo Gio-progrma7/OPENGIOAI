@@ -135,9 +135,20 @@ namespace OPENGIOAI.Agentes
         public async Task<string> EjecutarAsync(string instruccion, CancellationToken ct)
         {
             var inicioTotal = DateTime.UtcNow;
+            var run = new AgentRunContext(
+                Guid.NewGuid().ToString("N"),
+                instruccion,
+                inicioTotal,
+                _ruta,
+                _modelo,
+                _servicio);
+            string workspaceEjecucion = CrearWorkspaceEjecucion(run);
+
             var log = new StringBuilder();
             log.AppendLine("---");
             log.AppendLine($"## 🧠 ARIA · {inicioTotal:yyyy-MM-dd HH:mm:ss} UTC");
+            log.AppendLine($"**RunId:** `{run.RunId}`");
+            log.AppendLine($"**Workspace:** `{workspaceEjecucion}`");
             log.AppendLine();
             log.AppendLine($"**Instrucción:** {instruccion}");
             log.AppendLine();
@@ -157,6 +168,7 @@ namespace OPENGIOAI.Agentes
             using var spanPipeline = TracerEjecucion.Instancia.AbrirSpan(
                 SpanTipo.Pipeline, "ARIA Pipeline");
             spanPipeline.RegistrarInput(instruccion);
+            spanPipeline.AgregarAtributo("run_id", run.RunId);
             spanPipeline.AgregarAtributo("modelo", _modelo);
             spanPipeline.AgregarAtributo("servicio", _servicio.ToString());
 
@@ -188,30 +200,17 @@ namespace OPENGIOAI.Agentes
             spanConstructor.RegistrarInput(instruccion);
             
             // Ahora pasamos ctxConstructor para evitar que se reconstruya dentro
-            var (codigoGenerado, stdoutConstructor) = await FaseConstructorAsync(instruccion, ctxConstructor, ct);
+            var ejecucionConstructor = await FaseConstructorAsync(instruccion, ctxConstructor, workspaceEjecucion, ct);
             OnFaseCompletada?.Invoke(FaseAgente.Constructor, true);
+            string codigoGenerado = ejecucionConstructor.CodigoGenerado;
+            string stdoutConstructor = ejecucionConstructor.Stdout;
 
             // ── Determinar la salida real del Constructor ────────────────────
-            string salidaRawConstructor = LeerRespuestaTxt();
+            string salidaRawConstructor = ejecucionConstructor.SalidaPreferida;
 
             if (string.IsNullOrWhiteSpace(salidaRawConstructor))
             {
-                if (!string.IsNullOrWhiteSpace(stdoutConstructor))
-                {
-                    salidaRawConstructor = stdoutConstructor;
-                    try
-                    {
-                        await File.WriteAllTextAsync(
-                            Path.Combine(_ruta, "respuesta.txt"),
-                            stdoutConstructor,
-                            System.Text.Encoding.UTF8);
-                    }
-                    catch { }
-                }
-                else
-                {
-                    salidaRawConstructor = codigoGenerado;
-                }
+                salidaRawConstructor = codigoGenerado;
             }
 
             // Normalizar JSON inmediatamente (barato, sin LLM)
@@ -236,8 +235,10 @@ namespace OPENGIOAI.Agentes
             spanGuardian.RegistrarInput(instruccion);
 
             bool esFalloTecnico = string.IsNullOrWhiteSpace(resultadoFinal) || 
-                                 stdoutConstructor.Contains("[ERR]") || 
-                                 codigoGenerado.Contains("Error al ejecutar el script") ||
+                                 ejecucionConstructor.ExitCode.GetValueOrDefault() != 0 ||
+                                 !string.IsNullOrWhiteSpace(ejecucionConstructor.Stderr) ||
+                                 stdoutConstructor.Contains("[ERR]") ||
+                                 ejecucionConstructor.SalidaTecnica.Contains("Error al ejecutar el script") ||
                                  resultadoFinal.ToLower().Contains("traceback") ||
                                  resultadoFinal.ToLower().Contains("status : error") ||
                                  resultadoFinal.ToLower().Contains("\"status\": \"error\"") ||
@@ -247,7 +248,7 @@ namespace OPENGIOAI.Agentes
             {
                 OnFaseIniciada?.Invoke(FaseAgente.Guardian,
                     "Detecté un error técnico o falta de salida. Intentando corrección automática...");
-                resultadoFinal = await FaseGuardianAsync(instruccion, codigoGenerado, ctxConstructor, ct);
+                resultadoFinal = await FaseGuardianAsync(instruccion, codigoGenerado, resultadoFinal, ctxConstructor, workspaceEjecucion, ct);
                 OnFaseCompletada?.Invoke(FaseAgente.Guardian, !string.IsNullOrWhiteSpace(resultadoFinal));
                 log.AppendLine("### 🛡️ Guardián");
                 log.AppendLine("- 🔄 Fallo detectado → corrección automática aplicada");
@@ -487,38 +488,45 @@ namespace OPENGIOAI.Agentes
         /// El stdout es la salida real de ejecución (lo que el script imprime / escribe en pantalla),
         /// distinto de respuesta.txt que el propio script puede o no escribir.
         /// </summary>
-        private async Task<(string codigo, string stdout)> FaseConstructorAsync(
-            string instruccion, AgentContext ctx, CancellationToken ct)
+        private async Task<ResultadoEjecucionIA> FaseConstructorAsync(
+            string instruccion,
+            AgentContext ctx,
+            string workspaceEjecucion,
+            CancellationToken ct)
         {
-            var sbStdout = new StringBuilder();
-            string codigo = await AIModelConector.EjecutarInstruccionIAAsync(
+            var resultado = await AIModelConector.EjecutarInstruccionIAConResultadoAsync(
                 instruccion,
                 _modelo, _ruta, _apiKey, _claves, _soloChat, _servicio, ct,
                 onInicioScript: () => OnInicioScript?.Invoke(FaseAgente.Constructor),
                 onSalidaScript: linea =>
                 {
-                    sbStdout.AppendLine(linea);
                     OnLineaScript?.Invoke(FaseAgente.Constructor, linea);
                 },
-                ctxExistente: ctx); // Reusar contexto
-            return (codigo, sbStdout.ToString().Trim());
+                ctxExistente: ctx,
+                workspaceEjecucion: workspaceEjecucion); // Reusar contexto
+            return resultado;
         }
 
         // ════════════════════════════════════════════════════════════════════
         //  FASE 3 — GUARDIÁN (autocorrección)
         //
         //  Loop hasta _maxIntentosGuardian:
-        //    1. Lee respuesta.txt
+        //    1. Recibe la salida capturada del Constructor
         //    2. Pregunta al LLM: ¿se cumplió la instrucción?
         //    3. Si no → obtiene instrucción correctora → llama al Constructor
         //    4. Si sí (o max intentos) → pasa al Comunicador
         // ════════════════════════════════════════════════════════════════════
 
         private async Task<string> FaseGuardianAsync(
-            string instruccion, string codigoGenerado, AgentContext ctxConstructor, CancellationToken ct)
+            string instruccion,
+            string codigoGenerado,
+            string resultadoActual,
+            AgentContext ctxConstructor,
+            string workspaceEjecucion,
+            CancellationToken ct)
         {
             // Normalizar JSON para que el Guardián evalúe datos, no formato
-            string resultado = NormalizarSalidaJSON(LeerRespuestaTxt());
+            string resultado = NormalizarSalidaJSON(resultadoActual);
 
             for (int intento = 1; intento <= _maxIntentosGuardian; intento++)
             {
@@ -547,7 +555,7 @@ namespace OPENGIOAI.Agentes
                     promptGuardian, ctxGuardian, ct);
 
                 var (seguir, nuevoResultado) = await ProcesarVerificacionGuardianAsync(
-                    rawVerificacion, instruccion, intento, resultado, ctxConstructor, ct);
+                    rawVerificacion, instruccion, intento, resultado, ctxConstructor, workspaceEjecucion, ct);
 
                 if (nuevoResultado != null) resultado = nuevoResultado;
                 if (!seguir) break;
@@ -561,12 +569,13 @@ namespace OPENGIOAI.Agentes
         /// Devuelve (seguir, nuevoResultado):
         ///   seguir=true  → hay corrección que aplicar, continuar el bucle
         ///   seguir=false → detener (éxito o sin corrección disponible)
-        ///   nuevoResultado = nuevo texto de respuesta.txt (null si no cambió)
+        ///   nuevoResultado = nueva salida capturada (null si no cambió)
         /// </summary>
         private async Task<(bool seguir, string? nuevoResultado)> ProcesarVerificacionGuardianAsync(
             string rawJson, string instruccion,
             int intentoActual, string resultadoActual,
             AgentContext ctxConstructor,
+            string workspaceEjecucion,
             CancellationToken ct)
         {
             try
@@ -585,35 +594,23 @@ namespace OPENGIOAI.Agentes
                     $"Encontré algo que mejorar: {razon}\nHaciendo una corrección automática... ({intentoActual}/{_maxIntentosGuardian})");
 
                 // Aplicar corrección — usa el Constructor con la instrucción correctora
-                var sbStdoutCorrector = new StringBuilder();
-                await AIModelConector.EjecutarInstruccionIAAsync(
+                var ejecucionCorrectora = await AIModelConector.EjecutarInstruccionIAConResultadoAsync(
                     instruccionCorrectora,
                     _modelo, _ruta, _apiKey, _claves, _soloChat, _servicio, ct,
                     onInicioScript: () => OnInicioScript?.Invoke(FaseAgente.Guardian),
                     onSalidaScript: linea =>
                     {
-                        sbStdoutCorrector.AppendLine(linea);
                         OnLineaScript?.Invoke(FaseAgente.Guardian, linea);
                     },
-                    ctxExistente: ctxConstructor); // Reusar contexto del orquestador
+                    ctxExistente: ctxConstructor,
+                    workspaceEjecucion: workspaceEjecucion); // Reusar contexto del orquestador
 
-                // Nuevo resultado: preferir respuesta.txt; fallback a stdout si está vacío
-                string nuevoResultado = NormalizarSalidaJSON(LeerRespuestaTxt());
+                // Nuevo resultado: preferir salida capturada por el runner; respuesta.txt
+                // queda como compatibilidad externa, no como bus del orquestador.
+                string nuevoResultado = NormalizarSalidaJSON(ejecucionCorrectora.SalidaPreferida);
                 if (string.IsNullOrWhiteSpace(nuevoResultado))
                 {
-                    string stdoutCorrector = sbStdoutCorrector.ToString().Trim();
-                    if (!string.IsNullOrWhiteSpace(stdoutCorrector))
-                    {
-                        nuevoResultado = NormalizarSalidaJSON(stdoutCorrector);
-                        try
-                        {
-                            await File.WriteAllTextAsync(
-                                Path.Combine(_ruta, "respuesta.txt"),
-                                stdoutCorrector,
-                                System.Text.Encoding.UTF8);
-                        }
-                        catch { }
-                    }
+                    nuevoResultado = NormalizarSalidaJSON(ejecucionCorrectora.SalidaTecnica);
                 }
                 return (true, nuevoResultado);
             }
@@ -663,10 +660,10 @@ RESULTADO OBTENIDO:
                 },
                 ct);
 
-            // Fallback: si el streaming falló o no produjo nada, leer respuesta.txt
+            // Fallback: si el streaming falló o no produjo nada, devolver el resultado capturado.
             if (sb.Length == 0)
             {
-                string fallback = LeerRespuestaTxt();
+                string fallback = resultado;
                 if (!string.IsNullOrWhiteSpace(fallback))
                     OnToken?.Invoke(FaseAgente.Comunicador, fallback);
                 return fallback;
@@ -708,15 +705,12 @@ RESULTADO OBTENIDO:
             return raw[inicio..(fin + 1)];
         }
 
-        private string LeerRespuestaTxt()
+        private string CrearWorkspaceEjecucion(AgentRunContext run)
         {
-            try
-            {
-                string path = Path.Combine(_ruta, "respuesta.txt");
-                if (!File.Exists(path)) return "";
-                return Utils.LimpiarRespuesta(Utils.LeerArchivoTxt(path));
-            }
-            catch { return ""; }
+            string runsRoot = Path.Combine(_ruta, "Runs");
+            string workspace = Path.Combine(runsRoot, run.RunId);
+            Directory.CreateDirectory(workspace);
+            return workspace;
         }
 
         private static string TruncarCodigo(string codigo, int maxLineas)
