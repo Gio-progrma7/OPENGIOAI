@@ -63,6 +63,11 @@ namespace OPENGIOAI.Themas
         private bool  _arrastrando = false;
         private Point _offsetArrastre;
 
+        // ── Animación Glow ────────────────────────────────────────────────────
+        private System.Windows.Forms.Timer? _glowTimer;
+        private int _glowAlpha = 50;
+        private bool _glowIncreasing = true;
+
         // ── Puntos de conexión (centro izquierda y centro derecha) ────────────
         public Point PuntoEntrada  => new Point(0,           Height / 2);
         public Point PuntoSalida   => new Point(Width,       Height / 2);
@@ -76,7 +81,6 @@ namespace OPENGIOAI.Themas
         public event EventHandler<NodoVisualControl>? NodoEliminado;
         public event EventHandler<NodoVisualControl>? IniciarConexion;
 
-        // ── Constructor ───────────────────────────────────────────────────────
         public NodoVisualControl(NodoAutomatizacion datos)
         {
             Datos        = datos;
@@ -85,8 +89,29 @@ namespace OPENGIOAI.Themas
             DoubleBuffered = true;
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.OptimizedDoubleBuffer |
-                     ControlStyles.ResizeRedraw, true);
+                     ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent; // Para Glassmorphism
             Cursor = Cursors.SizeAll;
+
+            _glowTimer = new System.Windows.Forms.Timer { Interval = 50 };
+            _glowTimer.Tick += (s, e) =>
+            {
+                if (_glowIncreasing)
+                {
+                    _glowAlpha += 15;
+                    if (_glowAlpha >= 180) { _glowAlpha = 180; _glowIncreasing = false; }
+                }
+                else
+                {
+                    _glowAlpha -= 15;
+                    if (_glowAlpha <= 40) { _glowAlpha = 40; _glowIncreasing = true; }
+                }
+                if (Datos.Estado == EstadoNodo.Ejecutando)
+                {
+                    Invalidate(false);
+                }
+            };
+            _glowTimer.Start();
         }
 
         // ── Fuentes cacheadas ─────────────────────────────────────────────────
@@ -116,8 +141,8 @@ namespace OPENGIOAI.Themas
                 _cachedPath = RoundedRect(rc, 10);
             }
 
-            // Fondo
-            Color bgColor = Datos.Estado switch
+            // Fondo Glassmorphism
+            Color baseBgColor = Datos.Estado switch
             {
                 EstadoNodo.Ejecutando => ColorTranslator.FromHtml("#0f2a1c"),
                 EstadoNodo.Completado => ColorTranslator.FromHtml("#0a1f15"),
@@ -125,7 +150,10 @@ namespace OPENGIOAI.Themas
                 _                     => _hovered ? BgCardHov : BgCard
             };
             
-            using (var bgBrush = new SolidBrush(bgColor))
+            // Efecto Glass: Color base con alpha
+            Color glassBgColor = Color.FromArgb(200, baseBgColor.R, baseBgColor.G, baseBgColor.B);
+            
+            using (var bgBrush = new SolidBrush(glassBgColor))
             {
                 g.FillPath(bgBrush, _cachedPath);
             }
@@ -144,15 +172,23 @@ namespace OPENGIOAI.Themas
                 g.FillRectangle(franjaBrush, 0, 0, Width - 1, 5);
             }
 
-            // Borde
+            // Borde y efecto Glow LED
             float borderW = (_seleccionado || Datos.Estado == EstadoNodo.Ejecutando) ? 2.5f : 1.5f;
             Color borderColor = Datos.Estado switch
             {
                 EstadoNodo.Ejecutando => ColorTranslator.FromHtml("#94E6EC"),
                 EstadoNodo.Completado => ColorTranslator.FromHtml("#3660C9"),
                 EstadoNodo.Error      => ColorTranslator.FromHtml("#f87171"),
-                _                     => _seleccionado ? tipoColor : Color.FromArgb(50, tipoColor)
+                _                     => _seleccionado ? tipoColor : Color.FromArgb(80, tipoColor)
             };
+
+            if (Datos.Estado == EstadoNodo.Ejecutando)
+            {
+                // Dibujar Glow exterior
+                using var glowPen = new Pen(Color.FromArgb(_glowAlpha, borderColor), borderW + 4f);
+                g.DrawPath(glowPen, _cachedPath);
+            }
+
             using (var borderPen = new Pen(borderColor, borderW))
             {
                 g.DrawPath(borderPen, _cachedPath);
@@ -221,6 +257,8 @@ namespace OPENGIOAI.Themas
         {
             if (disposing)
             {
+                _glowTimer?.Stop();
+                _glowTimer?.Dispose();
                 _cachedPath?.Dispose();
             }
             base.Dispose(disposing);

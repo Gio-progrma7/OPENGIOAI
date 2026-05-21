@@ -67,13 +67,14 @@ namespace OPENGIOAI.Vistas
         private Panel               pnlCanvasWrapper = null!;  // wrapper scrollable del canvas
         private FlowLayoutPanel     flpLista     = null!;
         private CanvasAutomatizacion canvas      = null!;
+        private MinimapControl      minimap      = null!;
         private Label               lblZoom      = null!;
         private RichTextBox         rtbLog       = null!;
         private RichTextBox txtNLInput  = null!;
         private Label       lblNLHint   = null!;
         private Button   btnCrearIA    = null!, btnNueva = null!, btnGuardar = null!;
         private Button   btnEjecutar   = null!, btnDetener = null!, btnAddNodo = null!, btnToggleLog = null!;
-        private Button   btnEliminarAuto = null!;
+        private Button   btnEliminarAuto = null!, btnAutoLayout = null!;
         private Button   btnValidar = null!;
         private Label    lblTituloAuto = null!, lblInfoConfig = null!, lblEstadoIA = null!;
         // Editor
@@ -175,60 +176,70 @@ namespace OPENGIOAI.Vistas
                 Font = new Font("Segoe UI", 7.5f), AutoSize = true, Location = new Point(18, 35)
             };
 
-            btnNueva       = Btn("+ Nueva",      Emerald,   96);
-            btnGuardar     = Btn("💾 Guardar",   Emerald9,  96);
-            btnAddNodo     = Btn("＋ Nodo",      BgCard,    90);
-            btnEjecutar    = Btn("▶ Ejecutar",   Emerald,   100);
-            btnDetener     = Btn("■ Detener",    ErrorColor,96);
-            btnValidar     = Btn("✓ Validar",    Emerald9,  90);
-            btnEliminarAuto= Btn("🗑 Eliminar",  ErrorColor,100);
-            btnToggleLog   = Btn("📋 Log",       BgCard,    76);
+            // Botones rediseñados y con anchos optimizados
+            btnNueva        = Btn("+ Nueva",      Emerald,   85);
+            btnGuardar      = Btn("💾 Guardar",   Emerald9,  90);
+            btnEliminarAuto = Btn("🗑 Eliminar",  ErrorColor,90);
+
+            btnAddNodo      = Btn("＋ Nodo",      BgCard,    80);
+            btnAutoLayout   = Btn("✨ Layout",    BgCard,    85);
+            btnValidar      = Btn("✓ Validar",    Emerald9,  85);
+
+            btnEjecutar     = Btn("▶ Ejecutar",   Emerald,   95);
+            btnDetener      = Btn("■ Detener",    ErrorColor,90);
             btnDetener.Enabled = false;
 
-            // Controles de zoom (se conectan al canvas después de que este se crea)
-            lblZoom = new Label
-            {
-                Text = "100%", ForeColor = TextMuted, Font = new Font("Segoe UI", 8f),
-                AutoSize = false, Width = 42, TextAlign = ContentAlignment.MiddleCenter,
-                Margin = new Padding(8, 4, 0, 0)
-            };
-            var btnZoomOut = new Button
-            {
-                Text = "−", Size = new Size(26, 26), FlatStyle = FlatStyle.Flat,
-                BackColor = BgCard, ForeColor = TextMuted, Font = new Font("Segoe UI", 12f),
-                Cursor = Cursors.Hand, Margin = new Padding(2, 4, 0, 0)
-            };
-            btnZoomOut.FlatAppearance.BorderSize = 0;
-            var btnZoomIn = new Button
-            {
-                Text = "+", Size = new Size(26, 26), FlatStyle = FlatStyle.Flat,
-                BackColor = BgCard, ForeColor = TextMuted, Font = new Font("Segoe UI", 12f),
-                Cursor = Cursors.Hand, Margin = new Padding(2, 4, 0, 0)
-            };
-            btnZoomIn.FlatAppearance.BorderSize = 0;
-            btnZoomOut.Click += (_, _) => { canvas.ZoomOut(); lblZoom.Text = $"{(int)(canvas.Zoom * 100)}%"; };
-            btnZoomIn.Click  += (_, _) => { canvas.ZoomIn();  lblZoom.Text = $"{(int)(canvas.Zoom * 100)}%"; };
+            btnToggleLog    = Btn("📋 Log",       BgCard,    75);
 
+            // Contenedor de flujo para botones con espaciado y divisores lógicos
             var fp = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false, BackColor = Color.Transparent, Padding = new Padding(0, 12, 4, 0)
+                WrapContents = false, BackColor = Color.Transparent, Padding = new Padding(10, 12, 10, 0)
             };
-            fp.Controls.AddRange(new Control[]
-                { btnNueva, btnGuardar, btnAddNodo, btnEjecutar, btnDetener, btnValidar,
-                  btnEliminarAuto, btnToggleLog,
-                  btnZoomOut, lblZoom, btnZoomIn });
+
+            Func<Panel> crearDivisor = () => new Panel
+            {
+                Size = new Size(1, 22),
+                BackColor = Color.FromArgb(35, 255, 255, 255),
+                Margin = new Padding(10, 6, 10, 6)
+            };
+
+            // Grupo Gestión
+            fp.Controls.Add(btnNueva);
+            fp.Controls.Add(btnGuardar);
+            fp.Controls.Add(btnEliminarAuto);
+            
+            // Divisor
+            fp.Controls.Add(crearDivisor());
+
+            // Grupo Flujo
+            fp.Controls.Add(btnAddNodo);
+            fp.Controls.Add(btnAutoLayout);
+            fp.Controls.Add(btnValidar);
+
+            // Divisor
+            fp.Controls.Add(crearDivisor());
+
+            // Grupo Ejecución
+            fp.Controls.Add(btnEjecutar);
+            fp.Controls.Add(btnDetener);
+
+            // Panel derecho del toolbar para el botón de Log (siempre visible)
+            var pnlRightTools = new Panel { Dock = DockStyle.Right, Width = 95, BackColor = Color.Transparent };
+            btnToggleLog.Location = new Point(10, 12);
+            pnlRightTools.Controls.Add(btnToggleLog);
 
             // Panel izquierdo del toolbar: contiene título e info sin solaparse con los botones
-            var pnlTitleBar = new Panel { Dock = DockStyle.Left, Width = 250, BackColor = Color.Transparent };
+            var pnlTitleBar = new Panel { Dock = DockStyle.Left, Width = 230, BackColor = Color.Transparent };
             lblTituloAuto.Location = new Point(14, 9);
-            lblTituloAuto.Width    = 234;
+            lblTituloAuto.Width    = 214;
             lblInfoConfig.Location = new Point(16, 34);
             pnlTitleBar.Controls.Add(lblTituloAuto);
             pnlTitleBar.Controls.Add(lblInfoConfig);
 
-            // fp (Fill) debe tener index menor que pnlTitleBar (Left) para que el dock sea correcto
-            pnlToolbar.Controls.AddRange(new Control[] { fp, pnlTitleBar });
+            // Ensamblar la toolbar (Fill debe ser el primero, seguido por Left/Right)
+            pnlToolbar.Controls.AddRange(new Control[] { fp, pnlRightTools, pnlTitleBar });
 
             // ── Panel izquierdo ───────────────────────────────────────────────
             pnlIzquierdo = new Panel { Dock = DockStyle.Left, Width = 265, BackColor = BgSurface };
@@ -265,6 +276,78 @@ namespace OPENGIOAI.Vistas
                 BackColor = ColorTranslator.FromHtml("#080f1a")
             };
             pnlCanvasWrapper.Controls.Add(canvas);
+
+            // Contenedor de Zoom Flotante sobre el lienzo (esquina superior izquierda)
+            var pnlZoom = new Panel
+            {
+                Size = new Size(116, 32),
+                BackColor = Color.FromArgb(200, 10, 15, 24),
+                Cursor = Cursors.Default,
+                Name = "pnlZoomFlotante"
+            };
+            pnlZoom.Paint += (s, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var path = RR(new Rectangle(0, 0, pnlZoom.Width - 1, pnlZoom.Height - 1), 6);
+                using var br = new SolidBrush(pnlZoom.BackColor);
+                using var pen = new Pen(Color.FromArgb(50, 52, 211, 153), 1f); // Borde esmeralda suave
+                e.Graphics.FillPath(br, path);
+                e.Graphics.DrawPath(pen, path);
+            };
+
+            lblZoom = new Label
+            {
+                Text = "100%", ForeColor = Emerald4, Font = new Font("Segoe UI Semibold", 8.5f),
+                AutoSize = false, Size = new Size(50, 22), Location = new Point(33, 5),
+                TextAlign = ContentAlignment.MiddleCenter, BackColor = Color.Transparent
+            };
+
+            var btnZoomOut = new Button
+            {
+                Text = "−", Size = new Size(22, 22), Location = new Point(5, 5), FlatStyle = FlatStyle.Flat,
+                BackColor = Color.Transparent, ForeColor = TextSub, Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btnZoomOut.FlatAppearance.BorderSize = 0;
+            btnZoomOut.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, 255, 255, 255);
+            btnZoomOut.Click += (_, _) => { canvas.ZoomOut(); lblZoom.Text = $"{(int)(canvas.Zoom * 100)}%"; };
+
+            var btnZoomIn = new Button
+            {
+                Text = "+", Size = new Size(22, 22), Location = new Point(89, 5), FlatStyle = FlatStyle.Flat,
+                BackColor = Color.Transparent, ForeColor = TextSub, Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btnZoomIn.FlatAppearance.BorderSize = 0;
+            btnZoomIn.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, 255, 255, 255);
+            btnZoomIn.Click += (_, _) => { canvas.ZoomIn(); lblZoom.Text = $"{(int)(canvas.Zoom * 100)}%"; };
+
+            pnlZoom.Controls.AddRange(new Control[] { btnZoomOut, lblZoom, btnZoomIn });
+
+            // Reposicionador dinámico para pnlZoom en pnlCanvasWrapper
+            Action reposicionarZoom = () =>
+            {
+                if (pnlCanvasWrapper == null || pnlZoom.IsDisposed) return;
+                int zx = 20 - pnlCanvasWrapper.AutoScrollPosition.X;
+                int zy = 20 - pnlCanvasWrapper.AutoScrollPosition.Y;
+                if (pnlZoom.Location.X != zx || pnlZoom.Location.Y != zy)
+                {
+                    pnlZoom.Location = new Point(zx, zy);
+                }
+            };
+
+            pnlCanvasWrapper.Scroll += (s, e) => reposicionarZoom();
+            pnlCanvasWrapper.Resize += (s, e) => reposicionarZoom();
+
+            pnlCanvasWrapper.Controls.Add(pnlZoom);
+            pnlZoom.BringToFront();
+            reposicionarZoom();
+
+            // Minimap flotante
+            minimap = new MinimapControl(pnlCanvasWrapper, canvas);
+            pnlCanvasWrapper.Controls.Add(minimap);
+            minimap.BringToFront();
+            minimap.Reposicionar();
 
             // Log
             pnlLog = new Panel { Dock = DockStyle.Bottom, Height = 180, BackColor = ColorTranslator.FromHtml("#030810"), Visible = false };
@@ -401,7 +484,7 @@ namespace OPENGIOAI.Vistas
                 Text      = "✨",
                 Size      = new Size(40, 38),
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Emerald, ForeColor = Color.White,
+                BackColor = Color.FromArgb(16, 185, 129), ForeColor = Color.FromArgb(8, 8, 12),
                 Font      = new Font("Segoe UI Emoji", 14f),
                 Cursor    = Cursors.Hand,
                 Location  = new Point(0, 0)   // se posiciona en el Resize
@@ -522,10 +605,15 @@ namespace OPENGIOAI.Vistas
             pnlDerecho.Controls.AddRange(new Control[] { pnlCanvasWrapper, pnlEditor, pnlLog, pnlErrorFix, pnlCredenciales, pnlBarraIA });
             Controls.AddRange(new Control[] { pnlDerecho, pnlIzquierdo, pnlToolbar });
 
+            // Asegurar Z-Order correcto para redimensionamiento fluido sin solapamientos
+            flpLista.BringToFront();
+            pnlCanvasWrapper.BringToFront();
+
             // Eventos
             btnNueva.Click       += (_, _) => CrearNuevaAuto();
             btnGuardar.Click     += (_, _) => Guardar();
             btnAddNodo.Click     += (_, _) => AgregarNodoManual();
+            btnAutoLayout.Click  += (_, _) => { canvas.AutoLayout(); Guardar(); };
             btnEjecutar.Click    += async (_, _) => await EjecutarAutomatizacionCompleta();
             btnDetener.Click     += (_, _) => { _cts?.Cancel(); EstadoIA("Cancelado.", WarnColor); };
             btnValidar.Click     += (_, _) => ValidarGrafoActual();
@@ -619,30 +707,45 @@ namespace OPENGIOAI.Vistas
 
             // Conexiones
             lblConexiones = new Label { Text = "🔗 Conectar a (salidas)", ForeColor = TextMuted, Font = new Font("Segoe UI", 7.5f, FontStyle.Bold), Size = new Size(fw, 18) };
+            
+            // Panel contenedor para dar borde a chkConexiones
+            var pnlWrapperConexiones = new Panel
+            {
+                Size = new Size(fw, 67),
+                BackColor = Color.Transparent,
+                Padding = new Padding(1)
+            };
+            pnlWrapperConexiones.Paint += (s, e) =>
+            {
+                using var pen = new Pen(Color.FromArgb(40, 255, 255, 255), 1f);
+                e.Graphics.DrawRectangle(pen, 0, 0, pnlWrapperConexiones.Width - 1, pnlWrapperConexiones.Height - 1);
+            };
+
             chkConexiones = new CheckedListBox
             {
-                BackColor = BgCard, ForeColor = TextMain, Size = new Size(fw, 65),
+                BackColor = BgCard, ForeColor = TextMain, Dock = DockStyle.Fill,
                 Font = new Font("Segoe UI", 8f), BorderStyle = BorderStyle.None, CheckOnClick = true
             };
             chkConexiones.ItemCheck += (_, _) => BeginInvoke(() => AplicarConexionesDesdeEditor());
+            pnlWrapperConexiones.Controls.Add(chkConexiones);
 
             btnGenScript = new Button
             {
-                Text = "⚡ Generar Script", Size = new Size(fw, 34),
-                BackColor = Emerald, ForeColor = Color.Black, FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI Semibold", 9f), Cursor = Cursors.Hand
+                Text = "⚡ Generar Script con IA", Size = new Size(fw, 34),
+                BackColor = Color.FromArgb(16, 185, 129), ForeColor = Color.FromArgb(8, 8, 12), FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Semibold", 9.25f), Cursor = Cursors.Hand
             };
             btnGenScript.FlatAppearance.BorderSize = 0;
             btnGenScript.Click += async (_, _) => await GenerarScriptNodo();
 
             btnProbarNodo = new Button
             {
-                Text = "🧪 Probar nodo (dry-run)", Size = new Size(fw, 30),
-                BackColor = BgCard, ForeColor = Emerald4, FlatStyle = FlatStyle.Flat,
+                Text = "🧪 Probar nodo (dry-run)", Size = new Size(fw, 32),
+                BackColor = Color.FromArgb(20, 16, 185, 129), ForeColor = Color.FromArgb(148, 230, 236), FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI Semibold", 9f), Cursor = Cursors.Hand
             };
             btnProbarNodo.FlatAppearance.BorderSize  = 1;
-            btnProbarNodo.FlatAppearance.BorderColor = Emerald9;
+            btnProbarNodo.FlatAppearance.BorderColor = Color.FromArgb(80, 16, 185, 129);
             btnProbarNodo.Click += async (_, _) => await ProbarNodoIndividual();
 
             lblScriptStatus = new Label { Text = "", ForeColor = TextMuted, Font = new Font("Segoe UI", 7.5f), Size = new Size(fw, 16) };
@@ -651,21 +754,21 @@ namespace OPENGIOAI.Vistas
             var btnSaveN = new Button
             {
                 Text = "💾 Guardar nodo", Size = new Size(fw, 34),
-                BackColor = BgCard, ForeColor = Emerald4, FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(20, 16, 185, 129), ForeColor = Color.FromArgb(148, 230, 236), FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI Semibold", 9f), Cursor = Cursors.Hand
             };
-            btnSaveN.FlatAppearance.BorderSize = 1; btnSaveN.FlatAppearance.BorderColor = Emerald9;
+            btnSaveN.FlatAppearance.BorderSize = 1; btnSaveN.FlatAppearance.BorderColor = Color.FromArgb(80, 16, 185, 129);
             btnSaveN.Click += (_, _) => GuardarNodo();
 
             // ── Botón eliminar nodo ──
             var btnElimNodo = new Button
             {
                 Text = "🗑 Eliminar nodo", Size = new Size(fw, 30),
-                BackColor = Color.Transparent, ForeColor = ErrorColor, FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 8.5f), Cursor = Cursors.Hand
+                BackColor = Color.FromArgb(20, 239, 68, 68), ForeColor = Color.FromArgb(252, 129, 129), FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI Semibold", 8.5f), Cursor = Cursors.Hand
             };
             btnElimNodo.FlatAppearance.BorderSize = 1;
-            btnElimNodo.FlatAppearance.BorderColor = Color.FromArgb(60, 248, 113, 113);
+            btnElimNodo.FlatAppearance.BorderColor = Color.FromArgb(80, 239, 68, 68);
             btnElimNodo.Click += (_, _) => EliminarNodoDesdeEditor();
 
             // Agregar en orden visual (de arriba a abajo)
@@ -676,7 +779,7 @@ namespace OPENGIOAI.Vistas
                 L("Título"), edtTitulo,
                 L("Descripción"), edtDescripcion,
                 L("Instrucción NL"), edtInstruccion,
-                lblConexiones, chkConexiones,
+                lblConexiones, pnlWrapperConexiones,
                 btnGenScript, btnProbarNodo, lblScriptStatus, lblResultadoNodo,
                 btnSaveN, btnElimNodo
             });
@@ -1124,11 +1227,19 @@ namespace OPENGIOAI.Vistas
             };
             pnlSchedule.Paint += PintarBordeSup;
 
+            // FlowLayoutPanel vertical que contiene las partes
+            var flpScheduleLayout = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+                WrapContents = false, BackColor = Color.Transparent, Padding = new Padding(0),
+                AutoScroll = false, Name = "flpScheduleLayout"
+            };
+
             // ── 1. Cabecera ──────────────────────────────────────────────────
             var pnlHdr = new Panel
             {
-                Dock = DockStyle.Top, Height = 30,
-                BackColor = ColorTranslator.FromHtml("#08180f")
+                Height = 30, BackColor = ColorTranslator.FromHtml("#08180f"),
+                Name = "pnlHdr"
             };
             pnlHdr.Paint += PintarBordeInf;
             pnlHdr.Controls.Add(new Label
@@ -1143,8 +1254,8 @@ namespace OPENGIOAI.Vistas
             // ── 2. Indicador de estado en tiempo real ────────────────────────
             var pnlEstado = new Panel
             {
-                Dock = DockStyle.Top, Height = 26,
-                BackColor = ColorTranslator.FromHtml("#090909")
+                Height = 26, BackColor = ColorTranslator.FromHtml("#090909"),
+                Name = "pnlEstado"
             };
             lblEstadoEjecucion = new Label
             {
@@ -1158,8 +1269,8 @@ namespace OPENGIOAI.Vistas
             // ── 3. Tarjetas de tipo — TableLayoutPanel distribuye el ancho ───
             var pnlTipos = new Panel
             {
-                Dock = DockStyle.Top, Height = 60,
-                BackColor = Color.Transparent, Padding = new Padding(8, 6, 8, 4)
+                Height = 60, BackColor = Color.Transparent, Padding = new Padding(8, 6, 8, 4),
+                Name = "pnlTipos"
             };
 
             string[] tiposTexto = { "Manual", "Diaria", "Intervalo", "Única", "Siempre" };
@@ -1197,8 +1308,8 @@ namespace OPENGIOAI.Vistas
             // ── 4. Zona dinámica de configuración (absoluta, 245px útiles) ───
             pnlConfigTipo = new Panel
             {
-                Dock = DockStyle.Top, Height = 100,
-                BackColor = Color.Transparent
+                Height = 100, BackColor = Color.Transparent,
+                Name = "pnlConfigTipo"
             };
 
             // Controles para DIARIA / ÚNICA (hora grande)
@@ -1293,8 +1404,7 @@ namespace OPENGIOAI.Vistas
             // ── 5. Días de la semana — FlowLayoutPanel ────────────────────────
             var pnlDias = new Panel
             {
-                Dock = DockStyle.Top, Height = 46,
-                BackColor = Color.Transparent, Padding = new Padding(8, 4, 8, 0),
+                Height = 46, BackColor = Color.Transparent, Padding = new Padding(8, 4, 8, 0),
                 Name = "pnlDias"
             };
             var lblDiasTit = new Label
@@ -1315,7 +1425,7 @@ namespace OPENGIOAI.Vistas
                 {
                     Text = nombresDia[d], Size = new Size(29, 25), FlatStyle = FlatStyle.Flat,
                     Font = new Font("Segoe UI", 7.5f), Cursor = Cursors.Hand,
-                    BackColor = BgCard, ForeColor = TextMuted,
+                    BackColor = BgCard, ForeColor = Color.FromArgb(220, 220, 225),
                     Margin = new Padding(0, 0, 2, 0), Tag = false
                 };
                 bDia.FlatAppearance.BorderSize = 1;
@@ -1325,7 +1435,7 @@ namespace OPENGIOAI.Vistas
                     bool activo = !(bool)bDia.Tag!;
                     bDia.Tag      = activo;
                     bDia.BackColor = activo ? Emerald : BgCard;
-                    bDia.ForeColor = activo ? Color.Black : TextMuted;
+                    bDia.ForeColor = activo ? Color.Black : Color.FromArgb(220, 220, 225);
                     bDia.FlatAppearance.BorderColor = activo ? Emerald : Color.FromArgb(45, 255, 255, 255);
                     ActualizarPreviewSchedule();
                 };
@@ -1338,9 +1448,8 @@ namespace OPENGIOAI.Vistas
             // ── 6. Preview en vivo ────────────────────────────────────────────
             var pnlPreview = new Panel
             {
-                Dock = DockStyle.Top, Height = 58,
-                BackColor = ColorTranslator.FromHtml("#081510"),
-                Padding = new Padding(10, 6, 10, 4)
+                Height = 58, BackColor = ColorTranslator.FromHtml("#081510"),
+                Padding = new Padding(10, 6, 10, 4), Name = "pnlPreview"
             };
             lblSchedulePreview = new Label
             {
@@ -1367,8 +1476,8 @@ namespace OPENGIOAI.Vistas
             // ── 7. Botones de acción ──────────────────────────────────────────
             var pnlBots = new Panel
             {
-                Dock = DockStyle.Top, Height = 36,
-                BackColor = Color.Transparent, Padding = new Padding(8, 4, 8, 0)
+                Height = 36, BackColor = Color.Transparent, Padding = new Padding(8, 4, 8, 0),
+                Name = "pnlBots"
             };
             btnAplicarSchedule = new Button
             {
@@ -1398,14 +1507,25 @@ namespace OPENGIOAI.Vistas
             };
             pnlBots.Controls.AddRange(new Control[] { btnAplicarSchedule, btnDesactivarSched, lblScheduleStatus });
 
-            // ── Ensamblar (Dock=Top: el primero en Controls.Add queda abajo) ──
-            pnlSchedule.Controls.Add(pnlBots);
-            pnlSchedule.Controls.Add(pnlPreview);
-            pnlSchedule.Controls.Add(pnlDias);
-            pnlSchedule.Controls.Add(pnlConfigTipo);
-            pnlSchedule.Controls.Add(pnlTipos);
-            pnlSchedule.Controls.Add(pnlEstado);
-            pnlSchedule.Controls.Add(pnlHdr);
+            // Suscribir resize de flpScheduleLayout para ajustar anchos hijos dinámicamente
+            flpScheduleLayout.Resize += (s, e) =>
+            {
+                int w = flpScheduleLayout.ClientSize.Width;
+                pnlHdr.Width = w;
+                pnlEstado.Width = w;
+                pnlTipos.Width = w;
+                pnlConfigTipo.Width = w;
+                pnlDias.Width = w;
+                pnlPreview.Width = w;
+                pnlBots.Width = w;
+            };
+
+            // ── Ensamblar en el FlowLayoutPanel ──
+            flpScheduleLayout.Controls.AddRange(new Control[]
+            {
+                pnlHdr, pnlEstado, pnlTipos, pnlConfigTipo, pnlDias, pnlPreview, pnlBots
+            });
+            pnlSchedule.Controls.Add(flpScheduleLayout);
 
             // ── Eventos de cambio → actualizar preview en vivo ────────────────
             dtpHora.ValueChanged       += (_, _) => ActualizarPreviewSchedule();
@@ -1485,8 +1605,7 @@ namespace OPENGIOAI.Vistas
 
             // ── Días de la semana: solo visible si hay horario específico ────
             bool muestraDias = tipo is "diaria" or "intervalo" or "unica";
-            var pnlDiasBuscar = pnlSchedule.Controls.OfType<Panel>()
-                .FirstOrDefault(p => p.Name == "pnlDias");
+            var pnlDiasBuscar = pnlSchedule.Controls.Find("pnlDias", true).FirstOrDefault() as Panel;
             if (pnlDiasBuscar != null) pnlDiasBuscar.Visible = muestraDias;
 
             // ── Modo de ejecución en el preview ─────────────────────────────
@@ -4799,11 +4918,24 @@ Corrige el script siguiendo las instrucciones del usuario. Devuelve SOLO el cód
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 using var path = RR(new Rectangle(0, 0, card.Width - 1, card.Height - 1), 7);
-                using var pen  = new Pen(sel ? Emerald : Color.FromArgb(35, 100, 130, 160), sel ? 1.5f : 1f);
-                e.Graphics.FillPath(new SolidBrush(card.BackColor), path);
+                
+                // ── Glassmorphism Acrílico ─────────────────────────
+                Color gradStart = sel ? Color.FromArgb(40, 52, 211, 153) : Color.FromArgb(10, 52, 211, 153);
+                Color gradEnd   = sel ? Color.FromArgb(80, 0, 0, 0) : Color.FromArgb(40, 0, 0, 0);
+                using var bgBrush = new LinearGradientBrush(card.ClientRectangle, gradStart, gradEnd, LinearGradientMode.ForwardDiagonal);
+                e.Graphics.FillPath(bgBrush, path);
+
+                // Borde esmeralda ultra-tenue
+                Color borderColor = sel ? Emerald : Color.FromArgb(40, 52, 211, 153);
+                using var pen = new Pen(borderColor, sel ? 1.5f : 1f);
                 e.Graphics.DrawPath(pen, path);
-                // Franja izquierda en selección
-                if (sel) e.Graphics.FillRectangle(new SolidBrush(Emerald), 0, 10, 3, card.Height - 20);
+                
+                // Franja izquierda degradada en selección
+                if (sel) 
+                {
+                    using var stripBrush = new LinearGradientBrush(new Rectangle(0, 10, 3, card.Height - 20), Emerald, Color.Transparent, LinearGradientMode.Vertical);
+                    e.Graphics.FillRectangle(stripBrush, 0, 10, 3, card.Height - 20);
+                }
             };
 
             // ── Fila 1: Nombre ────────────────────────────────────────────────

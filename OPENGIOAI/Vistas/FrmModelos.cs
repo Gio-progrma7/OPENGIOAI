@@ -26,6 +26,8 @@ namespace OPENGIOAI.Vistas
         private bool            _cargandoControles     = false;
 
         private string _antigravityProjectId = "";
+        private TextBox? txtAntigravityProjectId;
+        private Label? lblAntigravityProjectId;
 
         // CancellationToken para el flujo OAuth (cancelable si el usuario cierra el form)
         private CancellationTokenSource? _oauthCts;
@@ -37,6 +39,7 @@ namespace OPENGIOAI.Vistas
         public FrmModelos()
         {
             InitializeComponent();
+            InicializarControlesProyectoId();
             AplicarThema();
 
             EmeraldTheme.ThemeChanged += OnTemaChanged;
@@ -46,6 +49,33 @@ namespace OPENGIOAI.Vistas
                 _oauthCts?.Cancel();
                 _oauthCts?.Dispose();
             };
+        }
+
+        private void InicializarControlesProyectoId()
+        {
+            lblAntigravityProjectId = new Label
+            {
+                Text = "PROJECT ID (GCP)",
+                Location = new Point(19, 184),
+                Size = new Size(120, 15),
+                ForeColor = Color.White,
+                BackColor = Color.Transparent,
+                Visible = false
+            };
+
+            txtAntigravityProjectId = new TextBox
+            {
+                Location = new Point(19, 201),
+                Size = new Size(171, 23),
+                BackColor = Color.FromArgb(15, 23, 42),
+                ForeColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                PlaceholderText = "my-gcp-project-123",
+                Visible = false
+            };
+
+            pnlAntigravity.Controls.Add(lblAntigravityProjectId);
+            pnlAntigravity.Controls.Add(txtAntigravityProjectId);
         }
 
         private void OnTemaChanged()
@@ -172,6 +202,8 @@ namespace OPENGIOAI.Vistas
             txtClientId.Text      = cfg.ClientId;
             txtClientSecret.Text  = cfg.ClientSecret;
             txtSvcAccountPath.Text = cfg.ServiceAccountPath;
+            if (txtAntigravityProjectId != null)
+                txtAntigravityProjectId.Text = cfg.ProjectId;
 
             // Seleccionar el modo guardado en el combo
             int idx = cfg.Modo switch
@@ -381,20 +413,24 @@ namespace OPENGIOAI.Vistas
         {
             string clientId     = txtClientId.Text.Trim();
             string clientSecret = txtClientSecret.Text.Trim();
+            string projectId    = txtAntigravityProjectId?.Text.Trim() ?? "";
 
-            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret) || string.IsNullOrWhiteSpace(projectId))
             {
                 MessageBox.Show(
-                    "Introduce el Client ID y el Client Secret de tu aplicación OAuth en Google Cloud Console.\n\n" +
+                    "Introduce el Client ID, el Client Secret y el Project ID de tu aplicación OAuth en Google Cloud Console.\n\n" +
                     "Pasos:\n" +
                     "1. Abre console.cloud.google.com → APIs & Services → Credentials\n" +
                     "2. Crea un OAuth 2.0 Client ID del tipo 'Desktop application'\n" +
-                    "3. Copia el Client ID y Client Secret aquí",
-                    "Faltan credenciales OAuth",
+                    "3. Copia el Client ID, el Client Secret y el Project ID aquí",
+                    "Faltan credenciales OAuth o Project ID",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
                 return;
             }
+
+            // Persistir Project ID antes del guardado de config
+            AntigravityOAuthService.Config.ProjectId = projectId;
 
             SetStatus(Color.FromArgb(245, 158, 11), "⬤  Abriendo browser...");
 
@@ -501,6 +537,9 @@ namespace OPENGIOAI.Vistas
             txtClientId.Visible         = esOAuth;
             lblClientSecret.Visible     = esOAuth;
             txtClientSecret.Visible     = esOAuth;
+
+            if (lblAntigravityProjectId != null) lblAntigravityProjectId.Visible = esOAuth;
+            if (txtAntigravityProjectId != null) txtAntigravityProjectId.Visible = esOAuth;
 
             lblSvcAccountPath.Visible   = esSvc;
             txtSvcAccountPath.Visible   = esSvc;
