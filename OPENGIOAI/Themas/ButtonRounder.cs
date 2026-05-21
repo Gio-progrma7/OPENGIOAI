@@ -29,7 +29,7 @@ namespace OPENGIOAI.Themas
             Color? colorHover = null,
             Color? colorClick = null,
             Color? colorTexto = null,
-            bool agregarSombra = true)
+            bool agregarSombra = false) // Sombra desactivada por defecto para mejor rendimiento
         {
             if (button == null)
                 throw new ArgumentNullException(nameof(button));
@@ -40,116 +40,36 @@ namespace OPENGIOAI.Themas
             Color click = colorClick ?? Color.FromArgb(30, 108, 155);
             Color texto = colorTexto ?? Color.White;
 
-            // Estado actual del botón
-            EstadoBoton estadoActual = EstadoBoton.Normal;
-
-            // Configurar propiedades básicas del botón
+            // Configurar propiedades básicas del botón para máxima fluidez
             button.FlatStyle = FlatStyle.Flat;
             button.FlatAppearance.BorderSize = 0;
             button.BackColor = normal;
             button.ForeColor = texto;
             button.Cursor = Cursors.Hand;
-            button.Font = new Font(button.Font.FontFamily, button.Font.Size, FontStyle.Bold);
+            button.Font = new Font("Segoe UI Semibold", button.Font.Size);
 
-            // Evento Paint para dibujar el botón redondeado
-            button.Paint += (s, e) =>
+            button.FlatAppearance.MouseOverBackColor = hover;
+            button.FlatAppearance.MouseDownBackColor = click;
+
+            // Redondeo simple usando Region (solo se ejecuta al cambiar el tamaño)
+            button.Resize += (s, e) =>
             {
-                Graphics g = e.Graphics;
-
-                // Configuración de máxima calidad
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.CompositingQuality = CompositingQuality.HighQuality;
-
-                // Determinar color según estado
-                Color colorActual = normal;
-                switch (estadoActual)
+                if (button.Width > 0 && button.Height > 0)
                 {
-                    case EstadoBoton.Hover:
-                        colorActual = hover;
-                        break;
-                    case EstadoBoton.Click:
-                        colorActual = click;
-                        break;
+                    using (GraphicsPath path = ObtenerRectanguloRedondeado(button.ClientRectangle, borderRadius))
+                    {
+                        button.Region = new Region(path);
+                    }
                 }
+            };
 
-                // Rectángulo del botón
-                Rectangle rect = new Rectangle(0, 0, button.Width - 1, button.Height - 1);
-
-                using (GraphicsPath path = ObtenerRectanguloRedondeado(rect, borderRadius))
+            if (button.Width > 0 && button.Height > 0)
+            {
+                using (GraphicsPath path = ObtenerRectanguloRedondeado(button.ClientRectangle, borderRadius))
                 {
-                    // Establecer región
                     button.Region = new Region(path);
-
-                    // Dibujar sombra si está habilitada y no está presionado
-                    if (agregarSombra && estadoActual != EstadoBoton.Click)
-                    {
-                        DibujarSombraBoton(g, path, rect);
-                    }
-
-                    // Dibujar fondo con gradiente sutil
-                    using (LinearGradientBrush brush = new LinearGradientBrush(
-                        rect,
-                        colorActual,
-                        AjustarBrillo(colorActual, estadoActual == EstadoBoton.Click ? -20 : -10),
-                        LinearGradientMode.Vertical))
-                    {
-                        g.FillPath(brush, path);
-                    }
-
-                    // Dibujar borde sutil interno (efecto de profundidad)
-                    if (estadoActual != EstadoBoton.Click)
-                    {
-                        Rectangle rectBorde = new Rectangle(1, 1, button.Width - 3, button.Height - 3);
-                        using (GraphicsPath pathBorde = ObtenerRectanguloRedondeado(rectBorde, borderRadius - 1))
-                        using (Pen penBorde = new Pen(Color.FromArgb(30, 255, 255, 255), 1))
-                        {
-                            g.DrawPath(penBorde, pathBorde);
-                        }
-                    }
                 }
-
-                // Dibujar texto centrado
-                TextRenderer.DrawText(
-                    g,
-                    button.Text,
-                    button.Font,
-                    button.ClientRectangle,
-                    button.ForeColor,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
-                );
-            };
-
-            // Eventos de interacción
-            button.MouseEnter += (s, e) =>
-            {
-                estadoActual = EstadoBoton.Hover;
-                button.Invalidate();
-            };
-
-            button.MouseLeave += (s, e) =>
-            {
-                estadoActual = EstadoBoton.Normal;
-                button.Invalidate();
-            };
-
-            button.MouseDown += (s, e) =>
-            {
-                estadoActual = EstadoBoton.Click;
-                button.Invalidate();
-            };
-
-            button.MouseUp += (s, e) =>
-            {
-                estadoActual = button.ClientRectangle.Contains(button.PointToClient(Cursor.Position))
-                    ? EstadoBoton.Hover
-                    : EstadoBoton.Normal;
-                button.Invalidate();
-            };
-
-            // Forzar primer dibujado
-            button.Invalidate();
+            }
         }
 
         #endregion
@@ -259,7 +179,7 @@ namespace OPENGIOAI.Themas
         }
 
         /// <summary>
-        /// Estilo Outline - Solo borde, fondo transparente
+        /// Estilo Outline - Simulado con propiedades nativas
         /// </summary>
         public static void AplicarEstiloOutline(
             this Button button, 
@@ -267,50 +187,27 @@ namespace OPENGIOAI.Themas
             int borderRadius = 10)
         {
             button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.BorderSize = 1;
+            button.FlatAppearance.BorderColor = colorBorde;
             button.BackColor = Color.Transparent;
             button.ForeColor = colorBorde;
             button.Cursor = Cursors.Hand;
 
-            EstadoBoton estado = EstadoBoton.Normal;
-
-            button.Paint += (s, e) =>
+            // Redondeo vía Region para evitar Paint manual
+            button.Resize += (s, e) =>
             {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                Rectangle rect = new Rectangle(1, 1, button.Width - 3, button.Height - 3);
-                using (GraphicsPath path = ObtenerRectanguloRedondeado(rect, borderRadius))
+                if (button.Width > 0 && button.Height > 0)
                 {
-                    button.Region = new Region(path);
-
-                    // Fondo al hacer hover
-                    if (estado == EstadoBoton.Hover || estado == EstadoBoton.Click)
-                    {
-                        using (SolidBrush brush = new SolidBrush(
-                            Color.FromArgb(estado == EstadoBoton.Click ? 40 : 20, colorBorde)))
-                        {
-                            g.FillPath(brush, path);
-                        }
-                    }
-
-                    // Borde
-                    using (Pen pen = new Pen(colorBorde, 2))
-                    {
-                        pen.Alignment = PenAlignment.Inset;
-                        g.DrawPath(pen, path);
-                    }
+                    using (GraphicsPath path = ObtenerRectanguloRedondeado(button.ClientRectangle, borderRadius))
+                        button.Region = new Region(path);
                 }
-
-                TextRenderer.DrawText(g, button.Text, button.Font,
-                    button.ClientRectangle, button.ForeColor,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             };
-
-            button.MouseEnter += (s, e) => { estado = EstadoBoton.Hover; button.Invalidate(); };
-            button.MouseLeave += (s, e) => { estado = EstadoBoton.Normal; button.Invalidate(); };
-            button.MouseDown += (s, e) => { estado = EstadoBoton.Click; button.Invalidate(); };
-            button.MouseUp += (s, e) => { estado = EstadoBoton.Hover; button.Invalidate(); };
+            
+            if (button.Width > 0 && button.Height > 0)
+            {
+                using (GraphicsPath path = ObtenerRectanguloRedondeado(button.ClientRectangle, borderRadius))
+                    button.Region = new Region(path);
+            }
         }
 
         /// <summary>
@@ -324,38 +221,21 @@ namespace OPENGIOAI.Themas
             button.ForeColor = colorTexto;
             button.Cursor = Cursors.Hand;
 
-            EstadoBoton estado = EstadoBoton.Normal;
-
-            button.Paint += (s, e) =>
+            // Redondeo vía Region
+            button.Resize += (s, e) =>
             {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                Rectangle rect = button.ClientRectangle;
-                using (GraphicsPath path = ObtenerRectanguloRedondeado(rect, borderRadius))
+                if (button.Width > 0 && button.Height > 0)
                 {
-                    button.Region = new Region(path);
-
-                    // Fondo sutil al hacer hover
-                    if (estado == EstadoBoton.Hover || estado == EstadoBoton.Click)
-                    {
-                        using (SolidBrush brush = new SolidBrush(
-                            Color.FromArgb(estado == EstadoBoton.Click ? 30 : 15, colorTexto)))
-                        {
-                            g.FillPath(brush, path);
-                        }
-                    }
+                    using (GraphicsPath path = ObtenerRectanguloRedondeado(button.ClientRectangle, borderRadius))
+                        button.Region = new Region(path);
                 }
-
-                TextRenderer.DrawText(g, button.Text, button.Font,
-                    button.ClientRectangle, button.ForeColor,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             };
-
-            button.MouseEnter += (s, e) => { estado = EstadoBoton.Hover; button.Invalidate(); };
-            button.MouseLeave += (s, e) => { estado = EstadoBoton.Normal; button.Invalidate(); };
-            button.MouseDown += (s, e) => { estado = EstadoBoton.Click; button.Invalidate(); };
-            button.MouseUp += (s, e) => { estado = EstadoBoton.Hover; button.Invalidate(); };
+            
+            if (button.Width > 0 && button.Height > 0)
+            {
+                using (GraphicsPath path = ObtenerRectanguloRedondeado(button.ClientRectangle, borderRadius))
+                    button.Region = new Region(path);
+            }
         }
 
         #endregion
@@ -385,26 +265,11 @@ namespace OPENGIOAI.Themas
         }
 
         /// <summary>
-        /// Dibuja sombra profesional para el botón
+        /// Dibuja sombra profesional para el botón (Eliminado por optimización)
         /// </summary>
         private static void DibujarSombraBoton(Graphics g, GraphicsPath path, Rectangle bounds)
         {
-            for (int i = 1; i <= 4; i++)
-            {
-                int opacity = 18 - (i * 3);
-                using (Pen penSombra = new Pen(Color.FromArgb(opacity, 0, 0, 0), i))
-                {
-                    using (GraphicsPath shadowPath = (GraphicsPath)path.Clone())
-                    {
-                        using (Matrix matrix = new Matrix())
-                        {
-                            matrix.Translate(0, i * 0.5f);
-                            shadowPath.Transform(matrix);
-                            g.DrawPath(penSombra, shadowPath);
-                        }
-                    }
-                }
-            }
+            // Método vacío para mantener compatibilidad pero sin costo de rendimiento
         }
 
         /// <summary>

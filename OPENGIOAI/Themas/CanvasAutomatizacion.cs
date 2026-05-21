@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
+using Timer = System.Windows.Forms.Timer;
 
 namespace OPENGIOAI.Themas
 {
@@ -24,6 +25,10 @@ namespace OPENGIOAI.Themas
         // ── Estado ────────────────────────────────────────────────────────────
         private readonly List<NodoVisualControl> _nodos = new();
         private NodoVisualControl? _nodoSeleccionado;
+
+        // ── Animación ─────────────────────────────────────────────────────────
+        private readonly System.Windows.Forms.Timer _animationTimer;
+        private float _dashOffset = 0f;
 
         // ── Zoom ──────────────────────────────────────────────────────────────
         private float _zoom = 1.0f;
@@ -46,6 +51,25 @@ namespace OPENGIOAI.Themas
             SetStyle(ControlStyles.AllPaintingInWmPaint  |
                      ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.ResizeRedraw, true);
+
+            _animationTimer = new System.Windows.Forms.Timer { Interval = 40 }; // ~25 FPS
+            _animationTimer.Tick += (s, e) =>
+            {
+                _dashOffset -= 1f; // Movimiento del flujo
+                if (_dashOffset <= -100f) _dashOffset = 0f;
+                Invalidate(false); // Redibujar sin borrar fondo
+            };
+            _animationTimer.Start();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _animationTimer?.Stop();
+                _animationTimer?.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
         // ── API pública ───────────────────────────────────────────────────────
@@ -157,18 +181,23 @@ namespace OPENGIOAI.Themas
             {
                 Point desde = _nodoOrigenConexion.PuntoSalidaAbsoluto;
                 Point hasta  = _puntoRatonConexion;
-                DibujarBezier(g, desde, hasta, Color.FromArgb(120, 16, 185, 129), dashed: true);
+                DibujarBezier(g, desde, hasta, Color.FromArgb(120, 16, 185, 129), dashed: true, animated: false, dashOffset: 0f);
             }
         }
 
         private void DibujarGrid(Graphics g)
         {
-            int paso = 28;
-            using var pen = new Pen(GridColor, 1f);
+            int paso = (int)(28 * _zoom);
+            if (paso < 10) return; // No dibujar si es muy denso
+
+            using var brush = new SolidBrush(Color.FromArgb(40, 255, 255, 255));
             for (int x = 0; x < Width; x += paso)
-                g.DrawLine(pen, x, 0, x, Height);
-            for (int y = 0; y < Height; y += paso)
-                g.DrawLine(pen, 0, y, Width, y);
+            {
+                for (int y = 0; y < Height; y += paso)
+                {
+                    g.FillRectangle(brush, x, y, 1.5f, 1.5f);
+                }
+            }
         }
 
         private void DibujarConexiones(Graphics g)
@@ -187,13 +216,14 @@ namespace OPENGIOAI.Themas
                                          _nodoSeleccionado == nodoDestino;
 
                     Color color = esSeleccionada ? ArrowColorS : ArrowColor;
-                    DibujarBezier(g, desde, hasta, color, dashed: false);
+                    // Animación tipo marching ants para conexiones establecidas
+                    DibujarBezier(g, desde, hasta, color, dashed: false, animated: true, dashOffset: _dashOffset);
                     DibujarPuntaFlecha(g, hasta, color);
                 }
             }
         }
 
-        private static void DibujarBezier(Graphics g, Point desde, Point hasta, Color color, bool dashed)
+        private static void DibujarBezier(Graphics g, Point desde, Point hasta, Color color, bool dashed, bool animated = false, float dashOffset = 0f)
         {
             int dx = Math.Abs(hasta.X - desde.X);
             int ctrl = Math.Max(60, dx / 2);
@@ -202,7 +232,17 @@ namespace OPENGIOAI.Themas
             Point c2 = new Point(hasta.X  - ctrl, hasta.Y);
 
             using var pen = new Pen(color, 2f);
-            if (dashed) pen.DashStyle = DashStyle.Dash;
+            if (dashed) 
+            {
+                pen.DashStyle = DashStyle.Dash;
+            }
+            else if (animated)
+            {
+                pen.DashStyle = DashStyle.Custom;
+                pen.DashPattern = new float[] { 5f, 5f };
+                pen.DashOffset = dashOffset;
+            }
+            
             g.DrawBezier(pen, desde, c1, c2, hasta);
         }
 
@@ -275,6 +315,126 @@ namespace OPENGIOAI.Themas
                 if (nodo != null)
                     MostrarMenuContextoNodo(nodo, e.Location);
             }
+        }
+
+        public void AutoLayout()
+        {
+            if (_nodos.Count == 0) return;
+
+            var totalNodos = _nodos.Select(n => n.Datos).ToList();
+            var enGrado = totalNodos.ToDictionary(n => n.Id, _ => 0);
+            var idsValidos = new HashSet<string>(enGrado.Keys);
+            
+            foreach (var n in totalNodos)
+            {
+                foreach (var sucId in n.ConexionesSalida)
+                {
+                    if (idsValidos.Contains(sucId))
+                        enGrado[sucId]++;
+                }
+            }
+
+            var layers = totalNodos.ToDictionary(n => n.Id, _ => 0);
+            var inDegreeCopy = enGrado.ToDictionary(kv => kv.Key, kv => kv.Value);
+            var cola = new Queue<string>(inDegreeCopy.Where(kv => kv.Value == 0).Select(kv => kv.Key));
+            
+            if (cola.Count == 0 && totalNodos.Count > 0)
+            {
+                cola.Enqueue(totalNodos.First().Id);
+            }
+
+            var visitados = new HashSet<string>();
+            var nodosPorId = totalNodos.ToDictionary(n => n.Id);
+
+            while (cola.Count > 0)
+            {
+                var currId = cola.Dequeue();
+                if (visitados.Contains(currId)) continue;
+                visitados.Add(currId);
+                
+                var currNode = nodosPorId[currId];
+                var currLayer = layers[currId];
+
+                foreach (var sucId in currNode.ConexionesSalida)
+                {
+                    if (!nodosPorId.ContainsKey(sucId)) continue;
+                    
+                    layers[sucId] = Math.Max(layers[sucId], currLayer + 1);
+                    
+                    inDegreeCopy[sucId]--;
+                    if (inDegreeCopy[sucId] <= 0)
+                    {
+                        cola.Enqueue(sucId);
+                    }
+                }
+
+                if (cola.Count == 0 && visitados.Count < totalNodos.Count)
+                {
+                    var noVisitado = inDegreeCopy.FirstOrDefault(kv => !visitados.Contains(kv.Key));
+                    if (noVisitado.Key != null)
+                    {
+                        cola.Enqueue(noVisitado.Key);
+                    }
+                }
+            }
+
+            // Agrupar por capa
+            var capas = new Dictionary<int, List<NodoAutomatizacion>>();
+            foreach (var n in totalNodos)
+            {
+                int l = layers[n.Id];
+                if (!capas.ContainsKey(l)) capas[l] = new List<NodoAutomatizacion>();
+                capas[l].Add(n);
+            }
+
+            // Ordenar y espaciar
+            int horizontalSpacing = 280; // BaseWidth (200) + 80
+            int verticalSpacing = 120;   // BaseHeight (80) + 40
+            int startX = 80;
+            int centerY = 400; // Centrado en la parte superior del canvas
+
+            var keys = capas.Keys.OrderBy(k => k).ToList();
+            
+            // Mapa de predecesores para ordenar verticalmente
+            var predMap = totalNodos.ToDictionary(n => n.Id, _ => new List<string>());
+            foreach (var n in totalNodos)
+            {
+                foreach (var sucId in n.ConexionesSalida)
+                {
+                    if (predMap.ContainsKey(sucId))
+                        predMap[sucId].Add(n.Id);
+                }
+            }
+
+            foreach (int capIndex in keys)
+            {
+                var nodosEnCapa = capas[capIndex];
+                
+                // Ordenar nodos dentro de la capa por el promedio de Y de sus predecesores
+                if (capIndex > 0)
+                {
+                    nodosEnCapa = nodosEnCapa.OrderBy(n =>
+                    {
+                        var preds = predMap[n.Id];
+                        if (preds.Count == 0) return 0f;
+                        return (float)preds.Average(pId => nodosPorId[pId].CanvasY);
+                    }).ToList();
+                }
+
+                int count = nodosEnCapa.Count;
+                for (int i = 0; i < count; i++)
+                {
+                    var nodo = nodosEnCapa[i];
+                    nodo.CanvasX = startX + capIndex * horizontalSpacing;
+                    nodo.CanvasY = centerY - ((count - 1) * verticalSpacing) / 2 + i * verticalSpacing;
+                    
+                    if (nodo.CanvasY < 50) nodo.CanvasY = 50;
+                }
+            }
+
+            // Actualizar controles visuales
+            AplicarZoom(_zoom);
+            Invalidate();
         }
 
         private void MostrarMenuContextoNodo(NodoVisualControl nodo, Point pos)

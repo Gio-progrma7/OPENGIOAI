@@ -267,6 +267,9 @@ namespace OPENGIOAI.ServiciosAI
         /// <summary>Ruta al archivo JSON de Service Account de GCP.</summary>
         public string ServiceAccountPath { get; set; } = "";
 
+        /// <summary>GCP Project ID para el modo OAuth.</summary>
+        public string ProjectId { get; set; } = "";
+
         /// <summary>Modo activo: "oauth" | "service_account" | "gcloud".</summary>
         public string Modo { get; set; } = "gcloud";
     }

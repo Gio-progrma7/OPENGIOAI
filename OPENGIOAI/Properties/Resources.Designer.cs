@@ -413,6 +413,16 @@ namespace OPENGIOAI.Properties {
         /// <summary>
         ///   Busca un recurso adaptado de tipo System.Drawing.Bitmap.
         /// </summary>
+        internal static System.Drawing.Bitmap iconadav2 {
+            get {
+                object obj = ResourceManager.GetObject("iconadav2", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Busca un recurso adaptado de tipo System.Drawing.Bitmap.
+        /// </summary>
         internal static System.Drawing.Bitmap iconadds {
             get {
                 object obj = ResourceManager.GetObject("iconadds", resourceCulture);

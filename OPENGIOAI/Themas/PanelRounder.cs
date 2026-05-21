@@ -25,87 +25,51 @@ namespace OPENGIOAI.Themas
             int borderRadius = 15,
             Color? borderColor = null,
             int borderSize = 0,
-            bool agregarSombra = true)
+            bool agregarSombra = false) // Sombra desactivada por defecto
         {
             if (panel == null)
                 throw new ArgumentNullException(nameof(panel));
 
-            // Color por defecto
-            Color colorBorde = borderColor ?? Color.FromArgb(200, 200, 200);
+            // Configurar el panel para doble buffering
+            var prop = typeof(Control).GetProperty("DoubleBuffered", 
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            prop?.SetValue(panel, true, null);
 
-            // Configurar el panel para doble buffering (evita parpadeo)
-            typeof(Panel).InvokeMember("DoubleBuffered",
-                System.Reflection.BindingFlags.SetProperty |
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.NonPublic,
-                null, panel, new object[] { true });
-
-            // Variable para almacenar la región actual
-            GraphicsPath regionPath = null;
-
-            // Evento Paint para dibujar el panel redondeado
-            panel.Paint += (s, e) =>
+            // Redondeo simple usando Region
+            panel.Resize += (s, e) =>
             {
-                Graphics g = e.Graphics;
-
-                // Configuración de máxima calidad para renderizado profesional
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.CompositingQuality = CompositingQuality.HighQuality;
-
-                // Rectángulo del panel
-                Rectangle rectPanel = new Rectangle(0, 0, panel.Width - 1, panel.Height - 1);
-
-                // Crear path para la región
-                using (GraphicsPath pathRegion = ObtenerRectanguloRedondeado(rectPanel, borderRadius))
+                if (panel.Width > 0 && panel.Height > 0)
                 {
-                    // Establecer región redondeada
-                    panel.Region = new Region(pathRegion);
-
-                    // Dibujar sombra si está habilitada
-                    if (agregarSombra)
+                    using (GraphicsPath path = ObtenerRectanguloRedondeado(panel.ClientRectangle, borderRadius))
                     {
-                        DibujarSombraProfesional(g, pathRegion, panel.ClientRectangle);
-                    }
-
-                    // Dibujar fondo del panel
-                    using (SolidBrush brush = new SolidBrush(panel.BackColor))
-                    {
-                        g.FillPath(brush, pathRegion);
-                    }
-
-                    // Dibujar borde si borderSize > 0
-                    if (borderSize > 0)
-                    {
-                        Rectangle rectBorde = new Rectangle(
-                            borderSize / 2,
-                            borderSize / 2,
-                            panel.Width - borderSize - 1,
-                            panel.Height - borderSize - 1
-                        );
-
-                        using (GraphicsPath pathBorde = ObtenerRectanguloRedondeado(rectBorde, borderRadius))
-                        using (Pen pen = new Pen(colorBorde, borderSize))
-                        {
-                            pen.Alignment = PenAlignment.Inset;
-                            pen.LineJoin = LineJoin.Round;
-                            pen.StartCap = LineCap.Round;
-                            pen.EndCap = LineCap.Round;
-                            g.DrawPath(pen, pathBorde);
-                        }
+                        panel.Region = new Region(path);
                     }
                 }
             };
 
-            // Evento Resize para actualizar la región
-            panel.Resize += (s, e) =>
+            if (panel.Width > 0 && panel.Height > 0)
             {
-                panel.Invalidate();
-            };
+                using (GraphicsPath path = ObtenerRectanguloRedondeado(panel.ClientRectangle, borderRadius))
+                {
+                    panel.Region = new Region(path);
+                }
+            }
 
-            // Forzar primer dibujado
-            panel.Invalidate();
+            // Borde simple con propiedades nativas no es posible para redondeados,
+            // pero mantenemos el Paint solo si es estrictamente necesario y ligero.
+            if (borderSize > 0)
+            {
+                Color colorBorde = borderColor ?? Color.FromArgb(200, 200, 200);
+                panel.Paint += (s, e) =>
+                {
+                    e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                    using (GraphicsPath path = ObtenerRectanguloRedondeado(new Rectangle(0, 0, panel.Width - 1, panel.Height - 1), borderRadius))
+                    using (Pen pen = new Pen(colorBorde, borderSize))
+                    {
+                        e.Graphics.DrawPath(pen, path);
+                    }
+                };
+            }
         }
 
         #endregion
@@ -278,27 +242,11 @@ namespace OPENGIOAI.Themas
         }
 
         /// <summary>
-        /// Dibuja una sombra profesional alrededor del panel
+        /// Dibuja una sombra profesional (Eliminado por optimización)
         /// </summary>
         private static void DibujarSombraProfesional(Graphics g, GraphicsPath path, Rectangle bounds)
         {
-            // Sombra con múltiples capas para efecto profesional
-            for (int i = 1; i <= 5; i++)
-            {
-                int opacity = 15 - (i * 2); // Opacidad decreciente
-                using (Pen penSombra = new Pen(Color.FromArgb(opacity, 0, 0, 0), i))
-                {
-                    using (GraphicsPath shadowPath = (GraphicsPath)path.Clone())
-                    {
-                        using (Matrix matrix = new Matrix())
-                        {
-                            matrix.Translate(i * 0.5f, i * 0.5f);
-                            shadowPath.Transform(matrix);
-                            g.DrawPath(penSombra, shadowPath);
-                        }
-                    }
-                }
-            }
+            // Eliminado para maximizar fluidez
         }
 
         #endregion
@@ -387,36 +335,19 @@ namespace OPENGIOAI.Themas
         }
 
         /// <summary>
-        /// Aplica efecto de elevación (más sombra) al panel
+        /// Aplica efecto de elevación (Simplificado por optimización)
         /// </summary>
         public static void AplicarElevacion(this Panel panel, int nivel = 2)
         {
-            // nivel 1 = sombra ligera, nivel 3 = sombra profunda
+            // En una UI optimizada, la elevación se representa mejor con un borde sutil
+            // en lugar de sombras multi-capa costosas.
             panel.Paint += (s, e) =>
             {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                Rectangle bounds = panel.ClientRectangle;
-                using (GraphicsPath path = ObtenerRectanguloRedondeado(bounds, 15))
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using (GraphicsPath path = ObtenerRectanguloRedondeado(new Rectangle(0, 0, panel.Width - 1, panel.Height - 1), 15))
+                using (Pen pen = new Pen(Color.FromArgb(30, 0, 0, 0), 1))
                 {
-                    // Sombra con elevación
-                    for (int i = 1; i <= nivel * 3; i++)
-                    {
-                        int opacity = Math.Max(5, 20 - (i * 2));
-                        using (Pen penSombra = new Pen(Color.FromArgb(opacity, 0, 0, 0), i))
-                        {
-                            using (GraphicsPath shadowPath = (GraphicsPath)path.Clone())
-                            {
-                                using (Matrix matrix = new Matrix())
-                                {
-                                    matrix.Translate(i * 0.3f, i * 0.6f);
-                                    shadowPath.Transform(matrix);
-                                    g.DrawPath(penSombra, shadowPath);
-                                }
-                            }
-                        }
-                    }
+                    e.Graphics.DrawPath(pen, path);
                 }
             };
         }

@@ -3,6 +3,7 @@ using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
+using OPENGIOAI.Properties;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -227,7 +228,7 @@ namespace OPENGIOAI.Vistas
             };
             lblLogo = new Label
             {
-                Text = "#  OPENGIOAI",
+                Text = "Ada LovelaceAI",
                 Font = new Font("Segoe UI Semibold", 12f, FontStyle.Bold),
                 ForeColor = Emerald4,
                 AutoSize = false,
@@ -426,18 +427,17 @@ namespace OPENGIOAI.Vistas
                 BackColor = BgDeep
             };
 
-            var lblHi = new Label
+            var picHi = new PictureBox
             {
-                Text = "✦",
-                Font = new Font("Segoe UI Emoji", 64f),
-                ForeColor = Emerald9,
-                AutoSize = true,
-                Location = new Point(60, 60),
+                Image = Resources.iconadav2,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Size = new Size(120, 120),
+                Location = new Point(60, 45),
                 BackColor = Color.Transparent
             };
             var lblTitle = new Label
             {
-                Text = "Bienvenido a OPENGIOAI",
+                Text = "Bienvenido a Ada LovelaceAI",
                 Font = new Font("Segoe UI Semibold", 22f, FontStyle.Bold),
                 ForeColor = TextMain,
                 AutoSize = true,
@@ -454,7 +454,7 @@ namespace OPENGIOAI.Vistas
                 Location = new Point(62, 226),
                 BackColor = Color.Transparent
             };
-            pnlHome.Controls.Add(lblHi);
+            pnlHome.Controls.Add(picHi);
             pnlHome.Controls.Add(lblTitle);
             pnlHome.Controls.Add(lblSub);
 
@@ -825,7 +825,7 @@ namespace OPENGIOAI.Vistas
             _trayIcon = new NotifyIcon
             {
                 Icon = Icon ?? SystemIcons.Application,
-                Text = "OPENGIOAI",
+                Text = "Ada LovelaceAI",
                 ContextMenuStrip = menu,
                 Visible = false
             };
@@ -885,7 +885,7 @@ namespace OPENGIOAI.Vistas
             {
                 _trayIcon.Visible = true;
                 _trayIcon.ShowBalloonTip(
-                    1500, "OPENGIOAI",
+                    1500, "Ada LovelaceAI",
                     "La aplicación sigue ejecutándose en segundo plano. Tus automatizaciones programadas continuarán activas.",
                     ToolTipIcon.Info);
             }
@@ -907,7 +907,7 @@ namespace OPENGIOAI.Vistas
             if (Miconfiguracion?.PreguntarSegundoPlano == true)
             {
                 var dr = MessageBox.Show(
-                    "¿Quieres que OPENGIOAI siga ejecutándose en segundo plano cuando cierres la ventana?\n\n" +
+                    "¿Quieres que Ada LovelaceAI siga ejecutándose en segundo plano cuando cierres la ventana?\n\n" +
                     "• Sí — la app se minimiza a la bandeja del sistema y las automatizaciones programadas siguen activas.\n" +
                     "• No — la app se cierra completamente.\n\n" +
                     "Puedes cambiarlo desde el menú lateral o el icono de la bandeja.",
@@ -968,8 +968,9 @@ namespace OPENGIOAI.Vistas
             private bool _hovered;
             private bool _active;
             private bool _collapsed;
-            private float _hoverProgress; // 0..1
-            private readonly System.Windows.Forms.Timer _timer;
+
+
+            private readonly ToolTip _toolTip;
 
             public MenuItemBoton(FrmPrincipal owner, string icono, string titulo, bool esItem, Color? dangerColor = null)
             {
@@ -979,6 +980,8 @@ namespace OPENGIOAI.Vistas
                 _esItem = esItem;
                 _danger = dangerColor ?? Color.Transparent;
 
+                _toolTip = new ToolTip { InitialDelay = 500, ReshowDelay = 100, ShowAlways = true };
+
                 Width = SidebarExpanded;
                 Height = 40;
                 Margin = new Padding(0, 1, 0, 1);
@@ -987,22 +990,14 @@ namespace OPENGIOAI.Vistas
                 SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
                          ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
 
-                _timer = new System.Windows.Forms.Timer { Interval = 14 };
-                _timer.Tick += (_, __) =>
-                {
-                    float target = _hovered ? 1f : 0f;
-                    float delta = target - _hoverProgress;
-                    if (Math.Abs(delta) < 0.04f)
-                    {
-                        _hoverProgress = target;
-                        _timer.Stop();
-                    }
-                    else _hoverProgress += delta * 0.30f;
+                MouseEnter += (_, __) => 
+                { 
+                    _hovered = true; 
+                    if (_collapsed) _toolTip.SetToolTip(this, _titulo);
+                    else _toolTip.SetToolTip(this, string.Empty);
                     Invalidate();
                 };
-
-                MouseEnter += (_, __) => { _hovered = true; _timer.Start(); };
-                MouseLeave += (_, __) => { _hovered = false; _timer.Start(); };
+                MouseLeave += (_, __) => { _hovered = false; Invalidate(); };
             }
 
             public void SetActive(bool active)
@@ -1025,50 +1020,67 @@ namespace OPENGIOAI.Vistas
                 Invalidate();
             }
 
+            private static readonly Font _iconFont = new Font("Segoe UI Emoji", 12f);
+            private static readonly Font _textFont = new Font("Segoe UI Variable Display", 10f, FontStyle.Regular);
+            private static readonly StringFormat _stringFormat = new StringFormat { LineAlignment = StringAlignment.Center };
+
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                
+                // Fondo según estado
+                Color bg;
+                if (_hovered)
+                {
+                    bg = (_danger != Color.Transparent) ? Color.FromArgb(45, _danger) : BgHover;
+                }
+                else
+                {
+                    bg = _active ? BgActive : BgSurface;
+                }
 
-                // Fondo
-                Color bgBase = _active ? BgActive : BgSurface;
-                Color bgHover = _danger != Color.Transparent
-                    ? Color.FromArgb(40, _danger)
-                    : BgHover;
-                Color bg = Lerp(bgBase, bgHover, _hoverProgress);
-                using (var b = new SolidBrush(bg)) g.FillRectangle(b, 0, 0, Width, Height);
+                using (var b = new SolidBrush(bg)) 
+                    g.FillRectangle(b, ClientRectangle);
 
-                // Indicador izquierdo (barra emerald) si activo o hovered
-                float indicatorAlpha = Math.Max(_active ? 1f : 0f, _hoverProgress * 0.6f);
-                if (indicatorAlpha > 0.02f)
+                // Indicador izquierdo (barra emerald) si activo
+                if (_active || _hovered)
                 {
                     Color barCol = _danger != Color.Transparent ? _danger : Emerald;
-                    using var bar = new SolidBrush(Color.FromArgb((int)(255 * indicatorAlpha), barCol));
+                    using var bar = new SolidBrush(barCol);
                     g.FillRectangle(bar, 0, 8, 3, Height - 16);
                 }
 
-                // Icono
-                Color fg = _danger != Color.Transparent
-                    ? Lerp(_danger, Color.White, _hoverProgress * 0.2f)
-                    : (_active ? Emerald4 : Lerp(TextMuted, TextMain, _hoverProgress));
+                // Icono y Texto
+                Color fg;
+                if (_danger != Color.Transparent)
+                    fg = _hovered ? Color.White : _danger;
+                else
+                    fg = _active ? Emerald4 : (_hovered ? TextMain : TextMuted);
 
-                using var iconFont = new Font("Segoe UI Emoji", 12.5f);
-                var iconSize = g.MeasureString(_icono, iconFont);
+                // Dibujar Icono
+                var iconSize = g.MeasureString(_icono, _iconFont);
                 float iconX = _collapsed ? (Width - iconSize.Width) / 2f : 18;
                 float iconY = (Height - iconSize.Height) / 2f;
                 using (var br = new SolidBrush(fg))
-                    g.DrawString(_icono, iconFont, br, iconX, iconY);
+                    g.DrawString(_icono, _iconFont, br, iconX, iconY);
 
-                // Texto (solo si expandido)
+                // Dibujar Texto
                 if (!_collapsed)
                 {
-                    using var textFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-                    using var br = new SolidBrush(fg);
-                    var sf = new StringFormat { LineAlignment = StringAlignment.Center };
-                    g.DrawString(_titulo, textFont, br,
-                        new RectangleF(48, 0, Width - 56, Height), sf);
+                    using (var br = new SolidBrush(fg))
+                        g.DrawString(_titulo, _textFont, br,
+                            new RectangleF(48, 0, Width - 56, Height), _stringFormat);
                 }
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    //_timer?.Dispose();
+                    _toolTip?.Dispose();
+                }
+                base.Dispose(disposing);
             }
 
             private static Color Lerp(Color a, Color b, float t)

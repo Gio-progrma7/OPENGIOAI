@@ -883,22 +883,18 @@ namespace OPENGIOAI.Themas
         }
 
         // ─────────────────────────────────────────────────────────────
-        //  PINTADO
+        //  PINTADO MINIMALISTA
         // ─────────────────────────────────────────────────────────────
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
 
-            var g = e.Graphics;
-            g.SmoothingMode      = SmoothingMode.AntiAlias;
-            g.InterpolationMode  = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode    = PixelOffsetMode.HighQuality;
-            g.CompositingQuality = CompositingQuality.HighQuality;
-
             if (_rectBurbuja.Width <= 0) return;
 
-            Color bg1 = EsUsuario ? BgUsuario  : BgIA;
-            Color bg2 = EsUsuario ? BgUsuario2 : BgIA2;
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            Color bg = EsUsuario ? BgUsuario : BgIA;
 
             var rect = new Rectangle(
                 _rectBurbuja.X,
@@ -906,40 +902,33 @@ namespace OPENGIOAI.Themas
                 _rectBurbuja.Width - 1,
                 _rectBurbuja.Height - 1);
 
-            // ── Fondo con gradiente sutil ────────────────────────────
+            // ── Fondo sólido ────────────────────────────
             using (var path = CrearPathRedondeado(rect, RadioBurbuja))
-            using (var brush = new LinearGradientBrush(
-                rect, bg1, bg2,
-                EsUsuario ? LinearGradientMode.BackwardDiagonal
-                          : LinearGradientMode.ForwardDiagonal))
             {
-                g.FillPath(brush, path);
+                using (var brush = new SolidBrush(bg))
+                {
+                    g.FillPath(brush, path);
+                }
 
-                // Borde fino — esmeralda translúcido en usuario, gris en IA
-                Color colorBorde = EsUsuario
-                    ? Color.FromArgb(120, Emerald.R, Emerald.G, Emerald.B)
-                    : Color.FromArgb(180, BorderCol.R, BorderCol.G, BorderCol.B);
-
+                // Borde simple y ligero
+                Color colorBorde = EsUsuario ? Emerald : BorderCol;
                 using (var pen = new Pen(colorBorde, 1f))
+                {
                     g.DrawPath(pen, path);
+                }
             }
 
-            // ── Barra de acento lateral (sólo IA) ────────────────────
+            // ── Barra de acento (IA) ──
             if (!EsUsuario)
             {
-                var rectAcento = new Rectangle(
-                    _rectBurbuja.X, _rectBurbuja.Y + 8, 3, _rectBurbuja.Height - 16);
                 using (var b = new SolidBrush(Emerald))
-                    g.FillRectangle(b, rectAcento);
+                {
+                    g.FillRectangle(b, _rectBurbuja.X, _rectBurbuja.Y + 8, 3, _rectBurbuja.Height - 16);
+                }
             }
 
-            // ── Avatar circular con borde ────────────────────────────
-            if (ImagenPerfil != null && _avatarPanel != null)
-            {
-                DibujarAvatar(g, ImagenPerfil,
-                    _avatarPanel.Left, _avatarPanel.Top,
-                    EsUsuario ? Emerald : BorderCol);
-            }
+            // El avatar ahora lo maneja exclusivamente el _avatarPanel (PictureBox)
+            // para evitar doble dibujado y mejorar la fluidez.
         }
 
         // ─────────────────────────────────────────────────────────────

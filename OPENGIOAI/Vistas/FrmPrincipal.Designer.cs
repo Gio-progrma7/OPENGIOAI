@@ -21,11 +21,11 @@ namespace OPENGIOAI.Vistas
 
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources =
-                new System.ComponentModel.ComponentResourceManager(typeof(FrmPrincipal));
-
+            ComponentResourceManager resources = new ComponentResourceManager(typeof(FrmPrincipal));
             SuspendLayout();
-
+            // 
+            // FrmPrincipal
+            // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(5, 5, 5);
@@ -37,8 +37,7 @@ namespace OPENGIOAI.Vistas
             MinimumSize = new Size(960, 620);
             Name = "FrmPrincipal";
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "OPENGIOAI";
-
+            Text = "Ada LovelaceAI";
             ResumeLayout(false);
         }
 

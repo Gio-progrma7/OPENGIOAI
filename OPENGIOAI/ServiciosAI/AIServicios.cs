@@ -1,4 +1,4 @@
-﻿using Google.Apis.Auth.OAuth2;
+using Google.Apis.Auth.OAuth2;
 using Newtonsoft.Json.Linq;
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Utilerias;
@@ -351,7 +351,7 @@ namespace OPENGIOAI.ServiciosAI
 
             try
             {
-                string token = await ObtenerTokenGcloudAsync();
+                string token = await AntigravityOAuthService.ObtenerTokenAsync();
                 if (string.IsNullOrWhiteSpace(token))
                     return fallback;
 
@@ -417,7 +417,7 @@ namespace OPENGIOAI.ServiciosAI
             try
             {
                 // 1. Obtener token — si no hay token, el usuario no está autenticado
-                string token = await ObtenerTokenGcloudAsync();
+                string token = await AntigravityOAuthService.ObtenerTokenAsync();
                 if (string.IsNullOrWhiteSpace(token))
                     return false;
 
@@ -526,6 +526,28 @@ namespace OPENGIOAI.ServiciosAI
         /// </summary>
         internal static async Task<string> ObtenerProyectoGcloudAsync()
         {
+            // ── Opción 0A: Service Account ────────────────────────────────────────
+            if (AntigravityOAuthService.TieneServiceAccount)
+            {
+                try
+                {
+                    string path = AntigravityOAuthService.Config.ServiceAccountPath;
+                    if (File.Exists(path))
+                    {
+                        var svcJson = JObject.Parse(await File.ReadAllTextAsync(path));
+                        string? sp = svcJson["project_id"]?.ToString();
+                        if (!string.IsNullOrWhiteSpace(sp)) return sp.Trim();
+                    }
+                }
+                catch { }
+            }
+
+            // ── Opción 0B: OAuth Configured Project ID ────────────────────────────
+            if (AntigravityOAuthService.Config.Modo == "oauth" && !string.IsNullOrWhiteSpace(AntigravityOAuthService.Config.ProjectId))
+            {
+                return AntigravityOAuthService.Config.ProjectId.Trim();
+            }
+
             // ── Opción 1: Variables de entorno ────────────────────────────────────
             foreach (string var in new[] { "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT" })
             {

@@ -22,6 +22,18 @@ namespace OPENGIOAI.Vistas
         private DataGridView gridKeys = null!;
         private Button btnNuevaLlave = null!;
 
+        // Nuevos componentes de UI limpia y responsiva
+        private Panel pnlHeader = null!;
+        private FlowLayoutPanel pnlAcciones = null!;
+        private Button btnToggleDoc = null!;
+        private Label lblKeysTitulo = null!;
+        private Label lblLogTitulo = null!;
+        private Label lblDocTitulo = null!;
+        private RichTextBox txtDoc = null!;
+        private SplitContainer splitContainer = null!;
+        private Panel pnlDocCard = null!;
+        private Panel pnlLogsCard = null!;
+
         public FrmArnesHub(ArnesServer server, ArnesRouter router, ArnesSecurityManager security)
         {
             _server = server;
@@ -40,68 +52,120 @@ namespace OPENGIOAI.Vistas
             this.Dock = DockStyle.Fill;
             this.Padding = new Padding(20);
 
+            // ---- PANEL DE CABECERA ----
+            pnlHeader = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 85,
+                BackColor = EmeraldTheme.BgDeep
+            };
+
             lblTitulo = new Label
             {
                 Text = "Hub ARNES (Conector de IA Externa)",
                 Font = new Font("Segoe UI Semibold", 18f, FontStyle.Bold),
                 ForeColor = EmeraldTheme.TextPrimary,
                 AutoSize = true,
-                Location = new Point(20, 20)
+                Location = new Point(0, 5)
             };
 
             lblEstado = new Label
             {
                 Text = "Estado: Desconocido",
-                Font = new Font("Segoe UI", 12f),
+                Font = new Font("Segoe UI", 10.5f),
                 ForeColor = EmeraldTheme.TextSecondary,
                 AutoSize = true,
-                Location = new Point(20, 60)
+                Location = new Point(2, 42)
+            };
+
+            lblPlugs = new Label
+            {
+                Text = "Plugs Activos: Antigravity",
+                Font = new Font("Segoe UI", 9.5f),
+                ForeColor = EmeraldTheme.TextMuted,
+                AutoSize = true,
+                Location = new Point(2, 63)
+            };
+
+            pnlAcciones = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Right,
+                FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false,
+                Width = 360,
+                Height = 70,
+                BackColor = Color.Transparent
             };
 
             btnToggleServidor = new Button
             {
                 Text = "Alternar Servidor",
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-                Size = new Size(160, 40),
-                Location = new Point(20, 100),
+                Font = new Font("Segoe UI Semibold", 9.5f),
+                Size = new Size(150, 36),
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Margin = new Padding(5, 15, 5, 0)
             };
             btnToggleServidor.FlatAppearance.BorderSize = 0;
             btnToggleServidor.Click += BtnToggleServidor_Click;
 
-            lblPlugs = new Label
+            btnToggleDoc = new Button
             {
-                Text = "Plugs Activos: Antigravity",
-                Font = new Font("Segoe UI", 10f),
-                ForeColor = EmeraldTheme.TextMuted,
-                AutoSize = true,
-                Location = new Point(200, 110)
+                Text = "📖 Ocultar Ejemplos",
+                Font = new Font("Segoe UI Semibold", 9.5f),
+                Size = new Size(160, 36),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(5, 15, 5, 0)
             };
+            EmeraldTheme.StyleModernButton(btnToggleDoc);
+            btnToggleDoc.Click += BtnToggleDoc_Click;
 
-            // ---- SPLIT CONTAINER ----
-            var splitContainer = new SplitContainer
+            pnlAcciones.Controls.Add(btnToggleServidor);
+            pnlAcciones.Controls.Add(btnToggleDoc);
+
+            pnlHeader.Controls.Add(lblTitulo);
+            pnlHeader.Controls.Add(lblEstado);
+            pnlHeader.Controls.Add(lblPlugs);
+            pnlHeader.Controls.Add(pnlAcciones);
+
+            // ---- SPLIT CONTAINER PRINCIPAL ----
+            splitContainer = new SplitContainer
             {
-                Location = new Point(20, 150),
-                Size = new Size(this.Width - 40, this.Height - 170),
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                SplitterDistance = (this.Width - 40) / 2, // 50% y 50%
+                Dock = DockStyle.Fill,
+                SplitterDistance = 450,
                 BackColor = EmeraldTheme.BgDeep
             };
 
             // ---- PANEL IZQUIERDO (Llaves y Logs) ----
-            var lblKeysTitulo = new Label
+            lblKeysTitulo = new Label
             {
                 Text = "Llaves de Acceso (API Keys):",
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
                 ForeColor = EmeraldTheme.TextPrimary,
                 AutoSize = true,
-                Location = new Point(0, 0)
+                Location = new Point(0, 10),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
             };
+
+            btnNuevaLlave = new Button
+            {
+                Text = "+ Generar Nueva Llave",
+                Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
+                Size = new Size(180, 28),
+                Location = new Point(450 - 190, 6),
+                BackColor = EmeraldTheme.Emerald500,
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            btnNuevaLlave.FlatAppearance.BorderSize = 0;
+            btnNuevaLlave.Click += BtnNuevaLlave_Click;
 
             gridKeys = new DataGridView
             {
-                Location = new Point(0, 30),
+                Location = new Point(0, 40),
                 Width = splitContainer.Panel1.Width - 10,
                 Height = 150,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
@@ -155,55 +219,51 @@ namespace OPENGIOAI.Vistas
             };
             gridKeys.CellContentClick += GridKeys_CellContentClick;
 
-            btnNuevaLlave = new Button
-            {
-                Text = "+ Generar Nueva Llave",
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-                Size = new Size(180, 30),
-                Location = new Point(0, 190),
-                BackColor = EmeraldTheme.Emerald500,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            btnNuevaLlave.FlatAppearance.BorderSize = 0;
-            btnNuevaLlave.Click += BtnNuevaLlave_Click;
-
-            var lblLogTitulo = new Label
+            lblLogTitulo = new Label
             {
                 Text = "Tráfico en Vivo (Logs):",
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
                 ForeColor = EmeraldTheme.TextPrimary,
                 AutoSize = true,
-                Location = new Point(0, 240)
+                Location = new Point(0, 205),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
+            };
+
+            pnlLogsCard = new Panel
+            {
+                Location = new Point(0, 235),
+                Width = splitContainer.Panel1.Width - 10,
+                Height = splitContainer.Panel1.Height - 245,
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = EmeraldTheme.BgCard,
+                Padding = new Padding(10)
             };
 
             listLogs = new ListBox
             {
-                Location = new Point(0, 270),
-                Width = splitContainer.Panel1.Width - 10,
-                Height = splitContainer.Panel1.Height - 270,
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                Dock = DockStyle.Fill,
                 BackColor = EmeraldTheme.BgCard,
                 ForeColor = EmeraldTheme.TextSecondary,
                 Font = new Font("Consolas", 9.5f),
                 BorderStyle = BorderStyle.None
             };
+            pnlLogsCard.Controls.Add(listLogs);
 
             splitContainer.Panel1.Controls.Add(lblKeysTitulo);
-            splitContainer.Panel1.Controls.Add(gridKeys);
             splitContainer.Panel1.Controls.Add(btnNuevaLlave);
+            splitContainer.Panel1.Controls.Add(gridKeys);
             splitContainer.Panel1.Controls.Add(lblLogTitulo);
-            splitContainer.Panel1.Controls.Add(listLogs);
+            splitContainer.Panel1.Controls.Add(pnlLogsCard);
 
-            // ---- PANEL DERECHO (Documentación) ----
-            var lblDocTitulo = new Label
+            // ---- PANEL DERECHO (Documentación y Ejemplos) ----
+            lblDocTitulo = new Label
             {
                 Text = "📚 ¿Cómo me conecto? (Guía Rápida)",
-                Font = new Font("Segoe UI", 12f, FontStyle.Bold),
-                ForeColor = EmeraldTheme.Emerald500,
+                Font = new Font("Segoe UI Semibold", 11.5f, FontStyle.Bold),
+                ForeColor = EmeraldTheme.Emerald400,
                 AutoSize = true,
-                Location = new Point(10, 0)
+                Location = new Point(10, 10),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
             };
 
             string docText = @"MÓDULO ARNES - GUÍA RÁPIDA
@@ -229,12 +289,19 @@ namespace OPENGIOAI.Vistas
 * 'action' debe ser 'execute_aria' para llamar al agente de OPENGIOAI.
 * Tu código o script NO necesita saber qué modelo usar (Gemini, Claude, etc), el Servidor ARNES leerá la configuración que tengas actualmente seleccionada en la interfaz principal de OPENGIOAI.";
 
-            var txtDoc = new RichTextBox
+            pnlDocCard = new Panel
             {
-                Location = new Point(10, 30),
-                Width = splitContainer.Panel2.Width - 10,
-                Height = splitContainer.Panel2.Height - 30,
+                Location = new Point(10, 40),
+                Width = splitContainer.Panel2.Width - 15,
+                Height = splitContainer.Panel2.Height - 50,
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = EmeraldTheme.BgCard,
+                Padding = new Padding(15)
+            };
+
+            txtDoc = new RichTextBox
+            {
+                Dock = DockStyle.Fill,
                 BackColor = EmeraldTheme.BgCard,
                 ForeColor = EmeraldTheme.TextPrimary,
                 Font = new Font("Consolas", 9.5f),
@@ -242,17 +309,127 @@ namespace OPENGIOAI.Vistas
                 ReadOnly = true,
                 Text = docText
             };
+            pnlDocCard.Controls.Add(txtDoc);
 
             splitContainer.Panel2.Controls.Add(lblDocTitulo);
-            splitContainer.Panel2.Controls.Add(txtDoc);
+            splitContainer.Panel2.Controls.Add(pnlDocCard);
 
-            this.Controls.Add(lblTitulo);
-            this.Controls.Add(lblEstado);
-            this.Controls.Add(btnToggleServidor);
-            this.Controls.Add(lblPlugs);
             this.Controls.Add(splitContainer);
+            this.Controls.Add(pnlHeader);
             
             CargarGrillaLlaves();
+            ConfigureThemeSupport();
+        }
+
+        private void ConfigureThemeSupport()
+        {
+            EmeraldTheme.ThemeChanged += OnThemeChanged;
+            this.Disposed += (s, e) => EmeraldTheme.ThemeChanged -= OnThemeChanged;
+        }
+
+        private void OnThemeChanged()
+        {
+            this.BackColor = EmeraldTheme.BgDeep;
+            
+            if (pnlHeader != null) pnlHeader.BackColor = EmeraldTheme.BgDeep;
+            if (lblTitulo != null) lblTitulo.ForeColor = EmeraldTheme.TextPrimary;
+            if (lblEstado != null)
+            {
+                if (_server.IsRunning)
+                    lblEstado.ForeColor = EmeraldTheme.Emerald400;
+                else
+                    lblEstado.ForeColor = EmeraldTheme.Error;
+            }
+            if (lblPlugs != null) lblPlugs.ForeColor = EmeraldTheme.TextMuted;
+
+            if (splitContainer != null)
+            {
+                splitContainer.BackColor = EmeraldTheme.BgDeep;
+                splitContainer.Panel1.BackColor = EmeraldTheme.BgDeep;
+                splitContainer.Panel2.BackColor = EmeraldTheme.BgDeep;
+            }
+
+            if (lblKeysTitulo != null) lblKeysTitulo.ForeColor = EmeraldTheme.TextPrimary;
+            if (lblLogTitulo != null) lblLogTitulo.ForeColor = EmeraldTheme.TextPrimary;
+            if (lblDocTitulo != null) lblDocTitulo.ForeColor = EmeraldTheme.Emerald400;
+
+            if (gridKeys != null)
+            {
+                gridKeys.BackgroundColor = EmeraldTheme.BgCard;
+                gridKeys.GridColor = EmeraldTheme.IsDark ? ColorTranslator.FromHtml("#1a3a5c") : ColorTranslator.FromHtml("#C5D8F0");
+                
+                bool dark = EmeraldTheme.IsDark;
+                gridKeys.DefaultCellStyle.BackColor = EmeraldTheme.BgCard;
+                gridKeys.DefaultCellStyle.ForeColor = EmeraldTheme.TextPrimary;
+                gridKeys.DefaultCellStyle.SelectionBackColor = ColorTranslator.FromHtml(dark ? "#1a3a5c" : "#C5D8F0");
+                gridKeys.DefaultCellStyle.SelectionForeColor = EmeraldTheme.TextPrimary;
+
+                gridKeys.AlternatingRowsDefaultCellStyle.BackColor = EmeraldTheme.BgSurface;
+                gridKeys.AlternatingRowsDefaultCellStyle.ForeColor = EmeraldTheme.TextPrimary;
+                gridKeys.AlternatingRowsDefaultCellStyle.SelectionBackColor = ColorTranslator.FromHtml(dark ? "#1a3a5c" : "#C5D8F0");
+                gridKeys.AlternatingRowsDefaultCellStyle.SelectionForeColor = EmeraldTheme.TextPrimary;
+
+                gridKeys.ColumnHeadersDefaultCellStyle.BackColor = EmeraldTheme.BgSurface;
+                gridKeys.ColumnHeadersDefaultCellStyle.ForeColor = EmeraldTheme.TextSecondary;
+                gridKeys.ColumnHeadersDefaultCellStyle.SelectionBackColor = EmeraldTheme.BgSurface;
+                gridKeys.ColumnHeadersDefaultCellStyle.SelectionForeColor = EmeraldTheme.TextSecondary;
+            }
+
+            if (listLogs != null)
+            {
+                listLogs.BackColor = EmeraldTheme.BgCard;
+                listLogs.ForeColor = EmeraldTheme.TextSecondary;
+            }
+
+            if (txtDoc != null)
+            {
+                txtDoc.BackColor = EmeraldTheme.BgCard;
+                txtDoc.ForeColor = EmeraldTheme.TextPrimary;
+            }
+
+            if (btnToggleServidor != null)
+            {
+                if (_server.IsRunning)
+                {
+                    btnToggleServidor.BackColor = EmeraldTheme.Error;
+                    btnToggleServidor.ForeColor = Color.White;
+                }
+                else
+                {
+                    btnToggleServidor.BackColor = EmeraldTheme.Emerald500;
+                    btnToggleServidor.ForeColor = Color.White;
+                }
+            }
+
+            if (btnToggleDoc != null)
+            {
+                EmeraldTheme.StyleModernButton(btnToggleDoc);
+                btnToggleDoc.ForeColor = EmeraldTheme.TextPrimary;
+            }
+
+            if (btnNuevaLlave != null)
+            {
+                btnNuevaLlave.BackColor = EmeraldTheme.Emerald500;
+                btnNuevaLlave.ForeColor = Color.White;
+            }
+        }
+
+        private void BtnToggleDoc_Click(object? sender, EventArgs e)
+        {
+            splitContainer.Panel2Collapsed = !splitContainer.Panel2Collapsed;
+            ActualizarBotonDoc();
+        }
+
+        private void ActualizarBotonDoc()
+        {
+            if (splitContainer.Panel2Collapsed)
+            {
+                btnToggleDoc.Text = "📖 Mostrar Ejemplos";
+            }
+            else
+            {
+                btnToggleDoc.Text = "📖 Ocultar Ejemplos";
+            }
         }
 
         private void ConfigurarEventos()
@@ -380,7 +557,7 @@ namespace OPENGIOAI.Vistas
             if (_server.IsRunning)
             {
                 lblEstado.Text = "Estado: 🟢 Activo (Escuchando en localhost:5050)";
-                lblEstado.ForeColor = EmeraldTheme.Emerald500;
+                lblEstado.ForeColor = EmeraldTheme.Emerald400;
                 btnToggleServidor.Text = "Detener Servidor";
                 btnToggleServidor.BackColor = EmeraldTheme.Error;
                 btnToggleServidor.ForeColor = Color.White;
