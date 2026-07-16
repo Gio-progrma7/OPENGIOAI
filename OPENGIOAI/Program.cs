@@ -54,11 +54,10 @@ namespace OPENGIOAI
 
                 var mainForm = provider.GetRequiredService<FrmPrincipal>();
 
-                // Aplicar el ícono generado a la ventana principal en runtime
                 if (File.Exists(rutaIco))
                 {
                     try { mainForm.Icon = new System.Drawing.Icon(rutaIco); }
-                    catch { /* no crítico */ }
+                    catch (Exception ex) { Log.Warning(ex, "No se pudo aplicar el ícono generado"); }
                 }
 
                 // Iniciar Servidor ARNES

@@ -64,6 +64,8 @@ namespace OPENGIOAI.Vistas
                 _rutaBase = RutasProyecto.ObtenerRutaScripts();
 
             lblSubtitulo.Text = $"Ruta de trabajo:  {_rutaBase}";
+            ConfigurarLayoutResponsivo();
+            ConfigurarBotonesAccion();
 
             pnlListaSlack.FlowDirection    = FlowDirection.LeftToRight;
             pnlListaSlack.WrapContents     = true;
@@ -76,12 +78,257 @@ namespace OPENGIOAI.Vistas
             pnlListaTelegram.Padding       = new Padding(8);
 
             tabControl.SelectedIndexChanged += (s, e) => RefrescarTabActual();
-            this.Resize                     += (s, e) => RefrescarTabActual();
+            this.Resize += (s, e) =>
+            {
+                AjustarLayoutResponsivo();
+                RefrescarTabActual();
+            };
 
             AplicarTema();
 
             EmeraldTheme.ThemeChanged += OnTemaChanged;
             Disposed += (_, __) => EmeraldTheme.ThemeChanged -= OnTemaChanged;
+        }
+
+        private void ConfigurarLayoutResponsivo()
+        {
+            MinimumSize = new Size(720, 560);
+
+            lblTitulo.AutoSize = false;
+            lblTitulo.AutoEllipsis = true;
+            lblTitulo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+            lblSubtitulo.AutoSize = false;
+            lblSubtitulo.AutoEllipsis = true;
+            lblSubtitulo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+            tabControl.Anchor = AnchorStyles.None;
+            btnToggleSlack.Width = 190;
+            btnToggleTelegram.Width = 190;
+            tabSlack.AutoScroll = true;
+            tabTelegram.AutoScroll = true;
+            tabAudio.AutoScroll = true;
+            pnlFormSlack.AutoScroll = true;
+            pnlFormTelegram.AutoScroll = true;
+            pnlBodyAudio.AutoScroll = true;
+
+            panelPrincipal.Resize += (_, __) => AjustarLayoutResponsivo();
+            pnlFormSlack.Resize += (_, __) => AjustarFormularioSlack();
+            pnlFormTelegram.Resize += (_, __) => AjustarFormularioTelegram();
+            pnlBodyAudio.Resize += (_, __) => AjustarFormularioAudio();
+
+            AjustarLayoutResponsivo();
+        }
+
+        private void ConfigurarBotonesAccion()
+        {
+            foreach (var btn in new[] {
+                btnToggleSlack, btnToggleTelegram,
+                btnGuardarSlack, btnCancelarSlack,
+                btnGuardarTelegram, btnCancelarTelegram
+            })
+            {
+                btn.AutoEllipsis = true;
+                btn.TextAlign = ContentAlignment.MiddleCenter;
+                btn.UseVisualStyleBackColor = false;
+                btn.FlatStyle = FlatStyle.Flat;
+                btn.FlatAppearance.BorderSize = 1;
+                btn.Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold);
+                btn.MinimumSize = new Size(120, 32);
+            }
+
+            EstilizarBotonComunicador(btnGuardarSlack, Color.FromArgb(22, 101, 52), Color.FromArgb(74, 222, 128));
+            EstilizarBotonComunicador(btnGuardarTelegram, Color.FromArgb(22, 101, 52), Color.FromArgb(74, 222, 128));
+            EstilizarBotonComunicador(btnCancelarSlack, Color.FromArgb(127, 29, 29), Color.FromArgb(248, 113, 113));
+            EstilizarBotonComunicador(btnCancelarTelegram, Color.FromArgb(127, 29, 29), Color.FromArgb(248, 113, 113));
+            EstilizarBotonComunicador(btnToggleSlack, Color.FromArgb(15, 118, 110), Color.FromArgb(94, 234, 212));
+            EstilizarBotonComunicador(btnToggleTelegram, Color.FromArgb(30, 64, 175), Color.FromArgb(147, 197, 253));
+        }
+
+        private static void EstilizarBotonComunicador(Button btn, Color fondo, Color borde)
+        {
+            btn.BackColor = fondo;
+            btn.ForeColor = Color.White;
+            btn.FlatAppearance.BorderColor = borde;
+            btn.FlatAppearance.MouseOverBackColor = ControlPaint.Light(fondo, 0.15f);
+            btn.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(fondo, 0.15f);
+        }
+
+        private void AjustarLayoutResponsivo()
+        {
+            if (panelPrincipal.ClientSize.Width <= 0 || panelPrincipal.ClientSize.Height <= 0)
+                return;
+
+            const int margin = 20;
+            const int tabTop = 78;
+            int width = Math.Max(320, panelPrincipal.ClientSize.Width - margin * 2);
+            int height = Math.Max(260, panelPrincipal.ClientSize.Height - tabTop - margin);
+
+            lblTitulo.SetBounds(26, 16, Math.Max(200, panelPrincipal.ClientSize.Width - 52), 34);
+            lblSubtitulo.SetBounds(28, 52, Math.Max(200, panelPrincipal.ClientSize.Width - 56), 20);
+            tabControl.SetBounds(margin, tabTop, width, height);
+
+            AjustarFormularioSlack();
+            AjustarFormularioTelegram();
+            AjustarFormularioAudio();
+        }
+
+        private void AjustarFormularioSlack()
+        {
+            if (pnlFormSlack.ClientSize.Width <= 0) return;
+
+            const int pad = 17;
+            const int gap = 12;
+            int width = Math.Max(260, pnlFormSlack.ClientSize.Width - pad * 2);
+            bool compacto = width < 760;
+
+            if (compacto)
+            {
+                txtSlackToken.SetBounds(pad, 34, width, 23);
+                lblSlackToken.Location = new Point(pad, 16);
+
+                lblSlackCanal.Location = new Point(pad, 66);
+                txtSlackCanal.SetBounds(pad, 84, width, 23);
+
+                lblSlackUsuarios.Location = new Point(pad, 116);
+                txtSlackUsuarios.SetBounds(pad, 134, width, 54);
+
+                int buttonW = Math.Min(170, Math.Max(120, (width - gap) / 2));
+                if (width < 270)
+                {
+                    btnGuardarSlack.SetBounds(pad, 202, width, 32);
+                    btnCancelarSlack.SetBounds(pad, 240, width, 32);
+                    pnlFormSlack.Height = 286;
+                }
+                else
+                {
+                    btnGuardarSlack.SetBounds(pad, 202, buttonW, 32);
+                    btnCancelarSlack.SetBounds(pad + buttonW + gap, 202, buttonW, 32);
+                    pnlFormSlack.Height = 250;
+                }
+            }
+            else
+            {
+                int canalW = 250;
+                int tokenW = Math.Max(260, width - canalW - gap);
+
+                lblSlackToken.Location = new Point(pad, 16);
+                txtSlackToken.SetBounds(pad, 34, tokenW, 23);
+
+                lblSlackCanal.Location = new Point(pad + tokenW + gap, 16);
+                txtSlackCanal.SetBounds(pad + tokenW + gap, 34, canalW, 23);
+
+                lblSlackUsuarios.Location = new Point(pad, 70);
+                txtSlackUsuarios.SetBounds(pad, 88, width, 65);
+
+                btnGuardarSlack.SetBounds(pad, 168, 170, 32);
+                btnCancelarSlack.SetBounds(pad + 170 + gap, 168, 170, 32);
+                pnlFormSlack.Height = 220;
+            }
+        }
+
+        private void AjustarFormularioTelegram()
+        {
+            if (pnlFormTelegram.ClientSize.Width <= 0) return;
+
+            const int pad = 17;
+            const int gap = 12;
+            int width = Math.Max(260, pnlFormTelegram.ClientSize.Width - pad * 2);
+            bool compacto = width < 720;
+
+            if (compacto)
+            {
+                lblTelegramChatId.Location = new Point(pad, 16);
+                txtTelegramChatId.SetBounds(pad, 34, width, 23);
+
+                lblTelegramApikey.Location = new Point(pad, 66);
+                txtTelegramApikey.SetBounds(pad, 84, width, 23);
+
+                int buttonW = Math.Min(170, Math.Max(120, (width - gap) / 2));
+                if (width < 270)
+                {
+                    btnGuardarTelegram.SetBounds(pad, 122, width, 32);
+                    btnCancelarTelegram.SetBounds(pad, 160, width, 32);
+                    pnlFormTelegram.Height = 206;
+                }
+                else
+                {
+                    btnGuardarTelegram.SetBounds(pad, 122, buttonW, 32);
+                    btnCancelarTelegram.SetBounds(pad + buttonW + gap, 122, buttonW, 32);
+                    pnlFormTelegram.Height = 170;
+                }
+            }
+            else
+            {
+                int chatW = 230;
+                int apiW = Math.Max(280, width - chatW - gap);
+
+                lblTelegramChatId.Location = new Point(pad, 16);
+                txtTelegramChatId.SetBounds(pad, 34, chatW, 23);
+
+                lblTelegramApikey.Location = new Point(pad + chatW + gap, 16);
+                txtTelegramApikey.SetBounds(pad + chatW + gap, 34, apiW, 23);
+
+                btnGuardarTelegram.SetBounds(pad, 100, 170, 32);
+                btnCancelarTelegram.SetBounds(pad + 170 + gap, 100, 170, 32);
+                pnlFormTelegram.Height = 152;
+            }
+        }
+
+        private void AjustarFormularioAudio()
+        {
+            if (pnlBodyAudio.ClientSize.Width <= 0) return;
+
+            const int pad = 24;
+            int width = Math.Max(280, pnlBodyAudio.ClientSize.Width - pad * 2);
+            bool compacto = width < 720;
+
+            chkActivarTTS.Location = new Point(pad, 22);
+            lblProveedorTTS.Location = new Point(pad, 66);
+
+            if (compacto)
+            {
+                rbSystemSpeech.Location = new Point(pad, 92);
+                rbOpenAI.Location = new Point(pad, 118);
+                rbGoogle.Location = new Point(pad, 144);
+
+                pnlApiKeyTTS.SetBounds(pad, 178, width, 52);
+                txtApiKeyTTS.Width = width;
+
+                lblVozTTS.Location = new Point(pad, 246);
+                cmbVozTTS.SetBounds(pad, 264, width, 23);
+
+                lblIdiomasTTS.Location = new Point(pad, 302);
+                txtIdiomaTTS.SetBounds(pad, 320, Math.Min(220, width), 23);
+
+                btnTestTTS.SetBounds(pad, 362, 160, 32);
+                btnGuardarTTS.SetBounds(pad + 176, 362, 160, 32);
+
+                lblEstadoTTS.Location = new Point(pad, 408);
+                pnlInfoTTS.SetBounds(pad, 436, width, 132);
+            }
+            else
+            {
+                rbSystemSpeech.Location = new Point(pad, 92);
+                rbOpenAI.Location = new Point(240, 92);
+                rbGoogle.Location = new Point(410, 92);
+
+                int formW = Math.Min(680, width);
+                pnlApiKeyTTS.SetBounds(pad, 122, formW, 52);
+                txtApiKeyTTS.Width = formW;
+
+                lblVozTTS.Location = new Point(pad, 190);
+                cmbVozTTS.SetBounds(pad, 208, 320, 23);
+
+                lblIdiomasTTS.Location = new Point(pad + 346, 190);
+                txtIdiomaTTS.SetBounds(pad + 346, 208, 160, 23);
+
+                btnTestTTS.SetBounds(pad, 250, 160, 32);
+                btnGuardarTTS.SetBounds(pad + 176, 250, 160, 32);
+
+                lblEstadoTTS.Location = new Point(pad, 292);
+                pnlInfoTTS.SetBounds(pad, 320, formW, 120);
+            }
         }
 
         private void OnTemaChanged()
@@ -150,20 +397,23 @@ namespace OPENGIOAI.Vistas
             if (!_slackExiste)
             {
                 // Mientras el archivo no exista, el botón siempre dice "Crear archivo"
-                btnToggleSlack.Text = "💾  Crear archivo";
+                btnToggleSlack.Text = "Crear archivo";
                 btnToggleSlack.FlatAppearance.BorderColor = Color.FromArgb(74, 181, 130);
                 btnToggleSlack.ForeColor                  = Color.FromArgb(74, 181, 130);
             }
             else
             {
-                btnToggleSlack.Text = mostrar ? "✖  Cerrar" : "➕  Nueva";
+                btnToggleSlack.Text = mostrar ? "Cerrar" : "Nueva";
                 btnToggleSlack.FlatAppearance.BorderColor =
                     mostrar ? Color.DarkRed : Color.FromArgb(74, 181, 130);
                 btnToggleSlack.ForeColor =
                     mostrar ? Color.DarkRed : Color.FromArgb(74, 181, 130);
             }
 
+            AplicarEstadoBotonToggle(btnToggleSlack, !_slackExiste, mostrar, true);
+            NormalizarTextoBotonesComunicadores();
             if (!mostrar) LimpiarFormSlack();
+            NormalizarTextoBotonesComunicadores();
         }
 
         private void ToggleFormTelegram(bool? forzar = null)
@@ -173,20 +423,58 @@ namespace OPENGIOAI.Vistas
 
             if (!_telegramExiste)
             {
-                btnToggleTelegram.Text = "💾  Crear archivo";
+                btnToggleTelegram.Text = "Crear archivo";
                 btnToggleTelegram.FlatAppearance.BorderColor = Color.FromArgb(41, 182, 246);
                 btnToggleTelegram.ForeColor                   = Color.FromArgb(41, 182, 246);
             }
             else
             {
-                btnToggleTelegram.Text = mostrar ? "✖  Cerrar" : "➕  Nueva";
+                btnToggleTelegram.Text = mostrar ? "Cerrar" : "Nueva";
                 btnToggleTelegram.FlatAppearance.BorderColor =
                     mostrar ? Color.DarkRed : Color.FromArgb(41, 182, 246);
                 btnToggleTelegram.ForeColor =
                     mostrar ? Color.DarkRed : Color.FromArgb(41, 182, 246);
             }
 
+            AplicarEstadoBotonToggle(btnToggleTelegram, !_telegramExiste, mostrar, false);
+            NormalizarTextoBotonesComunicadores();
             if (!mostrar) LimpiarFormTelegram();
+            NormalizarTextoBotonesComunicadores();
+        }
+
+        private void NormalizarTextoBotonesComunicadores()
+        {
+            if (btnGuardarSlack.Text.Contains("Crear", StringComparison.OrdinalIgnoreCase))
+                btnGuardarSlack.Text = "Crear archivo";
+            if (btnGuardarTelegram.Text.Contains("Crear", StringComparison.OrdinalIgnoreCase))
+                btnGuardarTelegram.Text = "Crear archivo";
+
+            btnCancelarSlack.Text = "Cancelar";
+            btnCancelarTelegram.Text = "Cancelar";
+        }
+
+        private static void AplicarEstadoBotonToggle(
+            Button btn,
+            bool crearArchivo,
+            bool formularioVisible,
+            bool esSlack)
+        {
+            if (crearArchivo)
+            {
+                btn.Text = "Crear archivo";
+                EstilizarBotonComunicador(btn, Color.FromArgb(22, 101, 52), Color.FromArgb(74, 222, 128));
+                return;
+            }
+
+            btn.Text = formularioVisible ? "Cerrar" : "Nueva";
+            EstilizarBotonComunicador(
+                btn,
+                formularioVisible
+                    ? Color.FromArgb(127, 29, 29)
+                    : esSlack ? Color.FromArgb(15, 118, 110) : Color.FromArgb(30, 64, 175),
+                formularioVisible
+                    ? Color.FromArgb(248, 113, 113)
+                    : esSlack ? Color.FromArgb(94, 234, 212) : Color.FromArgb(147, 197, 253));
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -219,7 +507,7 @@ namespace OPENGIOAI.Vistas
                     Color.FromArgb(74, 181, 130)));
 
                 ToggleFormSlack(true);  // abrir form si no estaba abierto
-                btnGuardarSlack.Text = "💾 Crear archivo";
+                btnGuardarSlack.Text = "Crear archivo";
             }
             else
             {
@@ -237,6 +525,7 @@ namespace OPENGIOAI.Vistas
             pnlListaSlack.ResumeLayout(true);
             // Pasar el estado actual para solo actualizar apariencia del botón sin cambiar visibilidad
             ToggleFormSlack(pnlFormSlack.Visible);
+            NormalizarTextoBotonesComunicadores();
         }
 
         private void GuardarSlack()
@@ -316,7 +605,8 @@ namespace OPENGIOAI.Vistas
             _esNuevaSlack         = true;
             _tokenOriginalSlack   = "";
             _canalOriginalSlack   = "";
-            btnGuardarSlack.Text  = _slackExiste ? "Agregar" : "💾 Crear archivo";
+            btnGuardarSlack.Text  = _slackExiste ? "Agregar" : "Crear archivo";
+            NormalizarTextoBotonesComunicadores();
         }
 
         // ── Tarjeta Slack ─────────────────────────────────────────────────────────
@@ -436,7 +726,7 @@ namespace OPENGIOAI.Vistas
                     Color.FromArgb(41, 182, 246)));
 
                 ToggleFormTelegram(true);
-                btnGuardarTelegram.Text = "💾 Crear archivo";
+                btnGuardarTelegram.Text = "Crear archivo";
             }
             else
             {
@@ -453,6 +743,7 @@ namespace OPENGIOAI.Vistas
             pnlListaTelegram.ResumeLayout(true);
             // Pasar el estado actual para solo actualizar apariencia del botón sin cambiar visibilidad
             ToggleFormTelegram(pnlFormTelegram.Visible);
+            NormalizarTextoBotonesComunicadores();
         }
 
         private void GuardarTelegram()
@@ -524,7 +815,8 @@ namespace OPENGIOAI.Vistas
             txtTelegramApikey.Text  = "";
             _esNuevaTelegram        = true;
             _chatIdOriginalTelegram = 0;
-            btnGuardarTelegram.Text = _telegramExiste ? "Agregar" : "💾 Crear archivo";
+            btnGuardarTelegram.Text = _telegramExiste ? "Agregar" : "Crear archivo";
+            NormalizarTextoBotonesComunicadores();
         }
 
         // ── Tarjeta Telegram ──────────────────────────────────────────────────────
@@ -636,7 +928,7 @@ namespace OPENGIOAI.Vistas
 
             Label lblDesc = new()
             {
-                Text      = $"Completa el formulario de arriba y pulsa 💾 Crear archivo.\nCampos:  {descripcionCampos}",
+                Text      = $"Completa el formulario de arriba y pulsa Crear archivo.\nCampos:  {descripcionCampos}",
                 Font      = new Font("Segoe UI", 8.5f),
                 ForeColor = Color.FromArgb(148, 163, 184),
                 Location  = new Point(14, 36),
@@ -800,14 +1092,14 @@ namespace OPENGIOAI.Vistas
             txtSlackToken.RedondearTextBox(10, borde);
             txtSlackCanal.RedondearTextBox(10, borde);
             txtSlackUsuarios.RedondearTextBox(10, borde);
-            btnGuardarSlack.AplicarEstiloOutline(EmeraldTheme.Emerald500, 9);
-            btnCancelarSlack.AplicarEstiloOutline(Color.DarkRed, 9);
+            EstilizarBotonComunicador(btnGuardarSlack, Color.FromArgb(22, 101, 52), Color.FromArgb(74, 222, 128));
+            EstilizarBotonComunicador(btnCancelarSlack, Color.FromArgb(127, 29, 29), Color.FromArgb(248, 113, 113));
             pnlFormSlack.RedondearPanel(10, borde);
 
             txtTelegramChatId.RedondearTextBox(10, borde);
             txtTelegramApikey.RedondearTextBox(10, borde);
-            btnGuardarTelegram.AplicarEstiloOutline(EmeraldTheme.Emerald500, 9);
-            btnCancelarTelegram.AplicarEstiloOutline(Color.DarkRed, 9);
+            EstilizarBotonComunicador(btnGuardarTelegram, Color.FromArgb(22, 101, 52), Color.FromArgb(74, 222, 128));
+            EstilizarBotonComunicador(btnCancelarTelegram, Color.FromArgb(127, 29, 29), Color.FromArgb(248, 113, 113));
             pnlFormTelegram.RedondearPanel(10, borde);
 
             // TTS

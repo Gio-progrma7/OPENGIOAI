@@ -30,9 +30,10 @@
 using Newtonsoft.Json.Linq;
 using OPENGIOAI.Data;
 using OPENGIOAI.Entidades;
+using OPENGIOAI.Herramientas;
 using OPENGIOAI.Promts;
 using OPENGIOAI.Utilerias;
-// PerfilContexto vive en OPENGIOAI.Entidades — ya incluido arriba.
+using Serilog;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -174,28 +175,88 @@ namespace OPENGIOAI.Agentes
 
             try
             {
+                var decisionRuta = RouterAgentico.Decidir(instruccion);
+                spanPipeline.AgregarAtributo("ruta_agentica", decisionRuta.Ruta.ToString());
+                spanPipeline.AgregarAtributo("ruta_confianza", decisionRuta.Confianza.ToString("F2"));
+                log.AppendLine("### Router agentico");
+                log.AppendLine($"- Ruta: `{decisionRuta.Ruta}`");
+                log.AppendLine($"- Confianza: `{decisionRuta.Confianza:F2}`");
+                log.AppendLine($"- Razon: {decisionRuta.Razon}");
+                log.AppendLine();
 
-            // ── FASE 1: PRE-CARGA DE CONTEXTO (Optimizada) ──────
-            OnFaseIniciada?.Invoke(FaseAgente.Analista, "Preparando el entorno...");
+                AgentContext? ctxConstructor = null;
+
+                if (decisionRuta.Ruta == RutaAgentica.Herramientas)
+                {
+                    OnFaseIniciada?.Invoke(FaseAgente.Analista, "Detecte que puedo resolverlo mas rapido con herramientas...");
+                    ctxConstructor = await AgentContext.BuildAsync(
+                        _ruta, _modelo, _apiKey, _servicio, _soloChat, _claves, ct,
+                        perfil: PerfilContexto.Completo,
+                        instruccionUsuario: instruccion);
+                    OnFaseCompletada?.Invoke(FaseAgente.Analista, true);
+
+                    OnFaseIniciada?.Invoke(FaseAgente.Constructor, "Usando herramientas directas...");
+                    string salidaHerramientas = await FaseHerramientasAsync(
+                        instruccion, ctxConstructor, decisionRuta, ct);
+                    OnConstructorCompletado?.Invoke(salidaHerramientas);
+
+                    log.AppendLine("### Herramientas");
+                    log.AppendLine($"- Resultado: `{Truncar(salidaHerramientas, 400)}`");
+                    log.AppendLine();
+
+                    if (!DebeCaerAlConstructor(salidaHerramientas))
+                    {
+                        OnFaseCompletada?.Invoke(FaseAgente.Constructor, true);
+                        OnFaseCompletada?.Invoke(FaseAgente.Guardian, true);
+                        OnFaseIniciada?.Invoke(FaseAgente.Comunicador, "Preparando tu respuesta...");
+                        OnToken?.Invoke(FaseAgente.Comunicador, salidaHerramientas);
+                        OnFaseCompletada?.Invoke(FaseAgente.Comunicador, true);
+
+                        var duracionRapida = DateTime.UtcNow - inicioTotal;
+                        log.AppendLine("### Comunicador");
+                        log.AppendLine("- Respuesta entregada desde ruta rapida de herramientas");
+                        log.AppendLine($"**Duracion total:** {duracionRapida.TotalSeconds:F1}s");
+                        log.AppendLine("---");
+                        log.AppendLine();
+
+                        _ = GuardarLogAsync(log.ToString(), _ruta);
+                        _ = DispararMemoristaAsync(instruccion, salidaHerramientas);
+
+                        spanPipeline.RegistrarOutput(salidaHerramientas);
+                        return salidaHerramientas;
+                    }
+
+                    OnFaseCompletada?.Invoke(FaseAgente.Constructor, false);
+                    log.AppendLine("### Fallback");
+                    log.AppendLine("- La ruta de herramientas no cerro con confianza; continuo con Constructor + Guardian.");
+                    log.AppendLine();
+                }
+
+            // ── FASE 1: ANALISTA — Análisis inteligente de la instrucción ──────
+            OnFaseIniciada?.Invoke(FaseAgente.Analista, "Analizando tu solicitud...");
             
-            // Construcción del contexto COMPLETO.
-            // Pasamos la instrucción → si memoria_semantica está activa,
-            // BuildAsync usará RAG (top-K) en lugar del dump completo.
-            var ctxConstructor = await AgentContext.BuildAsync(
+            // Construcción del contexto COMPLETO (paralelo con análisis).
+            ctxConstructor ??= await AgentContext.BuildAsync(
                 _ruta, _modelo, _apiKey, _servicio, _soloChat, _claves, ct,
                 perfil: PerfilContexto.Completo,
                 instruccionUsuario: instruccion);
 
-            OnFaseCompletada?.Invoke(FaseAgente.Analista, true);
-            log.AppendLine("### 📋 Contexto");
+            // Análisis rápido de la instrucción: identificar objetivo, tipo y complejidad
+            string analisisRapido = await AnalizarInstruccionRapidoAsync(instruccion, ctxConstructor, ct);
+            
+            // Log del análisis para trazabilidad
+            log.AppendLine("### 📋 Analista");
             log.AppendLine($"- Modelo: `{_modelo}`");
             log.AppendLine($"- Perfil: `Completo` (RAG)");
+            log.AppendLine($"- Análisis: {Truncar(analisisRapido, 300)}");
             log.AppendLine();
+
+            OnFaseCompletada?.Invoke(FaseAgente.Analista, true);
 
             ct.ThrowIfCancellationRequested();
 
             // ── FASE 2: CONSTRUCTOR (Reusando Contexto) ──────────────────────
-            OnFaseIniciada?.Invoke(FaseAgente.Constructor, "Ejecutando instrucciones...");
+            OnFaseIniciada?.Invoke(FaseAgente.Constructor, "Generando y ejecutando la solución...");
             var spanConstructor = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Constructor");
             spanConstructor.RegistrarInput(instruccion);
             
@@ -228,37 +289,49 @@ namespace OPENGIOAI.Agentes
 
             ct.ThrowIfCancellationRequested();
 
-            // ── GUARDIÁN: actúa si el Constructor falla (vacío o error técnico) ──
-            // Camino feliz (salida sin errores) → cero coste extra de LLM.
-            // Fallo técnico o salida vacía → reintentos automáticos del Guardián.
+            // ── FASE 3: GUARDIÁN (autocorrección inteligente) ─────────────────
+            // Si la salida del Constructor es válida → camino feliz, sin coste extra.
+            // Si hay error técnico, datos ausentes o salida vacía → diagnóstico
+            // estructurado + reintentos automáticos (hasta _maxIntentosGuardian).
             var spanGuardian = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Guardian");
             spanGuardian.RegistrarInput(instruccion);
 
-            bool esFalloTecnico = string.IsNullOrWhiteSpace(resultadoFinal) || 
-                                 ejecucionConstructor.ExitCode.GetValueOrDefault() != 0 ||
-                                 !string.IsNullOrWhiteSpace(ejecucionConstructor.Stderr) ||
-                                 stdoutConstructor.Contains("[ERR]") ||
-                                 ejecucionConstructor.SalidaTecnica.Contains("Error al ejecutar el script") ||
-                                 resultadoFinal.ToLower().Contains("traceback") ||
-                                 resultadoFinal.ToLower().Contains("status : error") ||
-                                 resultadoFinal.ToLower().Contains("\"status\": \"error\"") ||
-                                 resultadoFinal.ToLower().Contains("'status': 'error'");
+            (bool esFallo, string tipoFallo, string detalle) = DiagnosticarFallo(
+                resultadoFinal, ejecucionConstructor, stdoutConstructor);
 
-            if (esFalloTecnico && _maxIntentosGuardian > 0)
+            if (esFallo && _maxIntentosGuardian > 0)
             {
-                OnFaseIniciada?.Invoke(FaseAgente.Guardian,
-                    "Detecté un error técnico o falta de salida. Intentando corrección automática...");
+                spanGuardian.AgregarAtributo("tipo_fallo", tipoFallo);
+                spanGuardian.AgregarAtributo("detalle_fallo", detalle);
+
+                string mensajeUsuario = tipoFallo switch
+                {
+                    "sintaxis"      => "El código generado tiene un error de sintaxis. Lo estoy corrigiendo...",
+                    "logica"        => "El resultado no coincide con lo que pediste. Ajustando la lógica...",
+                    "importacion"   => "Falta una librería necesaria. Agregándola al código...",
+                    "runtime"       => "El script falló al ejecutarse. Revisando y corrigiendo...",
+                    "datos_ausentes" => "No encontré los datos que buscabas. Intentando con otro enfoque...",
+                    "resultado_vacio" => "El script terminó pero no generó salida. Corrigiendo...",
+                    _               => "Detecté un inconveniente técnico. Intentando resolverlo automáticamente..."
+                };
+
+                OnFaseIniciada?.Invoke(FaseAgente.Guardian, mensajeUsuario);
                 resultadoFinal = await FaseGuardianAsync(instruccion, codigoGenerado, resultadoFinal, ctxConstructor, workspaceEjecucion, ct);
-                OnFaseCompletada?.Invoke(FaseAgente.Guardian, !string.IsNullOrWhiteSpace(resultadoFinal));
+                bool exitoGuardian = !string.IsNullOrWhiteSpace(resultadoFinal);
+                OnFaseCompletada?.Invoke(FaseAgente.Guardian, exitoGuardian);
+
                 log.AppendLine("### 🛡️ Guardián");
-                log.AppendLine("- 🔄 Fallo detectado → corrección automática aplicada");
-                log.AppendLine($"- Resultado corregido: `{Truncar(resultadoFinal, 400)}`");
+                log.AppendLine($"- 🔄 Fallo detectado: `{tipoFallo}` → {detalle}");
+                log.AppendLine($"- Corrección: {(exitoGuardian ? "✅ Aplicada" : "❌ No se pudo corregir automáticamente")}");
+                if (exitoGuardian)
+                    log.AppendLine($"- Resultado corregido: `{Truncar(resultadoFinal, 400)}`");
             }
             else
             {
+                spanGuardian.AgregarAtributo("tipo_fallo", "ninguno");
                 OnFaseCompletada?.Invoke(FaseAgente.Guardian, true);
                 log.AppendLine("### 🛡️ Guardián");
-                log.AppendLine("- ✅ Ejecución técnica correcta — Guardián no necesario");
+                log.AppendLine("- ✅ Ejecución correcta — sin correcciones necesarias");
             }
             log.AppendLine();
 
@@ -267,8 +340,8 @@ namespace OPENGIOAI.Agentes
 
             ct.ThrowIfCancellationRequested();
 
-            // ── FASE 4: COMUNICADOR ──────────────────────────────────────────
-            OnFaseIniciada?.Invoke(FaseAgente.Comunicador, "Preparando tu respuesta...");
+            // ── FASE 4: COMUNICADOR — respuesta final al usuario ─────────────
+            OnFaseIniciada?.Invoke(FaseAgente.Comunicador, "Preparando tu respuesta final...");
             var spanComunicador = TracerEjecucion.Instancia.AbrirSpan(SpanTipo.Fase, "Comunicador");
             spanComunicador.RegistrarInput(resultadoFinal);
             string respuesta = await FaseComunicadorAsync(
@@ -281,7 +354,9 @@ namespace OPENGIOAI.Agentes
             log.AppendLine("### 📢 Comunicador");
             log.AppendLine($"- Respuesta: {Truncar(respuesta, 400)}");
             log.AppendLine();
-            log.AppendLine($"**⏱ Duración total:** {duracion.TotalSeconds:F1}s");
+            log.AppendLine($"**⏱ Duración total:** {duracion.TotalSeconds:F1}s · **Fases:** Analista+Contexto ↓ Constructor ↓ Guardián ↓ Comunicador");
+            log.AppendLine();
+            log.AppendLine($"**Estado:** {((ejecucionConstructor?.ExitCode ?? 0) == 0 ? "✅ Éxito" : "⚠️ Con correcciones")}");
             log.AppendLine("---");
             log.AppendLine();
 
@@ -310,11 +385,10 @@ namespace OPENGIOAI.Agentes
             }
             finally
             {
-                // Cerrar el bucket de telemetría — la UI recibe el evento
-                // OnEjecucionFinalizada con el total agregado de la instrucción.
-                try { ConsumoTokensTracker.Instancia.FinalizarEjecucion(); } catch { }
-                // Si no pasó por catch (camino feliz), cerrar el trace normalmente.
-                try { TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Ok); } catch { }
+                try { ConsumoTokensTracker.Instancia.FinalizarEjecucion(); }
+                catch (Exception ex) { Log.Warning(ex, "Error al finalizar bucket de telemetría"); }
+                try { TracerEjecucion.Instancia.FinalizarTrace(SpanEstado.Ok); }
+                catch (Exception ex) { Log.Warning(ex, "Error al finalizar trace de ejecución"); }
             }
         }
 
@@ -327,8 +401,6 @@ namespace OPENGIOAI.Agentes
         {
             try
             {
-                // Memorista: perfil dedicado — no lee su propia memoria
-                // (está por escribirla) ni skills/credenciales.
                 var ctxMem = await AgentContext.BuildAsync(
                     _ruta, _modelo, _apiKey, _servicio,
                     soloChat: true, _claves,
@@ -338,9 +410,9 @@ namespace OPENGIOAI.Agentes
                 await AgenteMemorista.EjecutarAsync(
                     instruccion, respuesta, ctxMem, CancellationToken.None);
             }
-            catch
+            catch (Exception ex)
             {
-                // Fase 5 es best-effort — cualquier error queda silenciado.
+                Log.Warning(ex, "Agente Memorista falló en background (best-effort)");
             }
         }
 
@@ -478,6 +550,46 @@ namespace OPENGIOAI.Agentes
         private static string Truncar(string texto, int maxChars) =>
             texto.Length <= maxChars ? texto : texto[..maxChars] + "...";
 
+        /// <summary>
+        /// Análisis rápido y ligero de la instrucción del usuario.
+        /// Identifica el tipo de tarea, los datos necesarios y la complejidad
+        /// para que el pipeline pueda adaptar su estrategia de ejecución.
+        /// Es una llamada LLM rápida (~0.5s) con perfil mínimo de contexto.
+        /// Si falla o tarda, el pipeline continúa sin el análisis (best-effort).
+        /// </summary>
+        private static async Task<string> AnalizarInstruccionRapidoAsync(
+            string instruccion, AgentContext ctx, CancellationToken ct)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(3));
+
+                string promptAnalisis = $@"Analiza esta instrucción y responde SOLO JSON (1 línea, sin markdown):
+
+Instrucción: {instruccion}
+
+{{
+  ""tipo"": ""lectura|escritura|analisis|ejecucion|consulta|busqueda|transformacion"",
+  ""complejidad"": 1-5,
+  ""requiere_archivos"": true/false,
+  ""requiere_api"": true/false,
+  ""datos_clave"": [""dato1"", ""dato2""],
+  ""resumen"": ""1 frase de qué hay que hacer""
+}}";
+
+                var ctxMinimo = ctx.ComoFase("AnalizadorRapido")
+                    .ConPromptPersonalizado("");
+                return await AIModelConector.ObtenerRespuestaLLMAsync(
+                    promptAnalisis, ctxMinimo, cts.Token);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[Analista] Análisis rápido falló (best-effort)");
+                return $"{{\"tipo\":\"no_analizado\",\"complejidad\":3}}";
+            }
+        }
+
         // ════════════════════════════════════════════════════════════════════
         //  FASE 2 — CONSTRUCTOR
         //  Usa el pipeline existente: LLM genera Python → se ejecuta → salida.
@@ -588,10 +700,12 @@ namespace OPENGIOAI.Agentes
                 if (exito) return (false, null);                          // Éxito — detener
                 if (string.IsNullOrWhiteSpace(instruccionCorrectora)) return (false, null);
 
-                // Notificar a la UI del reintento
+                // Notificar a la UI del reintento con detalle estructurado
                 OnReintentoGuardian?.Invoke(intentoActual, _maxIntentosGuardian, razon);
+
+                string fallbackEmoji = intentoActual >= _maxIntentosGuardian - 1 ? "⚠️" : "🔄";
                 OnFaseIniciada?.Invoke(FaseAgente.Guardian,
-                    $"Encontré algo que mejorar: {razon}\nHaciendo una corrección automática... ({intentoActual}/{_maxIntentosGuardian})");
+                    $"{fallbackEmoji} Intento {intentoActual}/{_maxIntentosGuardian}: {razon}\nAplicando corrección automática...");
 
                 // Aplicar corrección — usa el Constructor con la instrucción correctora
                 var ejecucionCorrectora = await AIModelConector.EjecutarInstruccionIAConResultadoAsync(
@@ -678,6 +792,73 @@ RESULTADO OBTENIDO:
         // ── Utilidades ───────────────────────────────────────────────────────
 
         /// <summary>
+        /// Diagnostica si la salida del Constructor contiene un fallo y lo clasifica.
+        /// Usa heurísticas rápidas (sin LLM) para determinar el tipo de error:
+        ///   - sintaxis: traceback de SyntaxError o NameError
+        ///   - importacion: ModuleNotFoundError o ImportError
+        ///   - runtime: traceback genérico o código de salida != 0
+        ///   - datos_ausentes: status:error o datos vacíos
+        ///   - resultado_vacio: sin salida ni stdout
+        ///   - logica: salida presente pero con advertencias
+        /// Devuelve (esFallo, tipoFallo, detalle).
+        /// </summary>
+        private static (bool esFallo, string tipo, string detalle) DiagnosticarFallo(
+            string resultadoFinal,
+            ResultadoEjecucionIA ejecucion,
+            string stdoutConstructor)
+        {
+            // 1. Error de ejecución del script
+            if (ejecucion.ExitCode.GetValueOrDefault() != 0)
+                return (true, "runtime", $"Exit code: {ejecucion.ExitCode}");
+
+            // 2. Error estándar con contenido
+            if (!string.IsNullOrWhiteSpace(ejecucion.Stderr))
+            {
+                string err = ejecucion.Stderr.ToLowerInvariant();
+                if (err.Contains("syntaxerror"))
+                    return (true, "sintaxis", "Error de sintaxis en el código generado");
+                if (err.Contains("modulenotfound") || err.Contains("importerror"))
+                    return (true, "importacion", "Falta una dependencia necesaria");
+                if (err.Contains("filenotfound") || err.Contains("oserror"))
+                    return (true, "runtime", "Error de archivo o directorio no encontrado");
+                if (err.Contains("nameerror"))
+                    return (true, "sintaxis", "Variable o función no definida");
+                if (err.Contains("typeerror") || err.Contains("valueerror"))
+                    return (true, "runtime", "Error de tipo o valor en los datos");
+                if (err.Contains("keyerror") || err.Contains("indexerror"))
+                    return (true, "runtime", "Acceso inválido a datos (key o índice inexistente)");
+                if (err.Contains("traceback"))
+                    return (true, "runtime", "Excepción no controlada durante la ejecución");
+                return (true, "runtime", Truncar(ejecucion.Stderr.Trim(), 120));
+            }
+
+            // 3. Indicador de error técnico en la salida
+            string resultado = (resultadoFinal ?? "").ToLowerInvariant();
+            string stdout = (stdoutConstructor ?? "").ToLowerInvariant();
+
+            if (resultado.Contains("traceback") || stdout.Contains("[err]"))
+                return (true, "runtime", "Se detectó un traceback o error explícito en la salida");
+
+            if (resultado.Contains("\"status\": \"error\"") ||
+                resultado.Contains("'status': 'error'") ||
+                resultado.Contains("status : error"))
+                return (true, "datos_ausentes", "El script reportó status:error");
+
+            // 4. Salida vacía o sin datos
+            if (string.IsNullOrWhiteSpace(resultadoFinal) && string.IsNullOrWhiteSpace(stdoutConstructor))
+                return (true, "resultado_vacio", "El script no produjo ninguna salida");
+
+            if (resultadoFinal?.Length < 10 && stdoutConstructor?.Length < 10)
+                return (true, "resultado_vacio", "La salida del script es insuficiente para dar una respuesta");
+
+            // 5. Error genérico en la cadena técnica
+            if (ejecucion.SalidaTecnica.Contains("Error al ejecutar el script"))
+                return (true, "runtime", "El sistema no pudo ejecutar el script generado");
+
+            return (false, "ninguno", "Ejecución correcta");
+        }
+
+        /// <summary>
         /// Extrae el bloque JSON puro de una respuesta LLM que puede venir envuelta
         /// en markdown (```json ... ```, ``` ... ```) o con texto adicional.
         /// Estrategia: buscar el primer '{' o '[' y el último '}' o ']' correspondiente.
@@ -727,6 +908,39 @@ RESULTADO OBTENIDO:
         /// Escribe (append) el log de la ejecución en ARIALog.md dentro de la
         /// ruta de trabajo. Se llama en background al final de EjecutarAsync.
         /// </summary>
+        private async Task<string> FaseHerramientasAsync(
+            string instruccion,
+            AgentContext ctx,
+            DecisionRutaAgentica decision,
+            CancellationToken ct)
+        {
+            using var spanTools = TracerEjecucion.Instancia.AbrirSpan(
+                SpanTipo.Fase, "Herramientas");
+            spanTools.RegistrarInput(instruccion);
+            spanTools.AgregarAtributo("max_iteraciones", decision.MaxIteracionesHerramientas.ToString());
+
+            string resultado = await MotorHerramientas.EjecutarConHerramientasAsync(
+                instruccion,
+                ctx.ComoFase("Herramientas"),
+                onProgreso: linea => OnLineaScript?.Invoke(FaseAgente.Constructor, linea),
+                ct: ct,
+                maxIteraciones: decision.MaxIteracionesHerramientas);
+
+            spanTools.RegistrarOutput(resultado);
+            return resultado;
+        }
+
+        private static bool DebeCaerAlConstructor(string salidaHerramientas)
+        {
+            if (string.IsNullOrWhiteSpace(salidaHerramientas)) return true;
+
+            string s = salidaHerramientas.ToLowerInvariant();
+            return (s.Contains("alcanz") && s.Contains("mite")) ||
+                   s.Contains("politica de herramientas") ||
+                   s.Contains("error inesperado ejecutando") ||
+                   s.Contains("registrada");
+        }
+
         private static async Task GuardarLogAsync(string contenido, string ruta)
         {
             try
@@ -734,7 +948,10 @@ RESULTADO OBTENIDO:
                 string path = Path.Combine(ruta, "ARIALog.md");
                 await File.AppendAllTextAsync(path, contenido, System.Text.Encoding.UTF8);
             }
-            catch { /* Silenciar errores de log — nunca interrumpir el flujo */ }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "No se pudo guardar el log ARIA en {Ruta}", ruta);
+            }
         }
     }
 }

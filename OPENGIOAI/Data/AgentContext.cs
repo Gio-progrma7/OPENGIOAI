@@ -18,6 +18,7 @@ using OPENGIOAI.Entidades;
 using OPENGIOAI.Promts;
 using OPENGIOAI.Skills;
 using OPENGIOAI.Utilerias;
+using Serilog;
 
 namespace OPENGIOAI.Data
 {
@@ -144,8 +145,9 @@ namespace OPENGIOAI.Data
                 skills = SkillLoader.CargarActivas(rutaArchivo);
                 manifiesto = SkillManifestBuilder.Construir(skills);
 
-                // Generar skill_runner.py en background — no bloquea el pipeline
-                _ = SkillRunnerHelper.GenerarAsync(rutaArchivo, skills, ct);
+                // Generar skill_runner.py antes de ejecutar scripts: si queda en background,
+                // Python puede resolver un paquete externo llamado skill_runner desde site-packages.
+                await SkillRunnerHelper.GenerarAsync(rutaArchivo, skills, ct);
             }
 
             // ── Cargar memoria durable de la ruta de trabajo (Fase 1) ───────
@@ -179,14 +181,17 @@ namespace OPENGIOAI.Data
 
                     // Fallback: si el RAG no devolvió nada (índice vacío, error
                     // del proveedor, etc.) caemos al dump completo clásico para
-                    // no dejar al agente sin memoria.
                     if (string.IsNullOrWhiteSpace(memoriaFormateada))
                     {
                         try
                         {
                             memoriaFormateada = await MemoriaManager.FormatearParaPromptAsync(rutaArchivo);
                         }
-                        catch { memoriaFormateada = ""; }
+                        catch (Exception ex)
+                        {
+                            Log.Warning(ex, "Error al formatear memoria para prompt, continuando sin memoria");
+                            memoriaFormateada = "";
+                        }
                     }
                 }
                 else

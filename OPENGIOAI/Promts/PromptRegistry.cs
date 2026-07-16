@@ -25,6 +25,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using OPENGIOAI.Entidades;
+using Serilog;
 
 namespace OPENGIOAI.Promts
 {
@@ -56,7 +57,10 @@ namespace OPENGIOAI.Promts
                 if (!Directory.Exists(_carpetaOverrides))
                     Directory.CreateDirectory(_carpetaOverrides);
             }
-            catch { /* silenciar — si no hay permisos, se usa solo default */ }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "No se pudo crear carpeta de overrides de prompts en {Path}", _carpetaOverrides);
+            }
         }
 
         // ══════════════════ API pública ══════════════════
@@ -129,7 +133,11 @@ namespace OPENGIOAI.Promts
 
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Error al verificar si prompt '{Clave}' tiene override", clave);
+                return false;
+            }
         }
 
         /// <summary>
@@ -203,7 +211,10 @@ namespace OPENGIOAI.Promts
                     File.Delete(path);
                 }
             }
-            catch { /* silenciar — la cache se limpia de todos modos */ }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Error al restaurar prompt '{Clave}' a su valor por defecto", clave);
+            }
 
             _cacheEfectivo.TryRemove(clave, out _);
         }
@@ -225,7 +236,10 @@ namespace OPENGIOAI.Promts
                 def.ObtenerRutaArchivoExterno != null)
             {
                 try { return def.ObtenerRutaArchivoExterno(); }
-                catch { /* fallback a ruta interna */ }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Error al obtener ruta externa para prompt '{Clave}', usando ruta interna", clave);
+                }
             }
 
             // Ruta interna por defecto, saneando el nombre para evitar traversals.
@@ -242,7 +256,11 @@ namespace OPENGIOAI.Promts
                 if (!File.Exists(path)) return "";
                 return File.ReadAllText(path);
             }
-            catch { return ""; }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Error al leer override de prompt '{Clave}' desde disco", clave);
+                return "";
+            }
         }
     }
 }

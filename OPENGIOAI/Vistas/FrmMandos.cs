@@ -60,15 +60,21 @@ using OPENGIOAI.ServiciosTTS;
 using OPENGIOAI.ServiciosTelegram;
 using OPENGIOAI.Themas;
 using OPENGIOAI.Utilerias;
+using NAudio.Wave;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Globalization;
+using System.Net.Http;
+using System.Speech.Recognition;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Vosk;
 using Color = System.Drawing.Color;
 
 namespace OPENGIOAI.Vistas
@@ -79,11 +85,14 @@ namespace OPENGIOAI.Vistas
         // [C2] Centralizar aqu� facilita cambiar el timeout sin buscar en el c�digo.
         // NOTA (Fase comandos): TimeoutSegundos pas� de const a field privado para
         // poder modificarse v�a `#timeout <N>` desde Telegram/Slack/UI.
-        private int _timeoutSegundos = 120;
+        private int _timeoutSegundos = 1200;
         private const int TimeoutMinimo = 10;
         private const int TimeoutMaximo = 1800; // 30 min � techo de seguridad
         private const int MaxTurnosContexto = 6;
         private const int MaxTokensContexto = 3000;
+        private const string VoskModelName = "vosk-model-small-es-0.42";
+        private const string VoskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip";
+        private const int VoskSampleRate = 16000;
 
         private int Entradas = 9;
 
@@ -104,6 +113,9 @@ namespace OPENGIOAI.Vistas
         private bool _soloChat = false;
         private bool _isDragging = false;
         private bool _procesandoSlack = false;
+        private bool _vozActiva = false;
+        private bool _mostrandoParcialVoz = false;
+        private bool _enviandoPorSilencioVoz = false;
 
         // [C4] Reemplaza el contador "veces" con flag booleano para mayor claridad.
         private bool _cargaInicialAgente = true;
@@ -144,6 +156,13 @@ namespace OPENGIOAI.Vistas
 
         // -- Throttle de streaming (agrupa updates de burbujas a ~8 fps) -------
         private readonly ChatStreamingThrottleService _streaming;
+        private SpeechRecognitionEngine? _speechEngine;
+        private Button? _btnVoz;
+        private string _textoParcialVoz = "";
+        private Model? _voskModel;
+        private VoskRecognizer? _voskRecognizer;
+        private WaveInEvent? _waveIn;
+        private readonly System.Windows.Forms.Timer _timerSilencioVoz = new();
 
         // -- Modelos de datos --------------------------------------------------
         private ConfiguracionClient _configuracionClient;
@@ -172,6 +191,8 @@ namespace OPENGIOAI.Vistas
             _audioService    = audioService;
             _broadcast       = broadcast;
             _streaming = new ChatStreamingThrottleService(this);
+            _timerSilencioVoz.Interval = 3000;
+            _timerSilencioVoz.Tick += TimerSilencioVoz_Tick;
             ConfigurarCommandRouter();
         }
 
@@ -202,25 +223,48 @@ namespace OPENGIOAI.Vistas
         }
 
         /// <summary>
-        /// Alinea btnEnviar y btnCancelar al borde derecho del textbox plano.
+        /// Alinea btnEnviar y btnCancelar al borde derecho del textbox plano,
+        /// y reposiciona dinámicamente los botones inferiores (btnLimpiar, btnHistorial, btnInfo).
         /// Se invoca en ConfigurarUI() y en cada FrmMandos_Resize.
         /// </summary>
         private void AjustarBotonesInput()
         {
             if (textBoxInstrucion == null) return;
 
-            int xBtn = textBoxInstrucion.Right + 6;
-            btnEnviar.Left   = xBtn;
-            btnCancelar.Left = xBtn;
+            int margenDerecho = pnlContenedorTxt.ClientSize.Width - 9;
+            btnEnviar.Left   = margenDerecho - btnEnviar.Width;
+            btnCancelar.Left = btnEnviar.Left;
             // Vertical: enviar arriba, cancelar debajo
             btnEnviar.Top   = textBoxInstrucion.Top;
             btnCancelar.Top = textBoxInstrucion.Top + btnEnviar.Height + 4;
+
+            if (_btnVoz != null)
+            {
+                _btnVoz.Left = btnEnviar.Left - _btnVoz.Width - 6;
+                _btnVoz.Top = textBoxInstrucion.Top;
+                _btnVoz.Height = textBoxInstrucion.Height;
+                textBoxInstrucion.Width = Math.Max(260, _btnVoz.Left - textBoxInstrucion.Left - 6);
+            }
+
+            // Alinear dinámicamente los botones de la barra inferior al borde derecho para evitar colisiones
+            if (btnInfo != null && btnHistorial != null && btnLimpiar != null && pnlContenedorTxt != null)
+            {
+                int rMargin = pnlContenedorTxt.ClientSize.Width - 12;
+
+                btnInfo.Left = rMargin - btnInfo.Width;
+                btnHistorial.Left = btnInfo.Left - btnHistorial.Width - 6;
+                btnLimpiar.Left = btnHistorial.Left - btnLimpiar.Width - 6;
+            }
         }
 
         private void FrmMandos_FormClosing(object sender, FormClosingEventArgs e)
         {
             // [C1] Cancelar cualquier petici�n en vuelo al cerrar el formulario.
             _streaming.Dispose();
+            DetenerLecturaVoz();
+            _timerSilencioVoz.Dispose();
+            _speechEngine?.Dispose();
+            _voskModel?.Dispose();
             CancelarInstruccion();
             _telegramService.Detener();
             _slackService.Detener();
@@ -460,6 +504,352 @@ namespace OPENGIOAI.Vistas
 
         private void btnGuardar_Click(object sender, EventArgs e) => GuardarConfiguracion();
         private void btnCancelar_Click(object sender, EventArgs e) => CancelarInstruccion();
+        private async void btnVoz_Click(object? sender, EventArgs e) => await ToggleLecturaVozAsync();
+
+        private async Task ToggleLecturaVozAsync()
+        {
+            if (_vozActiva)
+            {
+                DetenerLecturaVoz();
+                return;
+            }
+
+            if (await IniciarLecturaVoskAsync())
+                return;
+
+            try
+            {
+                _speechEngine ??= CrearReconocedorVoz();
+                _textoParcialVoz = "";
+                _mostrandoParcialVoz = false;
+                _enviandoPorSilencioVoz = false;
+                _timerSilencioVoz.Stop();
+                _speechEngine.RecognizeAsync(RecognizeMode.Multiple);
+                _vozActiva = true;
+                ActualizarEstadoBotonVoz();
+                _toolTipArchivos.Show("Escuchando... vuelve a presionar para detener.", _btnVoz!, 0, -42, 2500);
+            }
+            catch (Exception ex)
+            {
+                _vozActiva = false;
+                ActualizarEstadoBotonVoz();
+                _toolTipArchivos.Show(
+                    "No se pudo iniciar el dictado.\nRevisa el microfono y el idioma de voz de Windows.\n" + ex.Message,
+                    _btnVoz ?? btnEnviar, 0, -72, 5000);
+            }
+        }
+
+        private async Task<bool> IniciarLecturaVoskAsync()
+        {
+            try
+            {
+                _btnVoz!.Enabled = false;
+                _btnVoz.Text = "...";
+                _toolTipArchivos.Show("Preparando reconocimiento offline en espanol...", _btnVoz, 0, -42, 2500);
+
+                string modelPath = await ObtenerRutaModeloVoskAsync();
+                _voskModel ??= new Model(modelPath);
+                _voskRecognizer?.Dispose();
+                _voskRecognizer = new VoskRecognizer(_voskModel, VoskSampleRate);
+                _voskRecognizer.SetWords(true);
+
+                _waveIn?.Dispose();
+                _waveIn = new WaveInEvent
+                {
+                    DeviceNumber = 0,
+                    WaveFormat = new WaveFormat(VoskSampleRate, 16, 1),
+                    BufferMilliseconds = 250
+                };
+                _waveIn.DataAvailable += WaveIn_DataAvailable;
+                _waveIn.RecordingStopped += WaveIn_RecordingStopped;
+                _waveIn.StartRecording();
+
+                _vozActiva = true;
+                _textoParcialVoz = "";
+                _mostrandoParcialVoz = false;
+                _enviandoPorSilencioVoz = false;
+                _timerSilencioVoz.Stop();
+                ActualizarEstadoBotonVoz();
+                _toolTipArchivos.Show("Escuchando con Vosk. Vuelve a presionar para detener.", _btnVoz, 0, -42, 2500);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                DetenerVosk();
+                _toolTipArchivos.Show(
+                    "Vosk no pudo iniciar. Usare el reconocimiento de Windows como respaldo.\n" + ex.Message,
+                    _btnVoz ?? btnEnviar, 0, -70, 4500);
+                return false;
+            }
+            finally
+            {
+                if (_btnVoz != null)
+                {
+                    _btnVoz.Enabled = true;
+                    ActualizarEstadoBotonVoz();
+                }
+            }
+        }
+
+        private static async Task<string> ObtenerRutaModeloVoskAsync()
+        {
+            string modelRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "OPENGIOAI",
+                "models");
+            string modelPath = Path.Combine(modelRoot, VoskModelName);
+
+            if (Directory.Exists(modelPath))
+                return modelPath;
+
+            Directory.CreateDirectory(modelRoot);
+            string zipPath = Path.Combine(modelRoot, VoskModelName + ".zip");
+
+            using (var http = new HttpClient())
+            using (var response = await http.GetAsync(VoskModelUrl, HttpCompletionOption.ResponseHeadersRead))
+            {
+                response.EnsureSuccessStatusCode();
+                await using var src = await response.Content.ReadAsStreamAsync();
+                await using var dst = File.Create(zipPath);
+                await src.CopyToAsync(dst);
+            }
+
+            string tempPath = Path.Combine(modelRoot, VoskModelName + "_tmp");
+            if (Directory.Exists(tempPath))
+                Directory.Delete(tempPath, recursive: true);
+
+            ZipFile.ExtractToDirectory(zipPath, tempPath);
+
+            string extracted = Directory.GetDirectories(tempPath)
+                .FirstOrDefault(d => Path.GetFileName(d).Equals(VoskModelName, StringComparison.OrdinalIgnoreCase))
+                ?? tempPath;
+
+            if (Directory.Exists(modelPath))
+                Directory.Delete(modelPath, recursive: true);
+
+            Directory.Move(extracted, modelPath);
+            Directory.Delete(tempPath, recursive: true);
+            File.Delete(zipPath);
+            return modelPath;
+        }
+
+        private void WaveIn_DataAvailable(object? sender, WaveInEventArgs e)
+        {
+            if (_voskRecognizer == null || e.BytesRecorded <= 0) return;
+
+            string json = _voskRecognizer.AcceptWaveform(e.Buffer, e.BytesRecorded)
+                ? _voskRecognizer.Result()
+                : _voskRecognizer.PartialResult();
+
+            string text = ExtraerTextoVosk(json);
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            EscribirTextoVoz(text, definitivo: json.Contains("\"text\"", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void WaveIn_RecordingStopped(object? sender, StoppedEventArgs e)
+        {
+            if (e.Exception == null || !IsHandleCreated) return;
+
+            BeginInvoke(() =>
+            {
+                _toolTipArchivos.Show(
+                    "El microfono se detuvo: " + e.Exception.Message,
+                    _btnVoz ?? btnEnviar, 0, -48, 4500);
+            });
+        }
+
+        private static string ExtraerTextoVosk(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return "";
+
+            try
+            {
+                var obj = JObject.Parse(json);
+                return (string?)obj["text"] ?? (string?)obj["partial"] ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private SpeechRecognitionEngine CrearReconocedorVoz()
+        {
+            var recognizerInfo = ObtenerReconocedorPreferido()
+                ?? throw new InvalidOperationException("Windows no tiene un motor de reconocimiento de voz instalado.");
+
+            var engine = new SpeechRecognitionEngine(recognizerInfo);
+            engine.LoadGrammar(new DictationGrammar());
+            engine.SetInputToDefaultAudioDevice();
+            engine.SpeechDetected += SpeechEngine_SpeechDetected;
+            engine.SpeechHypothesized += SpeechEngine_SpeechHypothesized;
+            engine.SpeechRecognized += SpeechEngine_SpeechRecognized;
+            engine.SpeechRecognitionRejected += SpeechEngine_SpeechRecognitionRejected;
+            engine.RecognizeCompleted += SpeechEngine_RecognizeCompleted;
+            return engine;
+        }
+
+        private static RecognizerInfo? ObtenerReconocedorPreferido()
+        {
+            var instalados = SpeechRecognitionEngine.InstalledRecognizers();
+            var culturaActual = CultureInfo.CurrentUICulture;
+
+            return instalados.FirstOrDefault(r => r.Culture.Name.Equals("es-MX", StringComparison.OrdinalIgnoreCase))
+                ?? instalados.FirstOrDefault(r => r.Culture.Name.Equals("es-ES", StringComparison.OrdinalIgnoreCase))
+                ?? instalados.FirstOrDefault(r => r.Culture.TwoLetterISOLanguageName.Equals("es", StringComparison.OrdinalIgnoreCase))
+                ?? instalados.FirstOrDefault(r => r.Culture.Name.Equals(culturaActual.Name, StringComparison.OrdinalIgnoreCase))
+                ?? instalados.FirstOrDefault();
+        }
+
+        private void SpeechEngine_SpeechRecognized(object? sender, SpeechRecognizedEventArgs e)
+        {
+            if (e.Result.Confidence < 0.15 || string.IsNullOrWhiteSpace(e.Result.Text)) return;
+
+            EscribirTextoVoz(e.Result.Text, definitivo: true);
+        }
+
+        private void SpeechEngine_SpeechHypothesized(object? sender, SpeechHypothesizedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(e.Result.Text)) return;
+            EscribirTextoVoz(e.Result.Text, definitivo: false);
+        }
+
+        private void SpeechEngine_SpeechDetected(object? sender, SpeechDetectedEventArgs e)
+        {
+            BeginInvoke(() => _toolTipArchivos.SetToolTip(_btnVoz ?? btnEnviar, "Escuchando voz..."));
+        }
+
+        private void SpeechEngine_SpeechRecognitionRejected(object? sender, SpeechRecognitionRejectedEventArgs e)
+        {
+            BeginInvoke(() =>
+            {
+                if (_btnVoz == null || !_vozActiva) return;
+                _toolTipArchivos.SetToolTip(_btnVoz, "Se detecto voz, pero no se reconocio texto claro.");
+            });
+        }
+
+        private void EscribirTextoVoz(string texto, bool definitivo)
+        {
+            if (!IsHandleCreated) return;
+
+            BeginInvoke(() =>
+            {
+                texto = texto.Trim();
+                if (texto.Length == 0) return;
+
+                string actual = textBoxInstrucion.Text ?? "";
+
+                if (_mostrandoParcialVoz && _textoParcialVoz.Length > 0)
+                {
+                    int idx = actual.LastIndexOf(_textoParcialVoz, StringComparison.OrdinalIgnoreCase);
+                    if (idx >= 0)
+                        actual = actual.Remove(idx, _textoParcialVoz.Length).TrimEnd();
+                }
+
+                string separador = string.IsNullOrWhiteSpace(actual) ? "" : " ";
+                textBoxInstrucion.Text = actual + separador + texto;
+                textBoxInstrucion.SelectionStart = textBoxInstrucion.TextLength;
+                textBoxInstrucion.SelectionLength = 0;
+                textBoxInstrucion.Focus();
+
+                _textoParcialVoz = definitivo ? "" : texto;
+                _mostrandoParcialVoz = !definitivo;
+                ReiniciarTimerSilencioVoz();
+            });
+        }
+
+        private void ReiniciarTimerSilencioVoz()
+        {
+            if (!_vozActiva || _enviandoPorSilencioVoz) return;
+
+            _timerSilencioVoz.Stop();
+            _timerSilencioVoz.Start();
+        }
+
+        private void TimerSilencioVoz_Tick(object? sender, EventArgs e)
+        {
+            _timerSilencioVoz.Stop();
+
+            if (!_vozActiva || _enviandoPorSilencioVoz || string.IsNullOrWhiteSpace(textBoxInstrucion.Text))
+                return;
+
+            _enviandoPorSilencioVoz = true;
+            DetenerLecturaVoz();
+
+            if (!string.IsNullOrWhiteSpace(textBoxInstrucion.Text))
+                btnEnviar_Click(this, EventArgs.Empty);
+        }
+
+        private void SpeechEngine_RecognizeCompleted(object? sender, RecognizeCompletedEventArgs e)
+        {
+            if (!_vozActiva) return;
+
+            BeginInvoke(() =>
+            {
+                _vozActiva = false;
+                _textoParcialVoz = "";
+                _mostrandoParcialVoz = false;
+                ActualizarEstadoBotonVoz();
+
+                if (e.Error != null)
+                {
+                    _toolTipArchivos.Show(
+                        "El dictado se detuvo: " + e.Error.Message,
+                        _btnVoz ?? btnEnviar, 0, -48, 4500);
+                }
+            });
+        }
+
+        private void DetenerLecturaVoz()
+        {
+            _timerSilencioVoz.Stop();
+            DetenerVosk();
+
+            if (_speechEngine != null)
+            {
+                try { _speechEngine.RecognizeAsyncCancel(); }
+                catch (InvalidOperationException) { }
+            }
+
+            _vozActiva = false;
+            _textoParcialVoz = "";
+            _mostrandoParcialVoz = false;
+            ActualizarEstadoBotonVoz();
+        }
+
+        private void DetenerVosk()
+        {
+            _timerSilencioVoz.Stop();
+
+            if (_waveIn != null)
+            {
+                _waveIn.DataAvailable -= WaveIn_DataAvailable;
+                _waveIn.RecordingStopped -= WaveIn_RecordingStopped;
+                try { _waveIn.StopRecording(); }
+                catch { }
+                _waveIn.Dispose();
+                _waveIn = null;
+            }
+
+            _voskRecognizer?.Dispose();
+            _voskRecognizer = null;
+            _vozActiva = false;
+            _textoParcialVoz = "";
+            _mostrandoParcialVoz = false;
+        }
+
+        private void ActualizarEstadoBotonVoz()
+        {
+            if (_btnVoz == null) return;
+
+            _btnVoz.Text = _vozActiva ? "Stop" : "Voz";
+            _btnVoz.BackColor = _vozActiva ? ColorTranslator.FromHtml("#7f1d1d") : _emEmerald9;
+            _btnVoz.FlatAppearance.BorderColor = _vozActiva
+                ? ColorTranslator.FromHtml("#dc2626")
+                : _emEmerald;
+            _toolTipArchivos.SetToolTip(_btnVoz, _vozActiva ? "Detener dictado" : "Dictar por voz");
+        }
 
         private void ChkEstado_Click(object sender, EventArgs e)
         {
@@ -489,7 +879,7 @@ namespace OPENGIOAI.Vistas
             pnlChat.Controls.Clear();
             _ultimaBurbujaComunicador = null;
             _ultimaFechaInsertada     = null;
-            MostrarEmptyState();
+            // MostrarEmptyState(); // Quitamos el de ¿Qué vamos a hacer hoy?
         }
 
         /// <summary>
@@ -2025,6 +2415,9 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
         private void LimpiarControles()
         {
             _rutasAgregadas = "";
+            _textoParcialVoz = "";
+            _mostrandoParcialVoz = false;
+            textBoxInstrucion.Clear();
             pnlContenedorArchivos.Controls.Clear();
         }
 
@@ -2093,7 +2486,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             ConstruirControlesZoom();
             ConstruirPanelCredenciales();
             ConstruirToggleScroll();
-            MostrarEmptyState();
+            // MostrarEmptyState(); // Quitamos el de ¿Qué vamos a hacer hoy?
 
             // Suscribir cambio de tema
             EmeraldTheme.ThemeChanged += OnTemaChanged;
@@ -2171,6 +2564,8 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                 textBoxInstrucion.BackColor   = ColorTranslator.FromHtml("#002647"); // BgInput
                 textBoxInstrucion.ForeColor   = ColorTranslator.FromHtml("#FFFFFF"); // TextMain
 
+                ConfigurarBotonVoz();
+
                 labelSugerencia.Parent    = textBoxInstrucion;
                 labelSugerencia.BackColor = Color.Transparent;
                 labelSugerencia.AutoSize  = true;
@@ -2178,6 +2573,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                 labelSugerencia.Font      = textBoxInstrucion.Font;
 
                 // Llevar los botones al frente (z-order) y alinearlos al wrapper
+                _btnVoz?.BringToFront();
                 btnEnviar.BringToFront();
                 btnCancelar.BringToFront();
 
@@ -2201,16 +2597,6 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                 pnlContenedorTxt.Controls.Add(lblNotif);
                 lblNotif.BringToFront();
 
-                // Separador visual entre Telegram y Slack
-                var pnlSepNotif = new Panel
-                {
-                    Location  = new Point(400, 112),
-                    Size      = new Size(1, 20),
-                    BackColor = Color.FromArgb(50, 65, 90)
-                };
-                pnlContenedorTxt.Controls.Add(pnlSepNotif);
-                pnlSepNotif.BringToFront();
-
                 // Asegurar z-order correcto para toda la barra inferior
                 checkBoxTelegram.BringToFront();
                 checkBoxConstructorTelegram.BringToFront();
@@ -2222,7 +2608,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                 btnLimpiar.BringToFront();
                 btnInfo.BringToFront();
 
-                // -- Control de reintentos del Guardi�n (barra inferior) ----
+                // -- Control de reintentos del Guardián (barra superior del panel, al lado de los checkboxes) ----
                 var lblReintentos = new Label
                 {
                     Text      = "Reintentos:",
@@ -2230,7 +2616,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                     ForeColor = Color.FromArgb(140, 165, 205),
                     BackColor = Color.Transparent,
                     Font      = new Font("Segoe UI", 7.5f),
-                    Location  = new Point(412, 115)
+                    Location  = new Point(520, 6)
                 };
 
                 _nudReintentos = new NumericUpDown
@@ -2240,7 +2626,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                     Value              = 3,
                     Width              = 42,
                     Height             = 22,
-                    Location           = new Point(480, 111),
+                    Location           = new Point(585, 3),
                     BackColor          = Color.FromArgb(30, 41, 59),
                     ForeColor          = Color.White,
                     Font               = new Font("Segoe UI", 8.5f, FontStyle.Bold),
@@ -2250,9 +2636,9 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
                 };
 
                 _toolTipArchivos.SetToolTip(_nudReintentos,
-                    "Correcciones autom�ticas del Guardi�n (0 = sin reintentos)");
+                    "Correcciones automáticas del Guardián (0 = sin reintentos)");
                 _toolTipArchivos.SetToolTip(lblReintentos,
-                    "Correcciones autom�ticas del Guardi�n");
+                    "Correcciones automáticas del Guardián");
 
                 pnlContenedorTxt.Controls.Add(lblReintentos);
                 pnlContenedorTxt.Controls.Add(_nudReintentos);
@@ -2278,6 +2664,35 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             }
 
             // Alinear botones al wrapper del textbox tras el layout inicial
+            AjustarBotonesInput();
+        }
+
+        private void ConfigurarBotonVoz()
+        {
+            if (_btnVoz != null) return;
+
+            _btnVoz = new Button
+            {
+                Name = "btnVoz",
+                Text = "Voz",
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = _emTextMain,
+                BackColor = _emEmerald9,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Size = new Size(40, textBoxInstrucion.Height),
+                Cursor = Cursors.Hand,
+                TabStop = false,
+                UseVisualStyleBackColor = false
+            };
+            _btnVoz.FlatAppearance.BorderSize = 1;
+            _btnVoz.FlatAppearance.BorderColor = _emEmerald;
+            _btnVoz.FlatAppearance.MouseOverBackColor = _emEmerald;
+            _btnVoz.FlatAppearance.MouseDownBackColor = _emEmerald4;
+            _btnVoz.Click += btnVoz_Click;
+
+            pnlContenedorTxt.Controls.Add(_btnVoz);
+            _toolTipArchivos.SetToolTip(_btnVoz, "Dictar por voz");
             AjustarBotonesInput();
         }
 
@@ -2360,6 +2775,7 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
             // Acentos espec�ficos en botones de acci�n
             EstilizarBotonEmerald(btnEnviar,   primario: true);
             EstilizarBotonEmerald(btnCancelar, primario: false, danger: true);
+            ActualizarEstadoBotonVoz();
         }
 
         private void RecolorearArbolEmerald(Control raiz)
@@ -2603,19 +3019,17 @@ SIEMPRE: tu script debe escribir en respuesta.txt. Nada m�s.
 
         private void ReposicionarTokenCounter()
         {
-            if (_lblTokenCount == null || pnlContenedorTxt == null) return;
-            // Zona libre del panel: pegado a btnLimpiar (725, 108) por encima,
+            if (_lblTokenCount == null || pnlContenedorTxt == null || btnLimpiar == null) return;
+            // Zona libre del panel: pegado a btnLimpiar por la izquierda,
             // alineado verticalmente con los checks de notificadores (y ≈ 116).
-            // La columna 8..420 está ocupada por checks Telegram/Slack/Audio,
-            // y la franja 420..720 contiene 'Reintentos' + nudReintentos.
-            // Por eso lo posicionamos a la izquierda de btnLimpiar dentro de
-            // esa franja libre (x≈540..720, y≈116) — fuera de cualquier control.
             int yTarget = 116;
-            int xTarget = 725 - _lblTokenCount.PreferredWidth - 12;
-            // Si el panel es muy angosto, fall-back a la esquina superior derecha
-            if (xTarget < 530)
+            int xTarget = btnLimpiar.Left - _lblTokenCount.PreferredWidth - 12;
+            
+            // Si el panel es muy angosto y colisiona con los controles inferiores de la izquierda,
+            // lo mandamos a la parte superior entre 'Mantener conversación' (termina en 408) y 'Reintentos' (empieza en 520)
+            if (xTarget < 390)
             {
-                xTarget = pnlContenedorTxt.ClientSize.Width - _lblTokenCount.PreferredWidth - 14;
+                xTarget = 412;
                 yTarget = 7;
             }
             _lblTokenCount.Location = new Point(Math.Max(0, xTarget), Math.Max(0, yTarget));

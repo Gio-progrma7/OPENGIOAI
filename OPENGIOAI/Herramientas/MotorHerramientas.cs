@@ -132,7 +132,7 @@ namespace OPENGIOAI.Herramientas
                     string resultado;
                     try
                     {
-                        resultado = await EjecutarHerramientaAsync(registro, llamada, ct);
+                        resultado = await EjecutarHerramientaAsync(registro, llamada, ctx, ct);
                         spanTool.RegistrarOutput(resultado);
                     }
                     catch (Exception ex)
@@ -575,6 +575,7 @@ namespace OPENGIOAI.Herramientas
         private static async Task<string> EjecutarHerramientaAsync(
             RegistroHerramientas registro,
             LlamadaHerramienta llamada,
+            AgentContext ctx,
             CancellationToken ct)
         {
             var herramienta = registro.Obtener(llamada.Nombre);
@@ -594,6 +595,10 @@ namespace OPENGIOAI.Herramientas
                 {
                     parametros = new JObject();
                 }
+
+                var politica = PoliticaHerramientas.ValidarYNormalizar(ctx, llamada, parametros);
+                if (!politica.Permitido)
+                    return politica.Mensaje;
 
                 return await herramienta.EjecutarAsync(parametros, ct);
             }
