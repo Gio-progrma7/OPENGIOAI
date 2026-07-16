@@ -1,5 +1,6 @@
 using OPENGIOAI.Entidades;
 using OPENGIOAI.Utilerias;
+using Serilog;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -410,7 +411,11 @@ namespace OPENGIOAI.Data
             if (s.StartsWith('{') || s.StartsWith('['))
             {
                 try { return Newtonsoft.Json.Linq.JToken.Parse(s); }
-                catch { /* no es JSON, caer al string */ }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Salida parece JSON pero no es parseable: {Salida}",
+                        s.Length > 200 ? s[..200] + "..." : s);
+                }
             }
             return s;
         }

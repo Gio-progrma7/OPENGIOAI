@@ -3,4 +3,10 @@
   <Project Path="OPENGIOAI/Tests/ConversationWindowTests/ConversationWindowTests.csproj">
     <Build Solution="Debug|*" Project="false" />
   </Project>
+  <Project Path="OPENGIOAI/Tests/ComandosTests/ComandosTests.csproj">
+    <Build Solution="Debug|*" Project="false" />
+  </Project>
+  <Project Path="OPENGIOAI/Tests/CorePipelineTests/CorePipelineTests.csproj">
+    <Build Solution="Debug|*" Project="false" />
+  </Project>
 </Solution>

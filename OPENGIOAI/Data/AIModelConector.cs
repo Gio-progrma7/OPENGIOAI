@@ -23,6 +23,7 @@ using OPENGIOAI.Entidades;
 using OPENGIOAI.Herramientas;
 using OPENGIOAI.ServiciosAI;
 using OPENGIOAI.Utilerias;
+using Serilog;
 using System.Net.Http.Headers;
 using System.Text;
 
@@ -508,7 +509,11 @@ namespace OPENGIOAI.Data
                             if (root?.TryGetValue("done", out var d) == true &&
                                 d.Value<bool>()) break;
                         }
-                        catch { /* línea inválida, ignorar */ }
+                        catch (Exception ex)
+                        {
+                            Log.Warning(ex, "Línea Ollama inválida ignorada: {Line}",
+                                line.Length > 150 ? line[..150] + "..." : line);
+                        }
                     }
 
                     // Telemetría (Fase A): Ollama reporta tokens en la última línea NDJSON.
@@ -1028,7 +1033,12 @@ namespace OPENGIOAI.Data
                 done = root?["done"]?.Value<bool>() ?? false;
                 return root?["message"]?["content"]?.ToString();
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                string preview = line.Length > 200 ? line[..200] + "..." : line;
+                Log.Warning(ex, "Error al extraer token Ollama de línea: {Line}", preview);
+                return null;
+            }
         }
 
         private static string? ExtraerTokenSSE(string line, Servicios servicio)
@@ -1049,7 +1059,11 @@ namespace OPENGIOAI.Data
                         root?["choices"]?[0]?["delta"]?["content"]?.ToString()
                 };
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Error al extraer token SSE para {Servicio}", servicio);
+                return null;
+            }
         }
 
         private static string Limpiar(string s) =>
@@ -1103,120 +1117,146 @@ REGLAS:
             Action<string>? onLinea = null)
         {
             if (string.IsNullOrWhiteSpace(script))
-                throw new Exception("La IA no devolvió ningún script válido.");
+                throw new InvalidOperationException("La IA no devolvió ningún script válido.");
+
+            if (!ValidarPythonDisponible())
+            {
+                Log.Warning("Python no está disponible en PATH. Verifica la instalación.");
+                throw new InvalidOperationException(
+                    "Python no está instalado o no está en PATH. " +
+                    "Instala Python 3.8+ desde https://python.org y marca 'Add to PATH'.");
+            }
 
             string rutaEjecucion = ResolverWorkspaceEjecucion(rutaArchivo, workspaceEjecucion);
             string pythonFile = Path.Combine(rutaEjecucion, "script_ia.py");
             GuardarScript(rutaEjecucion, script);
+            string respuestaTxtPath = Path.Combine(rutaEjecucion, "respuesta.txt");
+
+            // Limpiar respuesta.txt de ejecuciones anteriores
+            try
+            {
+                if (File.Exists(respuestaTxtPath))
+                    File.WriteAllText(respuestaTxtPath, "", Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "No se pudo limpiar respuesta.txt previo a la ejecución");
+            }
 
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "python",
                 Arguments = $"\"{pythonFile}\"",
+                WorkingDirectory = rutaEjecucion,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            ConfigurarPythonPathLocal(psi, rutaEjecucion);
 
             if (ScriptEstaEjecutandose(pythonFile))
                 CerrarScriptSiEstaEjecutandose(pythonFile);
 
-            if (chat)
+            if (!chat)
             {
-                onInicioScript?.Invoke();
-
-                var sbSalida = new StringBuilder();
-                var sbError = new StringBuilder();
-
-                // ── Watcher sobre respuesta.txt para mostrar cambios en tiempo real ──
-                string respuestaTxtPath = Path.Combine(rutaEjecucion, "respuesta.txt");
-                long _ultimaPosRespuesta = 0;
-                // Limpiar el archivo antes de empezar para no acumular ejecuciones anteriores
-                if (File.Exists(respuestaTxtPath))
-                    try { File.WriteAllText(respuestaTxtPath, "", Encoding.UTF8); } catch { }
-
-                FileSystemWatcher? watcher = null;
-                if (onLinea != null)
+                _ = Task.Run(() =>
                 {
-                    watcher = new FileSystemWatcher(rutaEjecucion)
-                    {
-                        Filter = "respuesta.txt",
-                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
-                        EnableRaisingEvents = false
-                    };
-                    watcher.Changed += (_, _) =>
-                    {
-                        try
-                        {
-                            using var fs = new FileStream(
-                                respuestaTxtPath, FileMode.Open,
-                                FileAccess.Read, FileShare.ReadWrite);
-                            fs.Seek(_ultimaPosRespuesta, SeekOrigin.Begin);
-                            using var reader = new StreamReader(fs, Encoding.UTF8);
-                            string nuevaData = reader.ReadToEnd();
-                            _ultimaPosRespuesta = fs.Position;
-                            if (!string.IsNullOrEmpty(nuevaData))
-                                onLinea(nuevaData);
-                        }
-                        catch { /* ignorar errores de acceso simultáneo */ }
-                    };
-                }
-
-                using var process = new System.Diagnostics.Process
-                {
-                    StartInfo = psi,
-                    EnableRaisingEvents = true
-                };
-
-                process.OutputDataReceived += (_, e) =>
-                {
-                    if (e.Data == null) return;
-                    sbSalida.AppendLine(e.Data);
-                    onLinea?.Invoke(e.Data);
-                };
-                process.ErrorDataReceived += (_, e) =>
-                {
-                    if (e.Data == null) return;
-                    string linea = $"[ERR] {e.Data}";
-                    sbError.AppendLine(e.Data);
-                    onLinea?.Invoke(linea);
-                };
-
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-
-                if (watcher != null)
-                    watcher.EnableRaisingEvents = true;
-
-                await process.WaitForExitAsync(ct);
-
-                watcher?.Dispose();
+                    try { System.Diagnostics.Process.Start(psi)?.WaitForExit(); }
+                    catch (Exception ex) { Log.Error(ex, "Error al ejecutar script Python en modo no-chat"); }
+                }, ct);
 
                 return new ResultadoEjecucionIA
                 {
                     CodigoGenerado = script,
-                    Stdout = sbSalida.ToString().Trim(),
-                    Stderr = sbError.ToString().Trim(),
-                    RespuestaTxt = LeerRespuestaTxtSeguro(respuestaTxtPath),
                     RutaScript = pythonFile,
                     WorkspaceEjecucion = rutaEjecucion,
-                    ExitCode = process.ExitCode,
-                    Ejecutado = true
+                    Ejecutado = false
                 };
             }
 
-            _ = Task.Run(() =>
-                System.Diagnostics.Process.Start(psi)?.WaitForExit(), ct);
+            onInicioScript?.Invoke();
+
+            var sbSalida = new StringBuilder();
+            var sbError = new StringBuilder();
+
+            using var process = new System.Diagnostics.Process
+            {
+                StartInfo = psi,
+                EnableRaisingEvents = true
+            };
+
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data == null) return;
+                sbSalida.AppendLine(e.Data);
+                onLinea?.Invoke(e.Data);
+            };
+
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data == null) return;
+                string linea = $"[ERR] {e.Data}";
+                sbError.AppendLine(e.Data);
+                onLinea?.Invoke(linea);
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Esperar con timeout para evitar procesos zombies
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMinutes(5)); // timeout de seguridad
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Timeout alcanzado — matar el proceso
+                Log.Warning("Script Python agotó el tiempo de espera (5 min): {Script}", pythonFile);
+                try { process.Kill(true); } catch (Exception ex) { Log.Error(ex, "Error al matar proceso Python colgado"); }
+                throw new TimeoutException("El script Python tardó más de 5 minutos y fue cancelado.");
+            }
 
             return new ResultadoEjecucionIA
             {
                 CodigoGenerado = script,
+                Stdout = sbSalida.ToString().Trim(),
+                Stderr = sbError.ToString().Trim(),
+                RespuestaTxt = LeerRespuestaTxtSeguro(respuestaTxtPath),
                 RutaScript = pythonFile,
                 WorkspaceEjecucion = rutaEjecucion,
-                Ejecutado = false
+                ExitCode = process.ExitCode,
+                Ejecutado = true
             };
+        }
+
+        private static bool ValidarPythonDisponible()
+        {
+            try
+            {
+                using var proc = new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "python",
+                        Arguments = "--version",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    }
+                };
+                proc.Start();
+                proc.WaitForExit(5000);
+                return proc.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static string ResolverWorkspaceEjecucion(string rutaArchivo, string? workspaceEjecucion)
@@ -1227,6 +1267,19 @@ REGLAS:
             return rutaArchivo;
         }
 
+        private static void ConfigurarPythonPathLocal(
+            System.Diagnostics.ProcessStartInfo psi,
+            string rutaEjecucion)
+        {
+            string actual = psi.EnvironmentVariables.ContainsKey("PYTHONPATH")
+                ? psi.EnvironmentVariables["PYTHONPATH"] ?? ""
+                : "";
+
+            psi.EnvironmentVariables["PYTHONPATH"] = string.IsNullOrWhiteSpace(actual)
+                ? rutaEjecucion
+                : rutaEjecucion + Path.PathSeparator + actual;
+        }
+
         private static string LeerRespuestaTxtSeguro(string path)
         {
             try
@@ -1234,8 +1287,9 @@ REGLAS:
                 if (!File.Exists(path)) return "";
                 return File.ReadAllText(path, Encoding.UTF8).Trim();
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Warning(ex, "No se pudo leer respuesta.txt en {Path}", path);
                 return "";
             }
         }
@@ -1282,7 +1336,10 @@ REGLAS:
                             return p;
                     }
                 }
-                catch { /* proceso protegido, ignorar */ }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "No se pudo inspeccionar proceso python PID={Pid}", p.Id);
+                }
             }
             return null;
         }

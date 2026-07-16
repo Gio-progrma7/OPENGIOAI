@@ -20,6 +20,7 @@
 
 using Newtonsoft.Json;
 using OPENGIOAI.Entidades;
+using Serilog;
 using OPENGIOAI.ServiciosAI;
 using System;
 using System.Collections.Generic;
@@ -99,7 +100,8 @@ namespace OPENGIOAI.Utilerias
                 }
 
                 string contenido = "";
-                try { contenido = await File.ReadAllTextAsync(ruta, ct); } catch { }
+                try { contenido = await File.ReadAllTextAsync(ruta, ct); }
+                catch (Exception ex) { Log.Warning(ex, "No se pudo leer archivo de memoria para indexación: {Path}", ruta); }
                 string hash = MemoriaChunker.HashContenido(contenido);
 
                 bool yaHecho = manifest.HashPorFuente.TryGetValue(fuente, out var hashPrevio)
@@ -176,8 +178,9 @@ namespace OPENGIOAI.Utilerias
                 string json = File.ReadAllText(path);
                 return JsonConvert.DeserializeObject<ManifestEmbeddings>(json) ?? new ManifestEmbeddings();
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Warning(ex, "Error al leer manifest de embeddings. Usando manifest vacío.");
                 return new ManifestEmbeddings();
             }
         }
@@ -189,7 +192,11 @@ namespace OPENGIOAI.Utilerias
                 string path = RutasProyecto.ObtenerRutaEmbeddingsManifest(rutaWorkspace);
                 File.WriteAllText(path, JsonConvert.SerializeObject(m, Formatting.Indented));
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Error al guardar manifest de embeddings en {Path}",
+                    RutasProyecto.ObtenerRutaEmbeddingsManifest(rutaWorkspace));
+            }
         }
     }
 
